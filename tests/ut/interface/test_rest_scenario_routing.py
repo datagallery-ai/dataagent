@@ -231,6 +231,7 @@ def test_parse_args_and_main_publish_the_route_table(tmp_path: Path, monkeypatch
     args = parse_args()
     assert args.config == [f"business_twin={business}", f"traffic_insight={traffic}"]
 
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service.os.geteuid", lambda: 1000)
     monkeypatch.setattr(
         "dataagent.interface.rest_api.start_service.resolve_cert_key_passwords",
         lambda cert: {},
@@ -249,6 +250,7 @@ def test_main_omits_uvicorn_server_header(tmp_path: Path, monkeypatch: pytest.Mo
     """The REST process must not advertise its ASGI server name."""
     business = _scene(tmp_path, "business_twin")
     monkeypatch.setattr(sys, "argv", ["dataagent", "--config", f"business_twin={business}"])
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service.os.geteuid", lambda: 1000)
     monkeypatch.setattr(
         "dataagent.interface.rest_api.start_service.resolve_cert_key_passwords",
         lambda cert: {},
@@ -266,7 +268,26 @@ def test_main_omits_uvicorn_server_header(tmp_path: Path, monkeypatch: pytest.Mo
 
 
 def test_main_exits_when_the_table_is_invalid(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service.os.geteuid", lambda: 1000)
     monkeypatch.setattr(sys, "argv", ["dataagent", "--config", str(tmp_path / "missing.yaml")])
     with pytest.raises(SystemExit) as caught:
         main()
     assert caught.value.code == 2
+
+
+def test_main_refuses_to_start_as_root(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The process must exit before uvicorn when the effective user is root."""
+    monkeypatch.setattr(sys, "argv", ["dataagent"])
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service.os.geteuid", lambda: 0)
+    started = False
+
+    def _run(*_args: object, **_kwargs: object) -> None:
+        nonlocal started
+        started = True
+
+    monkeypatch.setattr("dataagent.interface.rest_api.start_service.uvicorn.run", _run)
+
+    with pytest.raises(SystemExit, match="Refusing to start DataAgent as root"):
+        main()
+
+    assert started is False
