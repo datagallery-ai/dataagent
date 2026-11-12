@@ -479,6 +479,35 @@ describe('StatusBar', () => {
   });
 });
 
+describe('SessionPicker search', () => {
+  it('finds a session when j and k are typed as part of the query', async () => {
+    const selected: string[] = [];
+    const view = renderInputBox(
+      <SessionPicker
+        sessions={[
+          { id: 'orders', threadId: 'orders', title: 'Orders', updatedAt: '2026-01-01T00:00:00Z' },
+          { id: 'journal', threadId: 'journal', title: 'Market journal', updatedAt: '2026-01-01T00:00:00Z' },
+        ]}
+        loading={false}
+        columns={72}
+        rows={20}
+        onSelect={(id) => selected.push(id)}
+        onCancel={() => {}}
+      />,
+    );
+    await waitForInput();
+
+    for (const character of 'market journal') {
+      view.stdin.write(character);
+      await waitForInput();
+    }
+    view.stdin.write('\r');
+    await waitForInput();
+
+    assert.deepEqual(selected, ['journal']);
+  });
+});
+
 describe('shared selection theme', () => {
   it('uses the same mist palette for session, resource, and output selection screens', async () => {
     const previousColorLevel = chalk.level;
