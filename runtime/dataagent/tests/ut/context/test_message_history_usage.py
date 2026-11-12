@@ -94,6 +94,26 @@ class TestSerializeUsageMetadata:
         ser = _serialize(msg)
         assert "usage_metadata" not in ser
 
+    def test_tool_message_status_roundtrip(self):
+        msg = ToolMessage(content="boom", tool_call_id="tc_err", name="bash", status="error")
+        ser = _serialize(msg)
+        assert ser["status"] == "error"
+        deser = _deserialize(ser)
+        assert isinstance(deser, ToolMessage)
+        assert deser.status == "error"
+
+    def test_tool_message_missing_status_defaults_success(self):
+        deser = _deserialize(
+            {
+                "type": "ToolMessage",
+                "content": "ok",
+                "tool_call_id": "tc_1",
+                "name": "read_file",
+            }
+        )
+        assert isinstance(deser, ToolMessage)
+        assert deser.status == "success"
+
 
 class TestDeserializeUsageMetadata:
     def test_full_usage_roundtrip(self):
