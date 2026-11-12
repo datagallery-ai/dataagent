@@ -141,13 +141,18 @@ class DataAgent:
 
         from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
         from dataagent.common_utils.outbound_tls import ENV_PRESERVE_ON_MISSING, apply_certificate_config
+        from dataagent.common_utils.secure_password import zero_passwords
 
         certificate = agent_config_manager.get("certificate")
-        apply_certificate_config(
-            certificate,
-            preserve_existing_on_missing=os.getenv(ENV_PRESERVE_ON_MISSING) == "1",
-            key_password=resolve_cert_key_passwords(certificate).get("outbound"),
-        )
+        passwords = resolve_cert_key_passwords(certificate)
+        try:
+            apply_certificate_config(
+                certificate,
+                preserve_existing_on_missing=os.getenv(ENV_PRESERVE_ON_MISSING) == "1",
+                key_password=passwords.get("outbound"),
+            )
+        finally:
+            zero_passwords(passwords)
 
         return cls(config=agent_config_manager)
 

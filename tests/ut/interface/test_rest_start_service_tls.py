@@ -17,11 +17,20 @@ from pathlib import Path
 
 import pytest
 
+from dataagent.common_utils.secure_password import zero_passwords
 from dataagent.interface.rest_api.start_service import (
     _parse_inbound_mode,
+    _ZeroingCertConfig,
     build_ssl_kwargs,
     load_certificate_config,
 )
+
+
+def _asgi_factory():
+    async def _app(scope, receive, send):
+        return None
+
+    return _app
 
 
 def _write_config(tmp_path: Path, body: str) -> str:
@@ -290,30 +299,6 @@ certificate:
         build_ssl_kwargs(config)
 
 
-def test_inbound_encrypted_passes_internal_password_to_uvicorn(tmp_path, monkeypatch):
-    from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
-    from tests.ut.common_utils.test_internal_cert_password import install_fake_internal_cert
-
-    install_fake_internal_cert(monkeypatch, "from-om")
-    server_cert, server_key, ca_cert = _pem_pair(tmp_path)
-    config = _write_config(
-        tmp_path,
-        f"""
-certificate:
-  server_cert_file: {server_cert}
-  server_key_file: {server_key}
-  ca_cert_file: {ca_cert}
-""",
-    )
-    cert = load_certificate_config(config)
-    kwargs = build_ssl_kwargs(
-        config,
-        certificate=cert,
-        key_password=resolve_cert_key_passwords(cert).get("inbound"),
-    )
-    assert kwargs["ssl_keyfile_password"] == "from-om"
-
-
 def test_inbound_encrypted_false_omits_uvicorn_password(tmp_path, monkeypatch):
     from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
     from tests.ut.common_utils.test_internal_cert_password import install_fake_internal_cert
@@ -332,11 +317,74 @@ certificate:
 """,
     )
     cert = load_certificate_config(config)
-    kwargs = build_ssl_kwargs(
-        config,
-        certificate=cert,
-        key_password=resolve_cert_key_passwords(cert).get("inbound"),
-    )
+    passwords = resolve_cert_key_passwords(cert)
+    zero_passwords(passwords)
+    kwargs = build_ssl_kwargs(config, certificate=cert)
     assert "ssl_keyfile_password" not in kwargs
     assert calls["init"] == 0
     assert calls["query"] == 0
+
+
+def test_zeroing_cert_config_loads_bytearray_then_zeroes(tmp_path, monkeypatch):
+    """``_ZeroingCertConfig``：load 期间口令以 bytearray 直挂、load 后清零并摘除。"""
+    from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
+    from tests.ut.common_utils.test_internal_cert_password import install_fake_internal_cert
+
+    install_fake_internal_cert(monkeypatch, "from-om")
+    server_cert, server_key, ca_cert = _pem_pair(tmp_path)
+    config = _write_config(
+        tmp_path,
+        f"""
+certificate:
+  server_cert_file: {server_cert}
+  server_key_file: {server_key}
+  ca_cert_file: {ca_cert}
+""",
+    )
+    cert = load_certificate_config(config)
+    passwords = resolve_cert_key_passwords(cert)
+    inbound_password = passwords.pop("inbound")
+    zero_passwords(passwords)
+
+    captured: dict[str, object] = {}
+
+    def _fake_create_ssl_context(**kwargs: object) -> ssl.SSLContext:
+        password = kwargs["password"]
+        captured["password_type"] = type(password)
+        captured["password_value"] = bytes(password)
+        captured["password_object"] = password
+        return ssl.SSLContext(ssl.PROTOCOL_TLS_SERVER)
+
+    monkeypatch.setattr("uvicorn.config.create_ssl_context", _fake_create_ssl_context)
+    config_obj = _ZeroingCertConfig(
+        "tests.ut.interface.test_rest_start_service_tls:_asgi_factory",
+        factory=True,
+        host="127.0.0.1",
+        port=8010,
+        ssl_certfile=server_cert,
+        ssl_keyfile=server_key,
+        cert_password=inbound_password,
+    )
+    config_obj.load()
+
+    assert captured["password_type"] is bytearray
+    assert captured["password_value"] == b"from-om"
+    assert config_obj.cert_password.zeroed is True
+    assert config_obj.ssl_keyfile_password is None
+    assert config_obj.ssl is not None
+    # uvicorn 拿到的正是随后被 memset 清零的同一缓冲区对象
+    assert captured["password_object"] == bytearray(len(captured["password_value"]))
+
+
+def test_zeroing_cert_config_without_password_loads_plainly():
+    """无口令（明文私钥/纯 HTTP）时 load() 不受影响。"""
+    config_obj = _ZeroingCertConfig(
+        "tests.ut.interface.test_rest_start_service_tls:_asgi_factory",
+        factory=True,
+        host="127.0.0.1",
+        port=8010,
+    )
+    config_obj.load()
+    assert config_obj.cert_password is None
+    assert config_obj.ssl is None
+    assert config_obj.ssl_keyfile_password is None

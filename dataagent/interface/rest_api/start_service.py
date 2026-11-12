@@ -14,6 +14,7 @@ import argparse
 import json
 import os
 import ssl
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
@@ -21,8 +22,10 @@ from typing import Any
 import uvicorn
 import yaml
 from loguru import logger
+from uvicorn.main import STARTUP_FAILURE
 
 from dataagent.common_utils.internal_cert_password import resolve_cert_key_passwords
+from dataagent.common_utils.secure_password import SecurePassword, zero_passwords
 from dataagent.config.config_manager import ConfigManager
 
 CONFIG_ENV_NAME = "DATAAGENT_REST_CONFIG"
@@ -227,15 +230,13 @@ def parse_args() -> argparse.Namespace:
 def build_ssl_kwargs(
     config_path: str,
     certificate: dict[str, Any] | None = None,
-    *,
-    key_password: str | None = None,
 ) -> dict[str, Any]:
     """Build uvicorn TLS kwargs from ``certificate``; empty dict means plain HTTP.
 
     整段不写或 ``certificate: {}`` 视为入站默认开启且 mode 3；缺服务端证/CA 报错。
     ``inbound_certificate_mode: true`` 也当成 mode 3，不得 ``int(True)==1``。
     仅显式 ``inbound_enabled: false`` 才走纯 HTTP，且不校验证件文件。
-    私钥口令只经 ``key_password``（内部包结果）传给 ``ssl_keyfile_password``。
+    私钥口令不经本函数：由 ``_ZeroingCertConfig`` 在 ``load()`` 时挂载、用毕清零。
     """
     cert = certificate if certificate is not None else load_certificate_config(config_path)
     if not _bool_enabled(cert.get("inbound_enabled"), default=True):
@@ -283,14 +284,55 @@ def build_ssl_kwargs(
     if ca_cert:
         ssl_kwargs["ssl_ca_certs"] = ca_cert
     ssl_kwargs["ssl_ciphers"] = cert.get("inbound_cipher_suites") or _DEFAULT_INBOUND_CIPHER_SUITES
-    pw = str(key_password).strip() if key_password else None
-    if pw:
-        ssl_kwargs["ssl_keyfile_password"] = pw
     return ssl_kwargs
 
 
-def main() -> None:
-    """Start the DataAgent FastAPI server."""
+class _ZeroingCertConfig(uvicorn.Config):
+    """携带 ``SecurePassword`` 口令的 uvicorn Config。
+
+    ``load()`` 前把口令 bytearray 临时挂到 ``ssl_keyfile_password``（uvicorn
+    ``create_ssl_context`` 会包成 ``lambda: password`` 送入 ``load_cert_chain``），
+    ``load()`` 结束立即清零并摘除属性。workers>1 时本对象随 spawn 传入各子进程，
+    每个进程各自 ``load()``、各自清零。
+    """
+
+    def __init__(self, *args: Any, cert_password: SecurePassword | None = None, **kwargs: Any) -> None:
+        super().__init__(*args, **kwargs)
+        self.cert_password = cert_password
+
+    def load(self) -> None:
+        """构建运行时资源（含 SSLContext）；结束后摘除并清零口令。"""
+        try:
+            if self.cert_password is not None and self.is_ssl and not self.cert_password.zeroed:
+                # uvicorn 标注为 str|None，但 create_ssl_context 对其仅做真值判断并包成
+                # lambda 送入 load_cert_chain，运行时接受 bytearray 本体
+                self.ssl_keyfile_password = self.cert_password.as_bytearray()  # type: ignore[assignment]
+            super().load()
+        finally:
+            self.ssl_keyfile_password = None
+            if self.cert_password is not None:
+                self.cert_password.zero()
+
+
+def _serve(config: _ZeroingCertConfig) -> bool:
+    """等价于 ``uvicorn.run`` 的服务分派（本服务无 --reload，省略该分支）。
+
+    返回 ``server.started``；False 表示启动失败，退出码由调用方决定。
+    """
+    server = uvicorn.Server(config=config)
+    try:
+        if config.workers > 1:
+            sock = config.bind_socket()
+            uvicorn.supervisors.Multiprocess(config, target=server.run, sockets=[sock]).run()
+        else:
+            server.run()
+    except KeyboardInterrupt:
+        pass
+    return server.started
+
+
+def main() -> int:
+    """Start the DataAgent FastAPI server; returns the process exit code."""
     if os.geteuid() == 0:
         raise SystemExit("Refusing to start DataAgent as root. Run as an unprivileged user.")
     args = parse_args()
@@ -310,26 +352,29 @@ def main() -> None:
         logger.info(f"Using scenarios: {bindings}; default={plan.table.default}")
 
     cert = load_certificate_config(config_path)
-    ssl_kwargs = build_ssl_kwargs(
-        config_path,
-        certificate=cert,
-        key_password=resolve_cert_key_passwords(cert).get("inbound"),
-    )
+    passwords = resolve_cert_key_passwords(cert)
+    inbound_password = passwords.pop("inbound", None)
+    zero_passwords(passwords)  # main 只消费 inbound；其余侧立即清零
+    ssl_kwargs = build_ssl_kwargs(config_path, certificate=cert)
     scheme = "https" if ssl_kwargs else "http"
     logger.info(f"Starting DataAgent service on {scheme}://{args.host}:{args.port} with {args.workers} worker(s)")
     if ssl_kwargs:
         logger.info(f"TLS 1.2/1.3 enabled (ssl_cert_reqs={ssl_kwargs.get('ssl_cert_reqs')})")
 
-    uvicorn.run(
-        "dataagent.interface.rest_api.app:create_app",
-        factory=True,
-        host=args.host,
-        port=args.port,
-        workers=args.workers,
-        server_header=False,
-        **ssl_kwargs,
+    started = _serve(
+        _ZeroingCertConfig(
+            "dataagent.interface.rest_api.app:create_app",
+            factory=True,
+            host=args.host,
+            port=args.port,
+            workers=args.workers,
+            server_header=False,
+            cert_password=inbound_password,
+            **ssl_kwargs,
+        )
     )
+    return 0 if started else STARTUP_FAILURE
 
 
 if __name__ == "__main__":
-    main()
+    sys.exit(main())
