@@ -20,13 +20,13 @@ MODEL:
       # base_url / api_key 走环境变量 BAILIAN_BASE_URL / BAILIAN_API_KEY
       model: "GLM-5.2"
       temperature: 0.3
-      timeout: 3600
+      timeout: 600
 
 SCENARIO:
   chat:
     input: "a spreadsheet task and one xlsx workbook in the workspace"
     task: "edit that workbook so the requested cells are correct"
-    instructions: "Use inspect_xlsx to see sheets and used ranges, read_xlsx to read values and formulas, and execute_xlsx to edit the workbook with openpyxl. Save in place under the original filename. Do not create a second workbook and do not rename sheets. Prefer formulas when a cell is computed from other cells."
+    instructions: "Use inspect_xlsx to see sheets and used ranges, read_xlsx to read values and formulas, and execute_xlsx to edit the workbook with openpyxl. Read spreadsheet_path and save the modified workbook to output_path as a new file. Do not rename sheets. Only edit cells inside answer_position. Prefer formulas when a cell is computed from other cells."
     output_format: "a short summary of what changed"
 
 TOOLS:

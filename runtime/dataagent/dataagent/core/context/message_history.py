@@ -65,6 +65,8 @@ def _serialize(msg: BaseMessage) -> dict[str, Any]:
     if isinstance(msg, ToolMessage):
         tool_call_id = getattr(msg, "tool_call_id", "")
         payload["tool_call_id"] = str(tool_call_id) if tool_call_id is not None else ""
+        status = getattr(msg, "status", None)
+        payload["status"] = status if isinstance(status, str) and status.strip() else "success"
     return payload
 
 
@@ -111,10 +113,14 @@ def _deserialize(payload: dict[str, Any]) -> BaseMessage | None:
         tid = tid if isinstance(tid, str) else ""
         if not tid.strip():
             return None
+        status = payload.get("status")
+        if not isinstance(status, str) or status not in {"success", "error"}:
+            status = "success"
         return ToolMessage(
             content=content,
             tool_call_id=tid,
             name=name,
+            status=status,
             additional_kwargs=akw,
             response_metadata=rmeta,
         )
