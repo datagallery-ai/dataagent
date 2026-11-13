@@ -2433,6 +2433,63 @@ def write_file(path: str, content: str, purpose: str | None = None) -> dict[str,
     }
 
 
+def rename_file(
+    path: str,
+    new_path: str,
+    purpose: str | None = None,
+) -> dict[str, Any]:
+    """Rename or move a file/directory within the workspace.
+
+    Renames ``path`` to ``new_path``. Both paths must be under the writable
+    workspace root. The destination must not already exist.
+
+    Usage:
+    - Prefer this tool over bash ``mv`` / ``rename`` for workspace files.
+    - Use absolute workspace paths for both ``path`` and ``new_path``.
+    - Destination parent directories are created automatically.
+    - Will not overwrite an existing destination; choose a free ``new_path``.
+    - Works for files and directories (including moving into another folder).
+
+    Args:
+        path (str): Existing file or directory path to rename/move.
+        new_path (str): Destination path (new name and/or location).
+        purpose (str | None): Brief reason for the rename (optional).
+    """
+    normalized_purpose = str(purpose or "").strip()
+    src = _resolve_and_authorize(path, "path", operation="rename_file", mode="write")
+    dst = _resolve_and_authorize(new_path, "new_path", operation="rename_file", mode="write")
+
+    if not src.exists():
+        raise FileNotFoundError(f"Source path does not exist: {src}")
+    if src.resolve() == dst.resolve():
+        raise ValueError(f"path and new_path resolve to the same location: {src.resolve()}")
+    if dst.exists():
+        raise FileExistsError(
+            f"Destination already exists: {dst}. Choose a different new_path or remove it first."
+        )
+
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    src.rename(dst)
+    resolved_dst = dst.resolve()
+    logger.trace(f"rename_file: {src} -> {resolved_dst}")
+
+    kind = "directory" if resolved_dst.is_dir() else "file"
+    summary = f"Renamed {kind}: {src} -> {resolved_dst}"
+    return {
+        "original_msg": summary,
+        "frontend_msg": (
+            "\n\nrename_file 工具执行完成"
+            + (f" — {normalized_purpose}" if normalized_purpose else "")
+            + f"\n\n已重命名: {src} → {resolved_dst}"
+        ),
+        "data": {
+            "old_path": str(src),
+            "new_path": str(resolved_dst),
+            "type": kind,
+        },
+    }
+
+
 def glob(
     glob_pattern: str, target_directory: str | None = None, max_results: int = DEFAULT_GLOB_MAX_RESULTS
 ) -> dict[str, Any]:
@@ -2911,6 +2968,7 @@ tool_mapping = {
     "read_file": read_file,
     "list_files": list_files,
     "write_file": write_file,
+    "rename_file": rename_file,
     "request_human_feedback": request_human_feedback,
     "nl2sql_sub_agent_tool": nl2sql_sub_agent_tool,
 }

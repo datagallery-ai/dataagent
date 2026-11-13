@@ -102,6 +102,10 @@ TOOLS:
         post:
           - dataagent.actions.tools.hooks.examples.ddl_hooks.ddl_post
           - dataagent.core.suite.builtin_suites.de_agent.hooks.word_roots.ddl_word_roots_post
+    # 重命名 / 移动工作区内文件或目录
+    - name: "rename_file"
+      module: "dataagent.actions.tools.local_tool.tools"
+      function: "rename_file"
     # 表名格式校验 + 数据库名校验
     - name: "validate_table_name"
       module: "dataagent.core.suite.builtin_suites.de_agent.tools.check_table_existence"
