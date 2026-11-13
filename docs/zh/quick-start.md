@@ -13,7 +13,6 @@
 
 - **一键部署**：Ubuntu 或 Debian（x86_64 / aarch64）；Node.js 22（缺失时脚本可在确认后协助安装）和 uv
 - **手动 npm**：Linux、macOS 或 Windows；Node.js >= 22、npm 和 uv
-- 可选外置 [DataLink](guides/datalink.md)：需要语义图谱能力时单独运行（一键部署不依赖）
 
 请在同一环境内安装和运行项目。Windows 用户不要在 Windows 和 WSL 之间共用 `node_modules`。
 
@@ -63,10 +62,6 @@ cd datafoundry
 ```
 
 部署时不要求填写 `LLM_*`。重复部署会进入维护窗口：先停止受管进程组，再执行 `npm ci` 与构建。
-
-### 外置 DataLink（可选）
-
-一键部署**只启动** Web 和控制面，**不会**安装或启动 DataLink。控制面也不提供 DataLink 路由。需要这套独立服务时，按 [DataLink](guides/datalink.md) 单独运行。
 
 ## Windows / macOS / 其他：手动 npm 部署
 

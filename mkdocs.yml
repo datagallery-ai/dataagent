@@ -75,7 +75,6 @@ nav:
           - Web workbench: en/guides/web-workbench.md
           - TUI: en/guides/tui.md
           - Where data comes from: en/guides/data-sources.md
-          - DataLink: en/guides/datalink.md
   - Developer Guide:
       - Architecture:
           - Overview: en/architecture/overview.md

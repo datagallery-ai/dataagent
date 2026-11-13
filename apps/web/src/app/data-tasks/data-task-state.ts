@@ -1818,14 +1818,6 @@ export const WORKSPACE_CONFIG_FIELDS: Record<
       fullWidth: true,
     },
     {
-      key: "apiUrl",
-      label: "Data API endpoint",
-      placeholder: "https://example.com",
-      helpText: "Used by the DataLink workspace graph. Leave empty for MCP-only services.",
-      visibleWhen: (settings) => !isMcpStdioTransport(settings),
-      fullWidth: true,
-    },
-    {
       key: "command",
       label: "Executable",
       placeholder: "/usr/bin/npx",

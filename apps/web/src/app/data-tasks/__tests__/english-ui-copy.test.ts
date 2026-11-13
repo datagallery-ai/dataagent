@@ -65,7 +65,6 @@ describe("workbench shell i18n", () => {
       workspaceConfig: { db: [], kb: [], mcp: [], skill: [], llm: [] },
       workspaceFileCount: 0,
       activeConfigPanel: null,
-      activeDataLinkPanel: false,
       activeFilesPanel: false,
       capabilitiesReady: true,
       supportsFiles: true,
@@ -75,7 +74,6 @@ describe("workbench shell i18n", () => {
     });
     expect(groups.map((group) => group.title)).toEqual([
       "Data Sources",
-      "Data Link",
       "Knowledge",
       "Agent Tools",
       "Models",

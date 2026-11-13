@@ -1,1 +1,0 @@
-"""Structural node extractors."""
