@@ -105,7 +105,6 @@
     ["Web workbench", "Web 工作台"],
     ["TUI", "TUI"],
     ["Data sources", "数据源"],
-    ["DataLink", "DataLink"],
     ["Developer Guide", "开发者指南"],
     ["Architecture", "架构"],
     ["Overview", "架构概览"],

@@ -3,12 +3,6 @@ import type { LiveRunStatus } from "./live-run-state";
 import { LEFT_PANEL_MAX_WIDTH } from "./workspace-layout";
 import type { TranslateFn } from "../../i18n/types";
 
-function isDatalinkMcpItem(item: WorkspaceConfigStore["mcp"][number]): boolean {
-  const name = item.name.toLowerCase();
-  const toolNames = item.settings?.toolNames?.toLowerCase() ?? "";
-  return name.includes("datalink") || toolNames.includes("datalink_") || toolNames.includes("add_table");
-}
-
 export type SessionListIconSlot = "session" | "running" | "pin" | "none";
 
 export function isSessionRunActive(status: LiveRunStatus): boolean {
@@ -17,14 +11,13 @@ export function isSessionRunActive(status: LiveRunStatus): boolean {
 
 export type WorkspaceResourceNavAction =
   | { type: "config"; panel: "db" | "kb" | "mcp" | "skill" | "llm" }
-  | { type: "assets" }
-  | { type: "datalink" };
+  | { type: "assets" };
 
 export type WorkspaceResourceNavGroup = {
-  id: "data-sources" | "data-link" | "assets" | "knowledge" | "agent-tools" | "models";
+  id: "data-sources" | "assets" | "knowledge" | "agent-tools" | "models";
   title: string;
   summary: string;
-  icon: "database" | "graph" | "assets" | "book" | "tools" | "models";
+  icon: "database" | "assets" | "book" | "tools" | "models";
   action: WorkspaceResourceNavAction;
   active: boolean;
   statusLabel?: string;
@@ -35,7 +28,6 @@ export function getWorkspaceResourceNavGroups({
   workspaceConfig,
   workspaceFileCount,
   activeConfigPanel,
-  activeDataLinkPanel,
   activeFilesPanel,
   capabilitiesReady,
   supportsFiles,
@@ -47,7 +39,6 @@ export function getWorkspaceResourceNavGroups({
   workspaceConfig: WorkspaceConfigStore;
   workspaceFileCount: number;
   activeConfigPanel: "db" | "kb" | "mcp" | "skill" | "llm" | null;
-  activeDataLinkPanel: boolean;
   activeFilesPanel: boolean;
   capabilitiesReady: boolean;
   supportsFiles: boolean;
@@ -76,15 +67,6 @@ export function getWorkspaceResourceNavGroups({
       icon: "database",
       action: { type: "config", panel: "db" },
       active: activeConfigPanel === "db",
-    },
-    {
-      id: "data-link",
-      title: t("resources.dataLink"),
-      summary: String(workspaceConfig.mcp.filter(isDatalinkMcpItem).length),
-      icon: "graph",
-      action: { type: "datalink" },
-      active: activeDataLinkPanel,
-      statusLabel: mcpUnsupported ? backendUnsupported : undefined,
     },
     {
       id: "knowledge",

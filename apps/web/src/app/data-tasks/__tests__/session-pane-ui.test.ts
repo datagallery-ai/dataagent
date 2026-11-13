@@ -21,10 +21,7 @@ const workspaceConfig: WorkspaceConfigStore = {
   kb: [],
   mcp: [
     item("mcp-fs", "Filesystem MCP"),
-    {
-      ...item("datalink", "datalink"),
-      settings: { toolNames: "datalink_show, datalink_explore, add_table" },
-    },
+    item("warehouse-mcp", "Warehouse MCP"),
   ],
   skill: [item("skill-default", "Data Skill")],
   llm: [item("llm-default", "GPT-4.1")],
@@ -98,7 +95,6 @@ describe("session pane ui conventions", () => {
       workspaceConfig,
       workspaceFileCount: 7,
       activeConfigPanel: null,
-      activeDataLinkPanel: false,
       activeFilesPanel: false,
       capabilitiesReady: true,
       supportsFiles: true,
@@ -109,7 +105,6 @@ describe("session pane ui conventions", () => {
 
     expect(groups.map((group) => group.title)).toEqual([
       "Data Sources",
-      "Data Link",
       "Knowledge",
       "Agent Tools",
       "Models",
@@ -120,25 +115,19 @@ describe("session pane ui conventions", () => {
       action: { type: "config", panel: "db" },
       active: false,
     });
-    expect(groups[1]).toMatchObject({
-      title: "Data Link",
-      summary: "1",
-      action: { type: "datalink" },
-      active: false,
-    });
-    expect(groups[4]).toMatchObject({
+    expect(groups[3]).toMatchObject({
       title: "Models",
       summary: "1",
       action: { type: "config", panel: "llm" },
       active: false,
     });
-    expect(groups[5]).toMatchObject({
+    expect(groups[4]).toMatchObject({
       title: "Assets",
       summary: "7",
       action: { type: "assets" },
       active: false,
     });
-    expect(groups[3]).toMatchObject({
+    expect(groups[2]).toMatchObject({
       title: "Agent Tools",
       summary: "3",
       action: { type: "config", panel: "mcp" },
@@ -158,7 +147,6 @@ describe("session pane ui conventions", () => {
       },
       workspaceFileCount: 0,
       activeConfigPanel: null,
-      activeDataLinkPanel: false,
       activeFilesPanel: false,
       capabilitiesReady: true,
       supportsFiles: true,
@@ -179,7 +167,6 @@ describe("session pane ui conventions", () => {
       workspaceConfig: { ...workspaceConfig, db: [] },
       workspaceFileCount: 0,
       activeConfigPanel: "kb",
-      activeDataLinkPanel: false,
       activeFilesPanel: false,
       capabilitiesReady: true,
       supportsFiles: false,
@@ -189,8 +176,8 @@ describe("session pane ui conventions", () => {
     });
 
     const dataSources = groups[0];
-    const assets = groups[5];
-    const knowledge = groups[2];
+    const assets = groups[4];
+    const knowledge = groups[1];
     expect(dataSources.summary).toBe("0");
     expect(assets).toMatchObject({
       title: "Assets",

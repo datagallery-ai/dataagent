@@ -13,7 +13,6 @@ After deploy, put `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in the reposito
 
 - **One-click deploy**: Ubuntu or Debian (x86_64 / aarch64); Node.js 22 (the script can help install it after consent) and uv
 - **Manual npm**: Linux, macOS, or Windows; Node.js >= 22, npm, and uv
-- Optional external [DataLink](guides/datalink.md): run it as a separate process if you want semantic graph features (not required for deploy)
 
 Install and run the project in the same environment. On Windows, do not share `node_modules` between Windows and WSL.
 
@@ -63,10 +62,6 @@ Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL th
 ```
 
 `LLM_*` is not required during deploy. Re-running deploy uses a maintenance window: stop the managed process group before `npm ci` and builds.
-
-### External DataLink (optional)
-
-One-click deploy starts **only** Web and the control plane. It does **not** install or start DataLink, and the control plane does not serve DataLink routes. To run that separate service, follow [DataLink](guides/datalink.md).
 
 ## Windows / macOS / other: manual npm deploy
 

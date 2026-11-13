@@ -63,7 +63,7 @@ DataAgent 0.2 turns the first usable workbench into a more complete, stateful da
 
 - **Branchable, concurrent analysis** — Keep multiple sessions running, queue follow-up prompts, restore completed work, and branch from an earlier question or checkpoint without overwriting the original path.
 - **Evidence-first follow-ups** — Reference a complete output or a selected table/text region in the next question; resolved evidence is carried into the governed run context with diagnostics.
-- **Semantic trace and DataLink integration** — Inspect checkpoint-backed run structure in a semantic Trace DAG. Connect an external DataLink service to map tables and columns to business concepts, entities, joinable paths, and confidence-scored relationships for stronger agent grounding.
+- **Semantic trace** — Inspect checkpoint-backed run structure in a semantic Trace DAG.
 - **Reusable outputs and workspace assets** — Preview and export tables, charts, reports, SQL, and files; upload files into an active session, then promote supported files for reuse across sessions.
 - **Production-facing Web foundation** — Built-in password authentication, same-origin API proxying, bilingual UI, model connection tests, and onboarding.
 
@@ -75,7 +75,7 @@ Formal mode has two paths. Docker / Compose is not provided in this release.
 
 ### Recommended: Ubuntu / Debian one-click
 
-`./deploy.sh` generates configuration, installs dependencies, builds (Web, API, and TUI), and starts Web + API as a detached background process — closing the terminal does not stop the stack. The TUI is built and ready but is a foreground client: start it in another terminal with `./deploy.sh tui` (or `npm run start:tui`); it does **not** stay running with the stack. DataLink is an **external** component (not started by deploy) — connect it later via MCP in the Web UI if needed. No model key is required during deploy — create and enable a model profile in the Web UI after login. Does **not** support native Windows / macOS.
+`./deploy.sh` generates configuration, installs dependencies, builds (Web, API, and TUI), and starts Web + API as a detached background process — closing the terminal does not stop the stack. The TUI is built and ready but is a foreground client: start it in another terminal with `./deploy.sh tui` (or `npm run start:tui`); it does **not** stay running with the stack. No model key is required during deploy — create and enable a model profile in the Web UI after login. Does **not** support native Windows / macOS.
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -138,7 +138,7 @@ You will see the full chain: schema inspection → read-only SQL → SQL audit �
 
 For real production, also configure SMTP and a reverse proxy: [`deploy/nginx.datagallery.conf.example`](deploy/nginx.datagallery.conf.example) (gzip/brotli static assets; keep `/dataagent/stream` uncompressed and unbuffered for SSE).
 
-> Full steps, the two-environment matrix, and optional external DataLink notes: [Quick Start](docs/en/quick-start.md). Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
+> Full steps and the two-environment matrix: [Quick Start](docs/en/quick-start.md). Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
 
 
 ## 🆚 How It Differs From Coding Agents And SQL Chatbots

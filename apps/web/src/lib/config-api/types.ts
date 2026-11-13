@@ -195,58 +195,6 @@ export type McpServerDto = {
   updatedAt?: string;
 };
 
-export type DatalinkServerDto = {
-  id: string;
-  name: string;
-  description?: string;
-  healthStatus?: string;
-  serverUrl?: string;
-  apiUrl?: string;
-  transport?: string;
-  toolCount?: number;
-  toolNames?: string[];
-  updatedAt?: string;
-};
-
-export type DatalinkNodeDto = {
-  id: string;
-  type: string;
-  name?: string;
-  properties?: Record<string, unknown>;
-  [key: string]: unknown;
-};
-
-export type DatalinkEdgeDto = {
-  id: string;
-  source_id?: string;
-  source?: string;
-  target_id?: string;
-  target?: string;
-  type: string;
-  confidence?: number;
-  properties?: Record<string, unknown>;
-  [key: string]: unknown;
-};
-
-export type DatalinkGraphDto = {
-  nodes: DatalinkNodeDto[];
-  edges: DatalinkEdgeDto[];
-};
-
-export type DatalinkServersResponseDto = {
-  servers: DatalinkServerDto[];
-};
-
-export type DatalinkGraphResponseDto = {
-  graph: DatalinkGraphDto;
-  server: DatalinkServerDto;
-};
-
-export type DatalinkToolResponseDto = {
-  result: string;
-  server: DatalinkServerDto;
-};
-
 export type ModelProfileDto = {
   id: string;
   name: string;

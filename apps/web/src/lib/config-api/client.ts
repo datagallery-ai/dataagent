@@ -4,9 +4,6 @@ import type {
   ArtifactDto,
   ArtifactVersionDto,
   BackendCapabilitiesResponse,
-  DatalinkGraphResponseDto,
-  DatalinkServersResponseDto,
-  DatalinkToolResponseDto,
   DatasourceDto,
   DatasourceSchemaDto,
   DatasourceTablePreviewDto,
@@ -353,53 +350,6 @@ export const configApi = {
 
   listDatasourceTypes(): Promise<DatasourceTypeDto[]> {
     return requestEnvelope<DatasourceTypeDto[]>("/api/v1/datasource-types");
-  },
-
-  listDatalinkServers(): Promise<DatalinkServersResponseDto> {
-    return requestEnvelope<DatalinkServersResponseDto>("/api/v1/datalink/servers");
-  },
-
-  getDatalinkGraph(serverId: string): Promise<DatalinkGraphResponseDto> {
-    return requestEnvelope<DatalinkGraphResponseDto>(
-      `/api/v1/datalink/${encodeURIComponent(serverId)}/graph`,
-    );
-  },
-
-  exploreDatalink(
-    serverId: string,
-    body: { focus?: string; maskCredential?: boolean; maxNodes?: number; query: string },
-  ): Promise<DatalinkToolResponseDto> {
-    return requestEnvelope<DatalinkToolResponseDto>(
-      `/api/v1/datalink/${encodeURIComponent(serverId)}/explore`,
-      { method: "POST", body: JSON.stringify(body) },
-    );
-  },
-
-  addDatalinkTable(
-    serverId: string,
-    body: { schemaName?: string; source: string; sourceType?: string; table?: string },
-  ): Promise<DatalinkToolResponseDto> {
-    return requestEnvelope<DatalinkToolResponseDto>(
-      `/api/v1/datalink/${encodeURIComponent(serverId)}/tables`,
-      { method: "POST", body: JSON.stringify(body) },
-    );
-  },
-
-  removeDatalinkTable(
-    serverId: string,
-    body: { cleanupOrphans?: boolean; tableId: string },
-  ): Promise<DatalinkToolResponseDto> {
-    return requestEnvelope<DatalinkToolResponseDto>(
-      `/api/v1/datalink/${encodeURIComponent(serverId)}/tables`,
-      { method: "DELETE", body: JSON.stringify(body) },
-    );
-  },
-
-  rebuildDatalink(serverId: string): Promise<DatalinkToolResponseDto> {
-    return requestEnvelope<DatalinkToolResponseDto>(
-      `/api/v1/datalink/${encodeURIComponent(serverId)}/rebuild`,
-      { method: "POST", body: JSON.stringify({}) },
-    );
   },
 
   createDatasource(body: Record<string, unknown>): Promise<DatasourceDto> {
