@@ -95,12 +95,12 @@ export const SessionPicker: React.FC<SessionPickerProps> = ({
       return;
     }
 
-    if (key.upArrow || (key.ctrl && input === 'p') || input === 'k') {
+    if (key.upArrow || (key.ctrl && input === 'p')) {
       setSelectedIndex((index) => Math.max(0, index - 1));
       return;
     }
 
-    if (key.downArrow || (key.ctrl && input === 'n') || input === 'j') {
+    if (key.downArrow || (key.ctrl && input === 'n')) {
       if (filteredSessions.length === 0) return;
       setSelectedIndex((index) => Math.min(filteredSessions.length - 1, index + 1));
       return;
@@ -279,7 +279,7 @@ export const SessionPicker: React.FC<SessionPickerProps> = ({
 
         <Box paddingX={1}>
           <Text color={selectionColors.disabled} wrap="truncate-end">
-            {truncate('Up/Down/j/k navigate - Enter resume - Esc cancel', contentWidth)}
+            {truncate('Up/Down or Ctrl+P/N · Enter resume · Esc cancel', contentWidth)}
           </Text>
         </Box>
       </Box>
