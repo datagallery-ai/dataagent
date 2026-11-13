@@ -15,8 +15,10 @@
 from __future__ import annotations
 
 from dataagent.actions.tools.semantic_tool.metadata_recall import (
+    DEFAULT_METADATA_RECALL_TEMPERATURE,
     _SEMANTIC_RETRIEVE_HOOK,
     _is_history_sql_query,
+    _resolve_metadata_recall_temperature,
     _strip_semantic_retrieve_hook,
 )
 
@@ -43,3 +45,12 @@ def test_strip_semantic_retrieve_hook_cleans_empty_hook_tree() -> None:
     config = {"HOOKS": {"agent": {"pre": [_SEMANTIC_RETRIEVE_HOOK]}}}
     _strip_semantic_retrieve_hook(config)
     assert "HOOKS" not in config
+
+
+def test_resolve_metadata_recall_temperature_defaults_to_0_4() -> None:
+    assert DEFAULT_METADATA_RECALL_TEMPERATURE == 0.4
+    assert _resolve_metadata_recall_temperature(None) == 0.4
+    assert _resolve_metadata_recall_temperature({}) == 0.4
+    assert _resolve_metadata_recall_temperature({"temperature": 0.2}) == 0.2
+    assert _resolve_metadata_recall_temperature({"temperature": "0.6"}) == 0.6
+    assert _resolve_metadata_recall_temperature({"temperature": "bad"}) == 0.4

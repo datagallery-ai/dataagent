@@ -21,6 +21,8 @@ TOOLS:
       function: "metadata_recall"
       config:
         llm_model: "chat_model"
+        # 子 Agent chat 温度；覆盖主 MODEL.chat_model.params.temperature。缺省 0.4。
+        temperature: 0.4
         # get_table_schema 的列枚举值开关与阈值统一放在本条目配置：
         # metadata_recall 子代理与主进程内直接调用均读取此处
         enum_values_enabled: true
