@@ -1,0 +1,12 @@
+{
+  "schema_version": 2,
+  "id": "data-qa",
+  "tools": {
+    "get_ontology_description_tool": {
+      "entrypoint": "tools/ontology.py:get_ontology_description_tool"
+    },
+    "request_human_feedback": {
+      "entrypoint": "tools/feedback.py:request_human_feedback"
+    }
+  }
+}
