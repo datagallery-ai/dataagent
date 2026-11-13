@@ -18,7 +18,7 @@ def save_evidence(context, kind: str, query, payload) -> dict:
     return {"data": payload, "evidence_path": str(path)}
 
 
-def read_evidence(context) -> list[dict]:
+def read_evidence(context, *, since_ns: int | None = None) -> list[dict]:
     """Read the current session's complete evidence records in retrieval order."""
     records = []
     for path in (context.session.outputs / "metadata").glob("*.json"):
@@ -26,6 +26,8 @@ def read_evidence(context) -> list[dict]:
         # Filesystems can give consecutive writes identical mtimes; persist the write time.
         # Old session records still use their original filesystem timestamp.
         timestamp = record.get("recorded_at_ns", path.stat().st_mtime_ns)
+        if since_ns is not None and timestamp < since_ns:
+            continue
         records.append((timestamp, path.name, record))
     records.sort(key=lambda item: (item[0], item[1]))
     return [record for _, _, record in records]

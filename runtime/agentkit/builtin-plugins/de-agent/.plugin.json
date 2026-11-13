@@ -87,6 +87,18 @@
       {
         "entrypoint": "hooks/ir.py:update_ir",
         "matcher": "write_todos"
+      },
+      {
+        "entrypoint": "hooks/ir.py:record_ir_diagnostics",
+        "matcher": "task"
+      },
+      {
+        "entrypoint": "hooks/ir.py:record_ir_diagnostics",
+        "matcher": "de-agent__check_and_repair_sql"
+      },
+      {
+        "entrypoint": "hooks/ir.py:record_ir_diagnostics",
+        "matcher": "de-agent__read_ir"
       }
     ],
     "before_tool": [
@@ -108,12 +120,26 @@
       },
       {
         "entrypoint": "hooks/ir.py:ensure_ir_ready",
-        "matcher": "validate_deliverables"
+        "matcher": "de-agent__read_ir"
+      },
+      {
+        "entrypoint": "hooks/ir.py:ensure_ir_ready",
+        "matcher": "de-agent__check_and_repair_sql"
       }
     ],
     "after_agent": [
       {
         "entrypoint": "hooks/dataops_quality_check_post.py:dataops_quality_check_post"
+      }
+    ],
+    "before_agent": [
+      {
+        "entrypoint": "hooks/ir.py:prepare_turn"
+      }
+    ],
+    "before_model": [
+      {
+        "entrypoint": "hooks/ir.py:prepare_context"
       }
     ]
   }

@@ -59,6 +59,8 @@ def list_field_templates(catalog: dict[str, Any]) -> list[dict[str, Any]]:
         field["template_contract"] = contract
         field["output_contract"] = output_contract
         field["template_version"] = version
+        if field["field_id"] in {"sources", "output_features"}:
+            field["predicate_protocol"] = deepcopy(catalog.get("predicate_protocol", {}))
         templates.append(field)
     return templates
 
