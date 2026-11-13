@@ -61,8 +61,18 @@ class PerceptorNode(BaseNL2SQLNode):
         if self._semantic_client is None:
             try:
                 self._semantic_client = SemanticServiceClient.from_config(self._config_manager)
-            except DataAgentError:
-                raise
+            except DataAgentError as exc:
+                if "SEMANTIC_LAYER.base_url" not in exc.fact:
+                    raise
+                raise DataAgentError(
+                    source=exc.source,
+                    component=exc.component,
+                    fact=(
+                        "SEMANTIC_LAYER.base_url 未配置，"
+                        "nl2sql_sub_agent_tool 当前不可用，无法获取表结构，也无法生成 SQL。"
+                    ),
+                    trace_id=exc.trace_id,
+                ) from exc
             except (AttributeError, ValueError) as exc:
                 raise DataAgentError(
                     source="config",
