@@ -33,9 +33,20 @@ HISTORY_SQL_DISABLED_MSG = (
     "历史SQL检索功能未启用（HISTORY_SQL.enabled=false）。当前部署未开启该能力--"
     "这不是⌈已检索但无匹配⌋，请勿据此推断不存在相关历史SQL，直接跳过历史SQL引用即可。"
 )
+# Sub-agent chat temperature when TOOLS.builtin[metadata_recall].config.temperature unset.
+DEFAULT_METADATA_RECALL_TEMPERATURE = 0.4
 _HISTORY_SQL_TOOL_NAMES = frozenset({"grep", "glob"})
 _HISTORY_SQL_SKILL_DIR_SUFFIX = "metadata_recall/skill"
 _HISTORY_SQL_ROUTE_PREFIXES = ("历史SQL路由", "- 历史SQL路由")
+
+
+def _resolve_metadata_recall_temperature(tool_config: dict[str, Any] | None) -> float:
+    """Read temperature from tool YAML config; fall back to DEFAULT_METADATA_RECALL_TEMPERATURE."""
+    raw = (tool_config or {}).get("temperature", DEFAULT_METADATA_RECALL_TEMPERATURE)
+    try:
+        return float(raw)
+    except (TypeError, ValueError):
+        return DEFAULT_METADATA_RECALL_TEMPERATURE
 
 
 def _history_sql_enabled(config_manager: Any) -> bool:
@@ -273,7 +284,7 @@ def _build_metadata_recall_sub_agent_config(
             runtime_model_copy = copy.deepcopy(runtime_model)
             runtime_params = runtime_model_copy.get("params")
             if isinstance(runtime_params, dict):
-                runtime_params["temperature"] = 0.7
+                runtime_params["temperature"] = _resolve_metadata_recall_temperature(tool_config)
             temp_config["MODEL"] = {
                 bound_llm_model_name: runtime_model_copy,
             }
