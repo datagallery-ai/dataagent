@@ -302,5 +302,9 @@ def test_perceptor_missing_base_url_exposes_config_key() -> None:
     with pytest.raises(DataAgentError) as caught:
         _ = node.semantic_client
     assert caught.value.source == "config"
-    assert "SEMANTIC_LAYER.base_url" in caught.value.fact
-    assert "SEMANTIC_LAYER.base_url" in caught.value.actor_text()
+    assert caught.value.component == "semantic-layer"
+    assert caught.value.fact == (
+        "SEMANTIC_LAYER.base_url 未配置，"
+        "nl2sql_sub_agent_tool 当前不可用，无法获取表结构，也无法生成 SQL。"
+    )
+    assert caught.value.actor_text() == f"[config/semantic-layer] {caught.value.fact}"
