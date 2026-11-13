@@ -311,3 +311,5 @@ Markdown 表格渲染器（`render_metrics_table`），所以产出的表格形�
 - 试算/探查工具: `dataops-probe` skill(字段存在性/取值范围探查,本 skill 不覆盖)
 - 独立数据验证: `dataops-validate-data` skill(只查真实目标表,不建表不插入)
 - SQL 规范校验: `validate_deliverables` 工具(语法/GATE/8 类质量自检,本 skill 不覆盖)
+
+**交付在前，校验在后：**根 Agent 的 `after_agent` hook 在交付正文产出后启动试算。交付消息保持原样，质量报告作为独立 AI 消息追加。该消息携带 `## 最终交付`，保证读取最后一条消息的非流式客户端仍能看到交付说明；原生 AG-UI 消息事件发送进度提示和报告，报告事件不重复发送交付正文，进度提示不写入消息历史。

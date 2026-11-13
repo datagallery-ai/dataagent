@@ -28,7 +28,7 @@
         "dataops": {
           "enabled": true,
           "model": "primary",
-          "timeout_s": 1800,
+          "timeout_s": 3600,
           "poll_interval_ms": 30000,
           "drop_before_create": true,
           "auto_trial_compute": true,
@@ -60,7 +60,6 @@
           "timeout_seconds": 600,
           "disabled_rules": [],
           "dataops_validation_enabled": true,
-          "dataops_max_attempts": 5,
           "enable_thinking": false
         },
         "history_sql": {

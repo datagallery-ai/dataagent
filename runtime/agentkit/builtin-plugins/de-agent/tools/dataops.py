@@ -13,6 +13,7 @@
 """Native tools for source probing, scratch-table trials and read-only quality checks."""
 
 import asyncio
+from typing import Annotated
 
 from langchain.tools import ToolRuntime
 from utils.dataops_mcp import dataops_options, dataops_settings
@@ -27,7 +28,10 @@ from dataagent.models import ModelContext
 async def dataops_probe_table(
     table: str,
     runtime: ToolRuntime[ModelContext],
-    columns: list[str] | None = None,
+    columns: Annotated[
+        list[str],
+        "必填非空列名清单。只允许单段列名，不含库/表前缀或 *；先从 metadata_recall/get_table_schema 获取真实列名。",
+    ],
     partition_filter: str | None = None,
     sample_size: int = 5,
     timeout_sec: int = 60,
