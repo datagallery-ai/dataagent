@@ -12,7 +12,7 @@
 # ============================================================================
 """Unit tests for file tool enhancements (phase 1).
 
-Covers: read_file, edit_file, write_file, glob, grep.
+Covers: read_file, edit_file, write_file, rename_file, glob, grep.
 """
 
 import sys
@@ -350,6 +350,45 @@ class TestWriteFileAtomicWrite:
         f = workspace / "sub" / "dir" / "file.txt"
         tools.write_file(str(f), content="hello\n", purpose="test")
         assert f.read_text(encoding="utf-8") == "hello\n"
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# rename_file
+# ═══════════════════════════════════════════════════════════════════════════════
+
+
+class TestRenameFile:
+    def test_renames_file_in_place(self, workspace: Path):
+        src = workspace / "old.txt"
+        src.write_text("hello\n", encoding="utf-8")
+        dst = workspace / "new.txt"
+        r = tools.rename_file(str(src), str(dst), purpose="test")
+        assert not src.exists()
+        assert dst.read_text(encoding="utf-8") == "hello\n"
+        assert r["data"]["type"] == "file"
+        assert r["data"]["new_path"] == str(dst.resolve())
+
+    def test_moves_into_new_directory(self, workspace: Path):
+        src = workspace / "a.txt"
+        src.write_text("x\n", encoding="utf-8")
+        dst = workspace / "sub" / "b.txt"
+        tools.rename_file(str(src), str(dst), purpose="move")
+        assert not src.exists()
+        assert dst.read_text(encoding="utf-8") == "x\n"
+
+    def test_rejects_existing_destination(self, workspace: Path):
+        src = workspace / "from.txt"
+        dst = workspace / "to.txt"
+        src.write_text("a\n", encoding="utf-8")
+        dst.write_text("b\n", encoding="utf-8")
+        with pytest.raises(FileExistsError):
+            tools.rename_file(str(src), str(dst), purpose="test")
+        assert src.exists()
+        assert dst.read_text(encoding="utf-8") == "b\n"
+
+    def test_rejects_missing_source(self, workspace: Path):
+        with pytest.raises(FileNotFoundError):
+            tools.rename_file(str(workspace / "missing.txt"), str(workspace / "out.txt"))
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
