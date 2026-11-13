@@ -151,6 +151,16 @@ def test_extraction_normalizes_case_deviated_columns() -> None:
         ("查询上行PRB使用量", ["cell_prb_ul_usage"], "dw1745159004"),
         ("查询保障次数", ["assurance_times"], "dw1745159008"),
         (
+            "查询本月份按自定义分群（custom_group）统计保障业务的业务使用次数，粒度为天",
+            ["service_times", "custom_group", "1d_granularity"],
+            "dw1745159008",
+        ),
+        (
+            "按保障分群统计业务使用次数",
+            ["service_times", "guarantee_group", "1d_granularity"],
+            "dw1745159007",
+        ),
+        (
             "查询网元维度保障用户数",
             ["assurance_users", "ne_name"],
             "dw1745159028",
