@@ -24,7 +24,7 @@ from dataagent.models import ModelContext
 async def read_ir(runtime: ToolRuntime[ModelContext]) -> str | ToolMessage:
     """Read current DataTaskIR constraints before drafting DDL or fixing SQL.
 
-    Initialize the plan with write_todos first. This tool never accepts model-written
+    The consumer hook refreshes current inputs even without a plan. Never accept model-written
     field values as evidence; it uses user messages and successful source evidence.
     """
     if not ir_enabled(runtime.context):

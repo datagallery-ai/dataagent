@@ -12,12 +12,14 @@
 # ============================================================================
 """Build legacy IR inputs from user messages and successful native evidence."""
 
+import re
 from pathlib import Path
 
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
 from dataagent.models import ModelContext
+from utils.data_task_ir.runtime import ir_state
 from utils.evidence import _without_diagnostics, read_evidence
 
 
@@ -65,7 +67,12 @@ def tool_succeeded(request, result) -> bool:
 def collect_evidence(context: ModelContext, state: dict) -> list[dict]:
     """Read semantic evidence files and successful document results in native history."""
     evidence = []
-    for record in read_evidence(context):
+    cache = ir_state(context) if hasattr(context, "get_plugin_state") else {}
+    session = cache.get("session") or cache.get("turn")
+    for record in read_evidence(context, since_ns=session["started_at_ns"] if session else None):
+        # Native history-sql-recall results normally never enter this store.
+        if "历史sql" in str(record.get("query") or "").lower():
+            continue
         if record.get("kind") in {"schema", "udf", "joins", "retrieve"}:
             evidence.append({
                 "tool": "metadata_recall",
@@ -80,16 +87,26 @@ def collect_evidence(context: ModelContext, state: dict) -> list[dict]:
             for call in message.tool_calls:
                 calls[call["id"]] = call
         elif isinstance(message, ToolMessage) and message.status != "error":
+            if session and message.tool_call_id in session["old_feedback_ids"]:
+                continue
             call = calls.get(message.tool_call_id)
             if not call or call["name"] != "read_file":
                 continue
             args = call.get("args", {})
             value = args.get("file_path", "")
-            if not isinstance(value, str) or Path(value).suffix.lower() != ".md":
+            if not isinstance(value, str):
+                continue
+            if "calibration_tables" in value.replace("\\", "/"):
                 continue
             path = (Path(value) if Path(value).is_absolute() else root / value).resolve()
+            enum_dump = path.parent == root and re.fullmatch(
+                r"get_table_schema_enum_values_.+_[0-9a-f]{8}\.txt", path.name,
+            )
+            if path.suffix.lower() != ".md" and not enum_dump:
+                continue
             # Generated reports and IR diagnostics are not original business evidence.
-            if path.is_relative_to(root) or path.is_relative_to(Path(__file__).resolve().parent):
+            if ((path.is_relative_to(root) and not enum_dump)
+                    or path.is_relative_to(Path(__file__).resolve().parent)):
                 continue
             evidence.append({
                 "tool": "read_file",

@@ -120,6 +120,8 @@ class ModelContext(BaseModel):
         """Select session paths while sharing model clients, their lock and services."""
         context = self.model_copy()
         context._session = session
+        if session.root.resolve() != self._session.root.resolve():
+            context._plugin_states = {}
         return context
 
     @property

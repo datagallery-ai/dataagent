@@ -28,14 +28,16 @@ from dataagent.models import ModelContext
 
 PLUGIN = Path(__file__).resolve().parents[1] / "builtin-plugins/de-agent"
 FIELD = {
-    "field_id": "time_window",
+    "field_id": "time_context",
     "value": {
-        "time_field": "event_time",
-        "range": {"direction": "past", "number": 7, "unit": "day"},
+        "input_windows": [{
+            "window_id": "w7d", "time_field": "event_time",
+            "range": {"direction": "past", "number": 7, "unit": "day"},
+        }],
     },
     "unresolved": [],
 }
-TEMPLATE = {"field_id": "time_window", "writable_template": deepcopy(FIELD)}
+TEMPLATE = {"field_id": "time_context", "writable_template": deepcopy(FIELD)}
 
 
 @pytest.fixture
@@ -54,6 +56,7 @@ def harness(tmp_path, monkeypatch):
     reader = loader.load(PLUGIN, "tools/ir.py:read_ir")
     core = after.__globals__["core"]
     native_fill = core.fill_ir_fields
+    native_gate = core._ir_consistency_gate
     fill = AsyncMock(return_value=[deepcopy(FIELD)])
     gate = AsyncMock(return_value=([], True))
     monkeypatch.setattr(core, "load_template_catalog", lambda: {})
@@ -79,6 +82,7 @@ def harness(tmp_path, monkeypatch):
         core=core,
         fill=fill,
         native_fill=native_fill,
+        native_gate=native_gate,
         gate=gate,
         request=request,
     )
@@ -145,6 +149,7 @@ async def test_only_newly_completed_todo_refreshes_eager_ir(harness):
 async def test_failed_gate_blocks_consumer_and_retry_reuses_filled_fields(harness):
     h = harness
     await initialize(h)
+    h.config["data_task_ir"]["failure_policy"] = "strict"
     h.gate.side_effect = [(["incomplete"], False), ([], True)]
     req = h.request("task", {"subagent_type": "nl2sql"})
     failed = await h.before(req, params={})
@@ -272,17 +277,17 @@ def test_external_markdown_uses_successful_history_results_only(harness, tmp_pat
         "params": {"file_path": str(path), "offset": 1, "path": str(path)},
         "output": ["confirmed reference"],
     }]
-    assert not h.states  # No duplicate document cache is created.
+    assert not h.states.get("data_task_ir")  # No duplicate document cache is created.
 
 
 @pytest.mark.asyncio
-async def test_missing_plan_preserves_legacy_empty_ir_behavior(harness):
+async def test_consumer_initializes_ir_without_a_plan(harness):
     h = harness
     request = h.request("task", {"subagent_type": "nl2sql"}, call_id="missing-plan")
     assert await h.before(request, params={}) is None
-    assert h.core.read_ir(h.context) == ""
-    assert h.core.get_ir_context(h.context) == ""
-    h.fill.assert_not_called()
+    assert h.core.read_ir(h.context)
+    assert h.core.get_ir_context(h.context)
+    assert h.fill.await_count == 1
 
 
 @pytest.mark.asyncio
@@ -374,3 +379,108 @@ async def test_consumer_uses_document_history_and_semantic_files(harness, tmp_pa
     assert "db.fact" in evidence
     assert "hidden" not in evidence
     assert "documents" not in h.states["data_task_ir"]
+
+
+@pytest.mark.asyncio
+async def test_total_fill_failure_suppresses_old_ir_and_retries_only_changed_inputs(harness):
+    h = harness
+    await initialize(h)
+    req = h.request("task", {"subagent_type": "nl2sql"})
+    await h.before(req, params={})
+    req.state["messages"].append(HumanMessage(content="actually past 30 days"))
+    h.fill.side_effect = TimeoutError("offline failure")
+    assert await h.before(req, params={}) is None
+    cache = h.states["data_task_ir"]
+    assert cache["ir_input_signature"] is None
+    assert h.core.get_ir_context(h.context) == ""
+    assert cache["ir_fallback"]
+    assert h.gate.await_count == 1
+    assert await h.before(req, params={}) is None
+    assert h.fill.await_count == 2  # Identical failed inputs do not trigger model retries.
+    h.fill.side_effect = None
+    req.state["messages"].append(HumanMessage(content="actually past 14 days"))
+    assert await h.before(req, params={}) is None
+    assert cache["ir_input_signature"]
+    assert h.fill.await_count == 3
+
+
+@pytest.mark.asyncio
+async def test_first_fill_crash_falls_back_without_publishing_any_contract(harness):
+    h = harness
+    await initialize(h)
+    h.fill.side_effect = TimeoutError("offline failure")
+    req = h.request("task", {"subagent_type": "nl2sql"})
+    assert await h.before(req, params={}) is None
+    assert not h.states["data_task_ir"].get("ir_input_signature")
+    assert h.core.get_ir_context(h.context) == ""
+    h.gate.assert_not_called()
+
+
+def test_calibration_templates_and_filled_tables_are_not_ir_evidence(harness, tmp_path):
+    h = harness
+    external = tmp_path.parent
+    paths = [
+        PLUGIN / "skills/feature-engineering/references/calibration_tables.md",
+        external / "calibration_tables_filled.md",
+        external / "calibration_tables" / "target.md",
+        external / "requirements.md",
+    ]
+    calls = [
+        {"name": "read_file", "args": {"file_path": str(path)}, "id": str(index)}
+        for index, path in enumerate(paths)
+    ]
+    state = {"messages": [
+        AIMessage(content="", tool_calls=calls),
+        *(ToolMessage(content=f"document {index}", tool_call_id=str(index))
+          for index in range(len(paths))),
+    ]}
+    evidence = h.core.collect_evidence(h.context, state)
+    assert [item["output"] for item in evidence] == [["document 3"]]
+
+
+def test_enum_dump_family_is_evidence_but_other_generated_text_is_not(harness, tmp_path):
+    h = harness
+    paths = [
+        tmp_path / "get_table_schema_enum_values_db_table_ab12cd34.txt",
+        tmp_path / "other.txt",
+        tmp_path / "nested/get_table_schema_enum_values_db_table_ab12cd34.txt",
+        tmp_path.parent / "get_table_schema_enum_values_db_table_ab12cd34.txt",
+        tmp_path / "get_table_schema_enum_values_db_table_notahash.txt",
+        tmp_path / "report.md",
+    ]
+    calls = [{"name": "read_file", "args": {"file_path": str(path)}, "id": str(index)}
+             for index, path in enumerate(paths)]
+    state = {"messages": [
+        AIMessage(content="", tool_calls=calls),
+        *(ToolMessage(content=f"values {index}", tool_call_id=str(index))
+          for index in range(len(paths))),
+    ]}
+    evidence = h.core.collect_evidence(h.context, state)
+    assert [item["output"] for item in evidence] == [["values 0"]]
+
+
+def test_imported_history_sql_metadata_is_excluded_from_ir(harness):
+    h = harness
+    folder = h.context.session.outputs / "metadata"
+    folder.mkdir()
+    for index, query in enumerate(["历史SQL下载统计", "查找历史sql", "db.fact"]):
+        (folder / f"record_{index}.json").write_text(json.dumps({
+            "recorded_at_ns": index, "kind": "retrieve", "query": query,
+            "payload": {"reference": query},
+        }))
+    evidence = h.core.collect_evidence(h.context, {})
+    assert [item["params"]["query"] for item in evidence] == ["db.fact"]
+
+
+@pytest.mark.asyncio
+async def test_gate_preserves_pre577_incomplete_information_contract(harness, monkeypatch):
+    h = harness
+    model = AsyncMock(return_value=({"consistent": True, "warnings": []}, "{}"))
+    monkeypatch.setattr(h.core, "ainvoke_json_object", model)
+    assert await h.native_gate(
+        h.context, user_query="q", tool_evidence="", field_results=[FIELD],
+    ) == ([], True)
+    prompt = model.await_args.args[1][0]["content"]
+    assert "null、空数组或未填写本身不是不一致" in prompt
+    assert "输入本来没有提供信息" in prompt
+    assert "属于本 IR 表达范围的要求被遗漏" in prompt
