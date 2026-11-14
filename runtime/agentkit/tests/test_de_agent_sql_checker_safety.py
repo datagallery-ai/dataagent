@@ -300,7 +300,9 @@ def test_dataops_order_and_persistent_retry_budget(tmp_path, monkeypatch, failin
         assert report.get("dataops", {}).get("reused") is True
     else:
         kinds = ("ddl",) if failing_kind == "ddl" else ("ddl", "dml")
-        assert calls == [(kind, attempt, attempt - 1) for attempt in range(1, max_attempts + 1) for kind in kinds]
+        assert calls == [
+            (kind, attempt, attempt - 1) for attempt in range(1, max_attempts + 1) for kind in kinds
+        ]
         assert report.get("status") == "BLOCKED"
         assert report.get("dataops", {}).get("reason") == "attempts_exhausted"
     assert (tmp_path / "create.sql").read_text() == DDL
@@ -327,10 +329,10 @@ def test_dataops_exception_is_bounded_and_does_not_expose_provider_text(tmp_path
     assert not list((tmp_path / ".runtime/sql_checkers").glob("*.lock"))
 
 
-def test_dataops_attempt_budget_defaults_to_five(tmp_path):
-    """缺省每条 SQL 最多提交 5 次。"""
+def test_dataops_attempt_budget_defaults_to_global_limit(tmp_path):
+    """缺省每条 SQL 最多提交 10 次。"""
     pipeline = _dataops_pipeline(tmp_path)
-    assert pipeline._max_dataops_attempts == DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS == 5
+    assert pipeline._max_dataops_attempts == DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS == 10
 
 
 def test_dataops_attempt_budget_is_configurable(tmp_path):
@@ -344,7 +346,7 @@ def test_dataops_attempt_budget_is_configurable(tmp_path):
     [
         (0, 1),  # 下界
         (-3, 1),
-        (999, 20),  # 上界
+        (999, DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS),  # 上界
         ("not-a-number", DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS),
         (None, DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS),
     ],
@@ -354,3 +356,65 @@ def test_dataops_attempt_budget_is_clamped_and_validated(configured, expected):
     _resolve_max_dataops_attempts = checker_module._resolve_max_dataops_attempts
 
     assert _resolve_max_dataops_attempts({"dataops_max_attempts": configured}) == expected
+
+
+def _exhaust_the_dataops_budget(tmp_path, monkeypatch, failing_kind="dml"):
+    """Drive the checker past its per-SQL submission budget and return the report."""
+    dataops_validate_tool = checker_module.dataops_validate_tool
+
+    async def service_result(sql, *, attempt, prior_attempts, context, _enable_thinking=False):
+        """Fail one SQL kind so every round consumes a submission from the budget."""
+        kind = "ddl" if sql.startswith("CREATE") else "dml"
+        return {"passed": kind != failing_kind, "log_analysis_summary": "分区字段不存在"}
+
+    monkeypatch.setattr(
+        dataops_validate_tool, "dataops_validate_sql_with_log_analysis", service_result
+    )
+    max_attempts = DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS
+    for _ in range(max_attempts + 1):
+        report = asyncio.run(_dataops_pipeline(tmp_path).run("create.sql", "insert.sql"))
+    return report, max_attempts
+
+
+def test_attempts_exhausted_explains_the_budget_and_the_next_steps(tmp_path, monkeypatch):
+    """attempts_exhausted 必须说清总共几次、用了几次、接下来怎么做。"""
+    report, max_attempts = _exhaust_the_dataops_budget(tmp_path, monkeypatch)
+
+    assert report.get("status") == "BLOCKED"
+    dataops = report.get("dataops", {})
+    assert dataops.get("reason") == "attempts_exhausted"
+    # 总预算、已用次数、触发点都必须结构化给出。
+    assert dataops.get("max_attempts") == max_attempts
+    assert dataops.get("attempts_used") == {"ddl": max_attempts, "dml": max_attempts}
+    assert dataops.get("rejected_attempt") == max_attempts + 1
+    # 接下来该做什么必须成条给出，而不是一句"重新调用 checker"。
+    steps = dataops.get("next_steps") or []
+    assert len(steps) >= 3
+    assert any("DEFAULT_DATAOPS_VALIDATION_ATTEMPTS" in step for step in steps)
+    # 最近一次真正的失败原因要带出来，否则只说"预算用尽"等于没有诊断。
+    assert any(item.get("detail") for item in dataops.get("failure_history") or [])
+
+    summary = report.get("summary", "")
+    assert str(max_attempts) in summary
+    assert "预算已用尽" in summary
+    assert "接下来该怎么做" in summary
+
+
+def test_attempts_exhausted_summary_does_not_tell_the_agent_to_just_retry(tmp_path, monkeypatch):
+    """预算按文件路径累计，改 SQL 不重置 —— 不能建议直接重试。"""
+    report, _ = _exhaust_the_dataops_budget(tmp_path, monkeypatch)
+
+    summary = report.get("summary", "")
+    assert "不要直接重复调用 checker" in summary
+    # 旧的泛泛指引（"处理报告中的问题后重新调用 checker"）必须消失 ——
+    # 预算耗尽时重试只会立刻拿到同样的拒绝。
+    assert "请处理报告中的问题后重新调用 checker" not in summary
+
+
+def test_attempts_exhausted_does_not_leak_raw_provider_text(tmp_path, monkeypatch):
+    """预算耗尽的诊断只能包含摘要，不能把传输层原文搬进报告。"""
+    report, _ = _exhaust_the_dataops_budget(tmp_path, monkeypatch)
+
+    payload = json.dumps(report, ensure_ascii=False)
+    assert "private-provider-error" not in payload
+    assert report.get("dataops", {}).get("explanation")

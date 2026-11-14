@@ -63,6 +63,7 @@ See skill: ``de_agent/skill/dataops_quality_check/SKILL.md``.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 from pathlib import Path
@@ -77,9 +78,9 @@ from utils.dataops_mcp import IntegrationClient, dataops_options
 from utils.dataops_quality_check import resolve_config, run_quality_check
 from utils.dataops_validate_tool import (
     _clamp_row_limit,
-    _cleanup_temp_table_wrapper,
     _get_dataops_env,
     _is_create_sql,
+    cleanup_temp_tables,
     dataops_validate_sql,
     partition_date_for_quality,
 )
@@ -145,7 +146,9 @@ async def trial_compute_table(
     # 否则「采样量 > 写入量」会让校验看到的样本不完整。
     # ``sample_size <= 0`` 表示不采样（全量扫描），此时不能截断。
     quality_config = resolve_config(context)
-    row_limit = _clamp_row_limit(quality_config.sample_size) if quality_config.sample_size > 0 else 0
+    row_limit = (
+        _clamp_row_limit(quality_config.sample_size) if quality_config.sample_size > 0 else 0
+    )
     # DDL 没有数据可写 —— 不截断（``CREATE TABLE ... LIMIT`` 是语法错误）。
     if _is_create_sql(sql):
         row_limit = 0
@@ -165,10 +168,13 @@ async def trial_compute_table(
     # 语法校验链路已经把 adhoctemp.tmp_* 删掉了（而且它用的是「一年之后」的
     # 日期，跟本链路的临时表压根不是同一张表）。本链路要往一张**存在**的临时表
     # 里写数据才能做质量校验，所以先按交付物里的 DDL 再建一次。
+    cleanup_sqls = [sql]
     ddl_path = _find_ddl(context)
     if ddl_path is not None:
+        ddl_sql = ddl_path.read_text(encoding="utf-8")
+        cleanup_sqls.append(ddl_sql)
         create_result = await dataops_validate_sql(
-            ddl_path.read_text(encoding="utf-8"),
+            ddl_sql,
             context=context,
             _partition_date=partition_date,
         )
@@ -186,7 +192,7 @@ async def trial_compute_table(
             if create_result.get("log_analysis"):
                 payload["log_analysis"] = create_result["log_analysis"]
             # 清理：建表失败也可能留下半成品临时表。
-            await _drop_scratch_table(sql, context, partition_date, payload)
+            await _drop_scratch_table(cleanup_sqls, context, partition_date, payload)
             payload["summary"] = _build_summary(payload)
             return payload
 
@@ -248,31 +254,31 @@ async def trial_compute_table(
         # --- 3) Drop the scratch table -------------------------------------
         # 不管成功与否都删。DDL/DML 都删 —— 本链路的临时表是我们自己刚建的，
         # 不像语法校验链路那样需要留给后续 DML 使用。
-        await _drop_scratch_table(sql, context, partition_date, payload)
+        await _drop_scratch_table(cleanup_sqls, context, partition_date, payload)
 
     payload["summary"] = _build_summary(payload)
     return payload
 
 
 async def _drop_scratch_table(
-    sql: str,
+    sqls: list[str],
     context: ModelContext,
     partition_date: str,
     payload: dict[str, Any],
 ) -> None:
-    """Drop the adhoctemp scratch table; never raises."""
-
+    """Clean CREATE and INSERT scratch tables, preserving verdicts and cancellation."""
     try:
-        cleanup_job_id = await _cleanup_temp_table_wrapper(
-            sql,
-            context=context,
-            partition_date=partition_date,
+        job_ids = await cleanup_temp_tables(
+            sqls, context=context, partition_date=partition_date, context_label="trial_compute"
         )
-    except Exception as exc:  # noqa: BLE001
-        logger.warning(f"[trial_compute] scratch table cleanup failed (ignored): {exc}")
+    except asyncio.CancelledError:
+        raise
+    except Exception as exc:
+        logger.warning("[trial_compute] scratch table cleanup failed (ignored): {}", exc)
         return
-    if cleanup_job_id:
-        payload["cleanup_job_id"] = cleanup_job_id
+    if job_ids:
+        payload["cleanup_job_ids"] = job_ids
+        payload["cleanup_job_id"] = job_ids[0]
 
 
 def _find_ddl(context: ModelContext) -> Path | None:

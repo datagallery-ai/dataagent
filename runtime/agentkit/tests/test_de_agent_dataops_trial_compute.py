@@ -59,7 +59,7 @@ class TestExecution:
 
         with (
             patch.object(tct, "dataops_validate_sql", side_effect=fake_validate),
-            patch.object(tct, "_cleanup_temp_table_wrapper", return_value="j-cleanup"),
+            patch.object(tct, "cleanup_temp_tables", return_value=["j-cleanup"]),
             patch.object(tct, "run_quality_check", side_effect=fake_quality),
         ):
             result = await tct.trial_compute_table(dml_path=str(path), context=_ctx())
@@ -89,7 +89,7 @@ class TestExecution:
 
         with (
             patch.object(tct, "dataops_validate_sql", side_effect=fake_validate),
-            patch.object(tct, "_cleanup_temp_table_wrapper", return_value="j-cleanup"),
+            patch.object(tct, "cleanup_temp_tables", return_value=["j-cleanup"]),
             patch.object(tct, "run_quality_check", side_effect=fake_quality),
         ):
             await tct.trial_compute_table(dml_path=str(path), context=ctx)
@@ -117,7 +117,7 @@ class TestExecution:
 
         with (
             patch.object(tct, "dataops_validate_sql", side_effect=fake_validate),
-            patch.object(tct, "_cleanup_temp_table_wrapper", return_value="j-cleanup"),
+            patch.object(tct, "cleanup_temp_tables", return_value=["j-cleanup"]),
             patch.object(tct, "run_quality_check", side_effect=fake_quality),
         ):
             result = await tct.trial_compute_table(dml_path=str(path), context=ctx)
@@ -141,7 +141,7 @@ class TestExecution:
 
         with (
             patch.object(tct, "dataops_validate_sql", side_effect=fake_validate),
-            patch.object(tct, "_cleanup_temp_table_wrapper", return_value="j-cleanup"),
+            patch.object(tct, "cleanup_temp_tables", return_value=["j-cleanup"]),
         ):
             await tct.trial_compute_table(dml_path=str(path), context=_ctx())
 

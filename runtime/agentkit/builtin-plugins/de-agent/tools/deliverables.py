@@ -17,12 +17,14 @@ import json
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
+from loguru import logger
 from utils.checks import _validate_ddl_comprehensive, _validate_dml
 from utils.data_task_ir.core import get_ir_context
 from utils.data_task_ir.runtime import ir_enabled
+from utils.dataops_constants import DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
 from utils.dataops_log_utils import bound_error_excerpt
 from utils.dataops_mcp import dataops_settings
-from utils.dataops_validate_tool import dataops_validate_sql_with_log_analysis
+from utils.dataops_validate_tool import cleanup_temp_tables, dataops_validate_sql_with_log_analysis
 from utils.evidence import ArtifactPathError, model_evidence, output_file
 
 from dataagent.model_stream import collect_model_stream
@@ -67,7 +69,8 @@ async def validate_deliverables(
             ).read_text(encoding="utf-8")
         try:
             model = runtime.context.get_model(settings.get("model", "primary"))
-            response = await collect_model_stream(model,
+            response = await collect_model_stream(
+                model,
                 [
                     {"role": "system", "content": instruction},
                     {"role": "user", "content": json.dumps(payload, ensure_ascii=False)},
@@ -126,12 +129,14 @@ async def _validate_dataops(ddl, dml, context, query: str) -> dict:
             for kind, path in (("ddl", ddl), ("dml", dml)):
                 previous = state.get(kind, {})
                 attempt = previous.get("attempt", 0) + 1
-                if attempt > 5:
+                if attempt > DEFAULT_DATAOPS_VALIDATION_ATTEMPTS:
                     return {
                         **report,
                         "status": "BLOCKED",
                         "exhausted": True,
-                        "errors": [f"DataOps {kind}: five attempts exhausted"],
+                        "errors": [
+                            f"DataOps {kind}: {DEFAULT_DATAOPS_VALIDATION_ATTEMPTS} attempts exhausted"
+                        ],
                     }
                 state[kind] = {**previous, "attempt": attempt}
                 state_path.write_text(
@@ -170,7 +175,9 @@ async def _validate_dataops(ddl, dml, context, query: str) -> dict:
                     json.dumps(state, ensure_ascii=False, indent=2), encoding="utf-8"
                 )
                 if not passed:
-                    report.update(status="BLOCKED", exhausted=attempt >= 5)
+                    report.update(
+                        status="BLOCKED", exhausted=attempt >= DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
+                    )
                     report["errors"].append(f"DataOps {kind}: {detail or 'validation failed'}")
                     break
             else:
@@ -181,7 +188,15 @@ async def _validate_dataops(ddl, dml, context, query: str) -> dict:
                 )
         return report
     finally:
-        lock_path.unlink(missing_ok=True)
+        try:
+            with dataops_settings(context):
+                await cleanup_temp_tables(
+                    list(candidate.values()), context=context, context_label="validate_deliverables"
+                )
+        except Exception as exc:
+            logger.warning("[validate_deliverables] cleanup failed (ignored): {}", exc)
+        finally:
+            lock_path.unlink(missing_ok=True)
 
 
 def _digest(value: dict) -> str:

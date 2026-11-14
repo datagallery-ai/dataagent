@@ -15,7 +15,9 @@
 import re
 from pathlib import Path
 from typing import Any
+from uuid import uuid4
 
+from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.messages import AIMessage, HumanMessage
 from loguru import logger
 from utils.dataops_mcp import dataops_settings
@@ -41,6 +43,7 @@ async def dataops_quality_check_post(state, runtime, *, params):
     query = str(getattr(user, "content", ""))
     reports = []
     path = dml_path
+    await _emit(f"正在对 {path.name} 执行数据试算与质量校验，请稍候。")
     try:
         with dataops_settings(context):
             result, reused = await trial_compute_once(
@@ -58,14 +61,24 @@ async def dataops_quality_check_post(state, runtime, *, params):
     report = "\n\n".join(text for text in reports if text)
     if not report:
         return None
-    message = messages[-1]
-    # Replacing the same native message id preserves delivery text and reducer semantics.
-    content = message.content
-    if isinstance(content, str):
-        content = f"{content}\n\n{report}"
-    else:
-        content = [*content, {"type": "text", "text": report}]
-    return {"messages": [message.model_copy(update={"content": content})]}
+    # Preserve the delivered message. Non-streaming clients read messages[-1],
+    # so the new report also includes delivery text; stream only the report.
+    delivery = messages[-1].text
+    content = f"## 最终交付\n\n{delivery}\n\n{report}" if delivery else report
+    message = AIMessage(content=content, name="DataOps", id=str(uuid4()))
+    await _emit(report, message.id)
+    return {"messages": [message]}
+
+
+async def _emit(content: str, message_id: str | None = None) -> None:
+    """Emit the native AG-UI message event, without adding progress to state."""
+    try:
+        await adispatch_custom_event(
+            "manually_emit_message",
+            {"message_id": message_id or str(uuid4()), "message": content},
+        )
+    except Exception as exc:
+        logger.debug("[dataops_quality_check_post] stream unavailable: {}", exc)
 
 
 def _render_report(*, dml_path: Path, result: dict[str, Any] | None) -> str:

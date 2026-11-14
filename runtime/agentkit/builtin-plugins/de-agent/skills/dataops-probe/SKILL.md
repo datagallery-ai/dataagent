@@ -21,18 +21,22 @@ description: |
 
 ## Core Constraints (Must Follow)
 
-1. **`partition_filter` 只能是 `pt_d = 'YYYYMMDD'` 一种形态**。小时/分钟分区
+1. **`columns` 是必填参数，不允许省略**。DataOps 平台**禁止** `SELECT *`，
+   所以工具签名里 `columns` 是 required 参数（schema 的 `required` 列表包含
+   `columns`）。少传会被 schema 校验直接拦下；传空列表 `[]` 会返回
+   `invalid_columns`。
+   **调用前必须先通过 metadata_recall/get_table_schema 拿到表的真实列名**，
+   再把要探查的列显式列出来。列名**只能是单段标识符**，不能写 `db.tbl.col`
+   这种带库表前缀的形式（会被反引号包成 `` `db.tbl.col` `` 而解析失败），
+   也不能传 `*`。
+2. **`partition_filter` 只能是 `pt_d = 'YYYYMMDD'` 一种形态**。小时/分钟分区
    (`pt_h` / `pt_i`)、`dt` / `p_date` 等其它列名**一律不认** —— 哪怕表是
    `_hm` / `_im` 后缀的小时表也只用 `pt_d` 探查（探查目的是确认「列名拼写 /
    值域 / 是否有数据」，落到某个具体时刻没有意义）。
-2. **绝对不要**写 `$date` / `$hour` / `$minute` 占位符。DataOps 后端**不会**替换
+3. **绝对不要**写 `$date` / `$hour` / `$minute` 占位符。DataOps 后端**不会**替换
    这些占位符（它们是 DDL/DML 调度时的模板替换机制，probe 是临时 SELECT 探索，
    不走同一套机制），工具层也会白名单拒绝。写了会返回 `invalid_partition_filter`。
-3. **不要拼日期**。工具不做日期计算；你必须把"今天"显式写成 8 位字符串。
-4. **`columns` 必须显式传(不允许 None)**。DataOps 平台禁止 `SELECT *`，LLM 必须先
-   通过 metadata_recall/get_table_schema 拿到表的所有列名，再选要探查的列传入。
-   `columns=None` / `columns=[]` 会直接返回 `invalid_columns`，你得先查 schema 再重试。
-   如果你只需要看"某几列的值"，也必须全部列出来（校验更严，白名单通过才用反引号引用）。
+4. **不要拼日期**。工具不做日期计算；你必须把"今天"显式写成 8 位字符串。
 5. **不要盲目重试**。看到非 `completed` 结果时直接读 `reason`/`errorLog` 给用户
    解释，或换一张相邻表。
 

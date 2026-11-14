@@ -87,16 +87,16 @@ async def test_budget_survives_sql_changes_and_is_scoped_to_file_pair(tmp_path, 
     ddl, dml = artifacts(tmp_path)
     remote = AsyncMock(return_value={"passed": False, "error": "bad ddl"})
     monkeypatch.setattr(module, "dataops_validate_sql_with_log_analysis", remote)
-    for index in range(6):
+    for index in range(11):
         ddl.write_text(f"CREATE TABLE db.t (id STRING) -- {index}")
         result = await function(ddl, dml, runtime(tmp_path).context, "q")
-    assert remote.await_count == 5
-    assert [c.kwargs["attempt"] for c in remote.await_args_list] == [1, 2, 3, 4, 5]
+    assert remote.await_count == 10
+    assert [c.kwargs["attempt"] for c in remote.await_args_list] == list(range(1, 11))
     assert result["reason"] == "attempts_exhausted"
     other = tmp_path / "create_other.sql"
     other.write_text(ddl.read_text())
     await function(other, dml, runtime(tmp_path).context, "q")
-    assert remote.await_count == 6
+    assert remote.await_count == 11
 
 
 async def test_successful_unchanged_sql_reused_and_cancellation_reserves_attempt(
@@ -250,8 +250,9 @@ async def test_manual_trial_and_hook_share_result_and_preserve_message(tmp_path,
     executed.assert_awaited_once()
     dml.write_text(dml.read_text() + " -- changed")
     update = await hook(rt.state, rt, params={})
-    assert update["messages"][0].id == "answer"
-    assert update["messages"][0].content.startswith("delivery")
+    assert update["messages"][0].id != "answer"
+    assert rt.state["messages"][-1].content == "delivery"
+    assert "delivery" in update["messages"][0].content
     assert "数据正确性校验全部通过" in update["messages"][0].content
     assert executed.await_count == 2
 
@@ -336,7 +337,7 @@ async def test_quality_checks_run_concurrently_and_preserve_partial_metrics(tmp_
     assert result["warnings"]
 
 
-async def test_native_after_agent_hook_replaces_final_message_without_losing_delivery(
+async def test_native_after_agent_hook_appends_report_without_losing_delivery(
     tmp_path, monkeypatch
 ):
     from conftest import ScriptedModel
@@ -372,13 +373,29 @@ async def test_native_after_agent_hook_replaces_final_message_without_losing_del
             )
         ],
     )
-    result = await graph.ainvoke(
-        {"messages": [HumanMessage(content="q", id="user")]}, context=runtime(tmp_path).context
-    )
+    events = [
+        event
+        async for event in graph.astream_events(
+            {"messages": [HumanMessage(content="q", id="user")]},
+            context=runtime(tmp_path).context,
+            version="v2",
+        )
+    ]
+    emitted = [
+        event["data"]
+        for event in events
+        if event["event"] == "on_custom_event" and event["name"] == "manually_emit_message"
+    ]
+    assert len(emitted) == 2
+    assert "请稍候" in emitted[0]["message"]
+    assert "delivery" not in emitted[1]["message"]
+    result = events[-1]["data"]["output"]
     answers = [message for message in result["messages"] if isinstance(message, AIMessage)]
-    assert len(answers) == 1
-    assert answers[0].content.startswith("delivery")
-    assert "数据正确性校验全部通过" in answers[0].content
+    assert len(answers) == 2
+    assert answers[0].content == "delivery"
+    assert "delivery" in answers[1].content
+    assert "数据正确性校验全部通过" in answers[1].content
+    assert emitted[1]["message_id"] == answers[1].id
 
 
 @pytest.mark.parametrize(
