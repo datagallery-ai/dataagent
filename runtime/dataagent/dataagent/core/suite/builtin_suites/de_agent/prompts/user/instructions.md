@@ -2,7 +2,7 @@
 
 - 当收到用户的输入时，你需要仔细分析输入中的关键词，主动做一些联想，进行任务计划。
 - 如果是检查特征是否已开发/是否已存在，读取 `check_feature_developed` skill 的 SKILL.md，并按其工作流执行。
-- 如果是对特征命名，读取`sql_rules` skill，按其中的ddl_rules执行。
+- 如果是对特征命名，读取`sql_rules` skill，按其中的ddl_rules执行，结果以合法的HiveSQL DDL的形式保存到`create_<tablename>.sql`中，并修复write_file和edit_file工具的全部失败报错。
 - 如果是对已有表加列（新增字段），读取 `add_columns` skill 的 SKILL.md，并按其工作流执行。
 - 否则按特征开发任务处理，读取 `feature_engineering` skill 的 SKILL.md，并按其工作流执行。
 - 打印输出你的计划内容。
