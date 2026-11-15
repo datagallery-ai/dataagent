@@ -107,8 +107,6 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=你的_API_Key
 ```
 
-对外入口请用反代，样例见 [`deploy/nginx.datagallery.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datagallery.conf.example)：静态资源压缩，SSE 路径 `/dataagent/stream` 关闭 gzip 与 `proxy_buffering`。
-
 ### 3. 构建并启动（正式测试 / 真实生产相同）
 
 `npm run build` 编译网页和 TUI。`npm run start` 在控制面没有时拉起它，网页开始提供页面，TUI 编译好后另开终端连接：

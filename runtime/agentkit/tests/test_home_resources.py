@@ -10,7 +10,7 @@ from test_launch import MODEL, config
 from test_launch import options as launch_options
 
 from dataagent import safe_error
-from dataagent.agent import build_agent
+from dataagent.agent import build_graph
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from dataagent.bootstrap.discovery import locate_extensions
 from dataagent.core.graph import create_deep_agent
@@ -22,7 +22,7 @@ from dataagent.settings import PluginSettings
 def options(tmp_path, **kwargs):
     workspace = tmp_path / "inputs"
     workspace.mkdir(exist_ok=True)
-    return replace(launch_options(tmp_path, **kwargs), workspace=workspace)
+    return replace(launch_options(tmp_path, **kwargs), workspaces=(workspace,))
 
 
 def skill(root, name, content="Read this independent Skill."):
@@ -34,7 +34,7 @@ def skill(root, name, content="Read this independent Skill."):
 
 def compile_runtime(runtime):
     with patch("dataagent.agent.create_deep_agent", wraps=create_deep_agent) as create:
-        build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")]))
+        build_graph(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")]))
     return create.call_args.kwargs
 
 
@@ -76,7 +76,7 @@ async def test_loose_skills_have_distinct_labels_and_are_actually_read(
             AIMessage(content="Delegate finished."),
         ]
     model = ScriptedModel(responses=responses)
-    await build_agent(runtime, model=model).ainvoke(
+    await build_graph(runtime, model=model).ainvoke(
         {"messages": [HumanMessage(content="Read Skill")]}
     )
     prompts = "\n".join(str(request[0].content) for request in model.requests)
@@ -210,7 +210,7 @@ async def test_explicit_config_runs_only_its_own_hooks(tmp_path):
             },
         )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=tmp_path / "config.json"))
-    await build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
+    await build_graph(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
         {
             "messages": [HumanMessage(content="hello")],
         }
@@ -266,7 +266,7 @@ async def test_accumulated_hooks_keep_native_before_and_after_order(tmp_path, tr
         ]
     )
     if transport == "sdk":
-        await build_agent(runtime, model=model).ainvoke(
+        await build_graph(runtime, model=model).ainvoke(
             {"messages": [HumanMessage(content="Sum numbers")]}
         )
     else:
@@ -315,7 +315,7 @@ async def test_explicit_config_does_not_run_home_hooks(tmp_path, upper_hooks):
     upper = {"dataagent": {"hooks": upper_hooks}} if upper_hooks is not None else {}
     cli = config(tmp_path / "config.json", {**MODEL, **upper})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
-    await build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
+    await build_graph(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
         {
             "messages": [HumanMessage(content="test")],
         }
@@ -365,7 +365,7 @@ async def test_native_file_tools_read_home_files_with_glob_characters(tmp_path, 
     config(home / "config.json", MODEL)
     (home / ".env").write_text("SECRET_MARKER=secret-content\n")
     (home / "public.txt").write_text("public-evidence\n")
-    runtime = prepare_runtime(LaunchOptions(cwd=workspace, workspace=workspace))
+    runtime = prepare_runtime(LaunchOptions(cwd=workspace, workspaces=(workspace,)))
     calls = [
         call("read_file", {"file_path": str(home / ".env")}),
         call("read_file", {"file_path": str(home / "config.json")}),
@@ -382,7 +382,7 @@ async def test_native_file_tools_read_home_files_with_glob_characters(tmp_path, 
             AIMessage(content="finished"),
         ]
     model = ScriptedModel(responses=calls)
-    await build_agent(runtime, model=model).ainvoke(
+    await build_graph(runtime, model=model).ainvoke(
         {"messages": [HumanMessage(content="Check files")]}
     )
     messages = [

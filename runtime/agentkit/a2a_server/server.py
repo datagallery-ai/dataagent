@@ -1,6 +1,7 @@
 """Assemble and run an A2A 1.0 server in front of an AgentKit runtime."""
 
 import asyncio
+import hmac
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
@@ -111,24 +112,49 @@ class AgentHost:
         return turn, config
 
 
-def _bearer_middleware(token: str, exclude_paths: tuple[str, ...]):
-    from starlette.middleware.base import BaseHTTPMiddleware
+def _route_path(scope) -> str:
+    """Path inside this app, as Starlette routing sees it.
 
-    class BearerAuthMiddleware(BaseHTTPMiddleware):
-        """Require ``Authorization: Bearer <token>`` except on discovery routes."""
+    Strip ``root_path`` only on a path-segment boundary: with ``root_path="/a"``,
+    ``/a2a/jsonrpc`` stays as is and ``/a/a2a/jsonrpc`` becomes ``/a2a/jsonrpc``.
+    """
+    path, root = scope.get("path", ""), scope.get("root_path", "")
+    if root and path.startswith(root):
+        if path == root:
+            return ""
+        if path[len(root)] == "/":
+            return path[len(root):]
+    return path
 
-        async def dispatch(self, request: Request, call_next):
-            if request.url.path in exclude_paths:
-                return await call_next(request)
-            auth = request.headers.get("Authorization", "")
-            if not auth.startswith("Bearer ") or auth[7:] != token:
-                return JSONResponse(
+
+class BearerGuard:
+    """Pure ASGI guard: require ``Authorization: Bearer <token>`` on the protected paths.
+
+    Other paths pass through untouched, so SSE responses are never wrapped.
+    """
+
+    def __init__(self, app, *, token: str, paths: frozenset[str]):
+        self.app = app
+        self.expected = f"Bearer {token}".encode()
+        self.paths = paths
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] == "http" and _route_path(scope) in self.paths:
+            supplied = dict(scope.get("headers") or ()).get(b"authorization", b"")
+            if not hmac.compare_digest(supplied, self.expected):
+                response = JSONResponse(
                     status_code=401,
-                    content={"detail": "Unauthorized: invalid or missing Bearer token"},
+                    content={
+                        "success": False,
+                        "error": {
+                            "code": "UNAUTHORIZED",
+                            "message": "Invalid or missing Bearer token.",
+                        },
+                    },
                 )
-            return await call_next(request)
-
-    return Middleware(BearerAuthMiddleware)
+                await response(scope, receive, send)
+                return
+        await self.app(scope, receive, send)
 
 
 def _agent_card_routes(agent_card: AgentCard) -> list:
@@ -196,7 +222,6 @@ def create_a2a_server(
     host: str,
     port: int,
     auth_token: str | None = None,
-    auth_exclude_paths: tuple[str, ...] = (AGENT_CARD_WELL_KNOWN_PATH,),
     model=None,
     task_store: TaskStore | None = None,
     executor: AgentExecutor | None = None,
@@ -219,7 +244,9 @@ def create_a2a_server(
 
     middleware = []
     if auth_token:
-        middleware.append(_bearer_middleware(auth_token, auth_exclude_paths))
+        middleware.append(
+            Middleware(BearerGuard, token=auth_token, paths=frozenset({JSONRPC_PATH}))
+        )
     app = Starlette(lifespan=lifespan, middleware=middleware)
     register_a2a_routes(
         app, runtime, host=host, port=port, executor=executor, task_store=task_store,

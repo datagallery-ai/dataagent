@@ -34,7 +34,7 @@ from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from process_helpers import stop_child
 
-from dataagent.agent import build_agent
+from dataagent.agent import build_graph
 from serve.__main__ import check_port
 
 PROJECT = Path(__file__).resolve().parents[1]
@@ -322,7 +322,7 @@ async def saved_messages(workspace, row):
         runtime = Runtime(settings, paths,
                           StartupReport((), ()),
                           ExtensionLocations(plugin_roots=builtin))
-        graph = build_agent(runtime, checkpointer=saver, model=ScriptedModel(responses=[AIMessage(content="unused")]))
+        graph = build_graph(runtime, checkpointer=saver, model=ScriptedModel(responses=[AIMessage(content="unused")]))
         state = await graph.aget_state({"configurable": {
             "thread_id": row["thread_id"], "checkpoint_id": row["last_checkpoint_id"],
         }})

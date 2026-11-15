@@ -9,12 +9,12 @@
 
 Card 只声明 JSON-RPC，并且 `streaming` 为 false：执行器要等整张图结束才返回最终文本。接口 URL 按请求的 `Host` 填写。绑定 `0.0.0.0`、`::` 或 `::0` 时，未带 Host 的默认值是 `127.0.0.1`。其他 IPv6 地址写成带方括号的 URL。
 
-`dataagent serve` 在已有会话和检查点的进程上挂这组路由，默认 `127.0.0.1:8790`。`dataagent serve-a2a` 是只跑这组路由的独立进程，默认 `127.0.0.1:9999`。这些进程都占用 `backend.lock`，不要对同一个 Home 同时启动。
+`dataagent serve` 在已有会话和检查点的进程上挂这组路由，默认 `127.0.0.1:8790`。`dataagent serve-a2a` 是只跑这组路由的独立进程，默认也读 `server.host` 和 `server.port`，可用 `--host`、`--port` 覆盖。这些进程都占用 `backend.lock`，不要对同一个 Home 同时启动。
 
 ## 发一条消息
 
 ```bash
-curl -X POST http://127.0.0.1:9999/a2a/jsonrpc \
+curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
   -H 'Content-Type: application/json' \
   -H 'A2A-Version: 1.0' \
   -d '{
@@ -40,11 +40,11 @@ curl -X POST http://127.0.0.1:9999/a2a/jsonrpc \
 
 这条会话记在进程自己的 profile（`default` 或 `--user`）的会话索引里。登记发生在读取 checkpoint 之前。`thread_id` 全局唯一：该 id 已经属于另一个 profile 时，任务失败，模型不会被调用。
 
-`dataagent serve` 上的这两条路由和其余本机对话路由一样，不另加 Bearer。独立进程设置 `--auth-token` 后，Agent Card 仍可匿名读取，JSON-RPC 需要 `Authorization: Bearer <token>`。
+设置环境变量 `DATAAGENT_A2A_AUTH_TOKEN`（进程环境或 `.env`）后，`dataagent serve` 和 `dataagent serve-a2a` 都要求 JSON-RPC 带 `Authorization: Bearer <token>`；Agent Card 仍可匿名读取。`serve-a2a --auth-token` 优先于环境变量。缺少或错误时返回 401，正文是错误信封，错误码 `UNAUTHORIZED`。对外暴露 A2A 时一定要设置令牌。
 
 ## 调用别的 agent
 
-在 `config.json` 里声明远端 agent。`load_extensions` 把它们收进图，工具名是 `a2a__<id>`。
+在 `config.json` 里声明远端 agent。装配时它们成为工具，工具名是 `a2a__<id>`。
 
 ```json
 {

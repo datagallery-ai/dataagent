@@ -46,9 +46,9 @@ export class AguiClient implements AgentClient {
         signal: controller.signal,
       });
       if (!response.ok) {
-        const body = await response.json().catch(() => ({})) as { detail?: unknown };
+        const body = await response.json().catch(() => ({})) as { error?: { message?: string } };
         throw new AguiClientError(
-          typeof body.detail === "string" ? body.detail : `API request failed (${response.status})`,
+          body.error?.message ?? `API request failed (${response.status})`,
           "HTTP_ERROR", response.status,
         );
       }

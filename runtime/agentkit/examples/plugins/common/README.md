@@ -16,15 +16,15 @@
 | `hooks/audit.py` | 六类生命周期审计；根与子 Agent 分别声明，不隐式继承 |
 | `.mcp.json` | 插件 MCP 配置入口，当前为空，不连接外部服务 |
 
-统计能力仍可由根 Agent 或通用子 Agent 使用；不再单独提供 `common-statistics`。
+统计能力由根 Agent 或通用子 Agent 使用。
 通用子 Agent 省略 `tools`，由 Deep Agents 继承根的显式工具（包括 MCP 工具）；
 省略 `skills` 时由 Compiler 传入根已编译的全部 Skill 来源（包括 Home Skills）。
 任意声明式子 Agent 都遵循相同规则：显式列表限定来源，`[]` 表示不接入这些工具或 Skills。
 文件工具等 Deep Agents 自带工具不由 `tools: []` 关闭。
 
 `agent.py` 仅对编译得到的子 Agent 添加独立的模型/工具调用限额和错误处理，
-不再硬编码任何业务子 Agent。启用 common 时，这些策略同样覆盖 `general-purpose`。
-禁用 common 后，不再加载其提示词、审计与 Skill；Deep Agents 仍可能自动创建原生
+不硬编码任何业务子 Agent。启用 common 时，这些策略同样覆盖 `general-purpose`。
+禁用 common 后，不加载其提示词、审计与 Skill；Deep Agents 仍可能自动创建原生
 `general-purpose`，该原生默认子 Agent 不携带这里声明的审计或 DataAgent 对声明式子 Agent
 添加的限额。本次未修改上游默认行为，也未新增模型 profile 全局注册。
 

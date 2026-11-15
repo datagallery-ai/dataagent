@@ -1,6 +1,6 @@
 const DEFAULT_API_TARGET = "http://127.0.0.1:8790";
 
-/** Headers that tell intermediaries (nginx, CDNs, Next compress) not to buffer SSE. */
+/** Headers that tell intermediaries (reverse proxies, CDNs) not to buffer SSE. */
 export const STREAMING_PROXY_HEADERS = {
   "Cache-Control": "no-cache, no-transform",
   "X-Accel-Buffering": "no",

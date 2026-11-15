@@ -5,6 +5,7 @@ read-only inputs → extension locations. Nothing here
 touches a terminal, HTTP, LangChain or plugin code.
 """
 
+import json
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
@@ -13,6 +14,7 @@ from dataagent.bootstrap.config_files import (
     ENV_REFERENCE,
     ConfigSource,
     _load_layer,
+    expand_env,
     load_layers,
     merge,
 )
@@ -34,6 +36,7 @@ from dataagent.bootstrap.paths import (
 )
 from dataagent.bootstrap.runtime import Runtime, StartupReport
 from dataagent.plugin_config import contained_path, resolve_plugins
+from dataagent.settings import ServerSettings
 
 
 def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
@@ -43,8 +46,6 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
     user_id = opaque_id(options.user_id, "user id")
     if options.session_id is not None:
         opaque_id(options.session_id, "session id")
-    if options.workspace is not None and options.workspaces:
-        raise ValueError("Pass workspace inputs with workspace or workspaces, not both")
     cwd = directory(absolute(options.cwd, Path.cwd()), required=True)
     home = home_path(cwd)
     if options.init_home:
@@ -60,8 +61,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
     # Step2. Inputs are a list. CLI and DATAAGENT_WORKSPACE override configured defaults.
     # No configured inputs means an empty list; Home already owns the working state.
     # A resumed session keeps the binding recorded when it was created.
-    explicit = [options.workspace] if options.workspace is not None else []
-    explicit.extend(options.workspaces)
+    explicit = list(options.workspaces)
     explicit_inputs = bool(explicit) or bool(
         environment.values.get("DATAAGENT_WORKSPACE", "").strip()
     )
@@ -139,6 +139,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
         report=report,
         extensions=extensions,
         model_environment=model_environment,
+        a2a_auth_token=environment.values.get("DATAAGENT_A2A_AUTH_TOKEN", "").strip() or None,
     )
 
 
@@ -215,6 +216,31 @@ def _resume_workspaces(
         )
     validate_workspace_binding(binding, launched if explicit else None)
     return binding.workspaces
+
+
+def server_listen(options: LaunchOptions | None = None) -> tuple[str, int]:
+    """Listen address of the selected config file, usable when prepare_runtime fails.
+
+    Reads only the `server` section of `options.config` or Home `config.json` and expands
+    `$env{NAME}` with the same environment as prepare_runtime. Any failure gives the defaults.
+    """
+    options = options or LaunchOptions()
+    try:
+        cwd = absolute(options.cwd, Path.cwd())
+        home = home_path(cwd)
+        path = _explicit_file(options.config, cwd) or home / "config.json"
+        raw = json.loads(path.read_text(encoding="utf-8"))
+        env_file = _explicit_file(options.env_file, cwd)
+        dotenv = selected_env_path(home, env_file)
+        environment = load_env(() if env_file is not None else (dotenv,), env_file)
+        section = expand_env(
+            raw.get("server") or {}, environment.values,
+            source=path, home=home, location=("server",), dotenv=dotenv,
+        )
+        server = ServerSettings.model_validate(section)
+    except Exception:
+        server = ServerSettings()
+    return server.host, server.port
 
 
 def _explicit_file(value, cwd: Path) -> Path | None:

@@ -16,8 +16,9 @@ from langchain_core.messages import AIMessage
 from opentelemetry.proto.collector.trace.v1.trace_service_pb2 import ExportTraceServiceRequest
 from test_api import client_for, query, sse, terminal
 
-from dataagent import build_agent, create_agent
+from dataagent import create_agent
 from dataagent.extensions.tracing import LocalLangChainTracer
+from dataagent.lowlevel import build_graph
 
 
 @pytest.fixture(autouse=True)
@@ -184,7 +185,7 @@ async def test_trace_write_failure_does_not_change_answer_or_session_status(runt
 
 
 def test_sdk_sync_calls_save_distinct_traces_without_retaining_runs(runtime):
-    graph = build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")] * 2))
+    graph = build_graph(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")] * 2))
     for prompt in ("first-only", "second-only"):
         graph.invoke({"messages": [("user", prompt)]})
         assert_collector_empty(graph)
@@ -201,7 +202,7 @@ async def test_sdk_concurrent_invocations_and_stream_share_graph_not_trace(runti
             await asyncio.sleep(0.02)
             return await super()._agenerate(*args, **kwargs)
 
-    graph = build_agent(runtime, model=OverlappingModel(responses=[AIMessage(content="ok")] * 3))
+    graph = build_graph(runtime, model=OverlappingModel(responses=[AIMessage(content="ok")] * 3))
     await asyncio.gather(*(
         graph.ainvoke({"messages": [("user", prompt)]}) for prompt in ("first-only", "second-only")
     ))
@@ -226,7 +227,7 @@ async def test_sdk_failure_and_cancel_save_trace_and_release_collection(runtime,
             await asyncio.Event().wait()
 
     model = WaitingModel(responses=[]) if cancelled else ScriptedModel(responses=[])
-    graph = build_agent(runtime, model=model)
+    graph = build_graph(runtime, model=model)
     task = asyncio.create_task(graph.ainvoke({"messages": [("user", "hi")]}))
     if cancelled:
         await asyncio.wait_for(started.wait(), 5)
@@ -243,7 +244,7 @@ async def test_local_tracer_never_uploads_even_with_global_tracing(runtime, monk
     monkeypatch.setenv("LANGSMITH_TRACING", "true")
     monkeypatch.setenv("LANGSMITH_TRACING_MODE", "hybrid")
     monkeypatch.setenv("OTEL_TRACES_SAMPLER", "always_off")
-    graph = build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")]))
+    graph = build_graph(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")]))
     with ls.tracing_context(enabled=enabled):
         await graph.ainvoke({"messages": [("user", "hi")]})
     assert_collector_empty(graph)
@@ -255,7 +256,7 @@ async def test_local_tracer_never_uploads_even_with_global_tracing(runtime, monk
 
 
 def test_tracer_metadata_clones_keep_local_settings_and_shared_maps(runtime):
-    graph = build_agent(runtime, model=ScriptedModel(responses=[]))
+    graph = build_graph(runtime, model=ScriptedModel(responses=[]))
     tracer = graph.config["callbacks"][0]
     clone = tracer.copy_with_metadata_defaults(metadata={"ls_agent_type": "subagent"}, tags=["child"])
     assert clone.directory == tracer.directory
@@ -285,7 +286,7 @@ async def test_parallel_subagents_have_distinct_parent_tools(runtime):
             await asyncio.sleep(0.01)
             return self._generate(messages)
 
-    graph = build_agent(runtime, model=ParallelModel(responses=[]))
+    graph = build_graph(runtime, model=ParallelModel(responses=[]))
     await graph.ainvoke({"messages": [("user", "delegate twice")]})
     assert_collector_empty(graph)
     path, = runtime.paths.for_session("sdk").traces.glob("*.json")
@@ -358,7 +359,7 @@ async def test_tool_failure_and_nested_traceable_are_exported(runtime):
         """Fail with a non-business error."""
         return compute()
 
-    graph = build_agent(runtime, model=ScriptedModel(responses=[call("broken", {})]), mcp_tools=[broken])
+    graph = build_graph(runtime, model=ScriptedModel(responses=[call("broken", {})]), mcp_tools=[broken])
     with pytest.raises(RuntimeError, match="broken tool"):
         await graph.ainvoke({"messages": [("user", "hi")]})
     assert_collector_empty(graph)
@@ -373,7 +374,7 @@ async def test_tool_failure_and_nested_traceable_are_exported(runtime):
 
 
 async def test_tool_error_result_does_not_mark_successful_root_as_error(runtime):
-    graph = build_agent(runtime, model=ScriptedModel(responses=[
+    graph = build_graph(runtime, model=ScriptedModel(responses=[
         call("common__summarize_numbers", {"numbers": "invalid"}), AIMessage(content="Please provide numbers"),
     ]))
     await graph.ainvoke({"messages": [("user", "hi")]})

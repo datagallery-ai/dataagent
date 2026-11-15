@@ -138,9 +138,16 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
   });
   if (!response.ok) {
     const text = await response.text();
+    let envelope: Partial<ApiResult<unknown>> | undefined;
+    try {
+      envelope = JSON.parse(text) as Partial<ApiResult<unknown>>;
+    } catch {
+      envelope = undefined;
+    }
+    const failure = envelope?.success === false ? envelope.error : undefined;
     throw new ConfigApiErrorClass(
-      "INTERNAL_ERROR",
-      text || `Request failed (${response.status})`,
+      failure?.code ?? "INTERNAL_ERROR",
+      failure?.message || text || `Request failed (${response.status})`,
       response.status,
     );
   }
@@ -592,14 +599,16 @@ export const configApi = {
     return requestRaw(`/runs/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
       body: JSON.stringify(reason ? { reason } : {}),
-    }).then((response) => {
-      if (!response.ok && response.status !== 204) {
-        return response.text().then((text) => {
-          throw new ConfigApiErrorClass("INTERNAL_ERROR", text || "Cancel failed", response.status);
-        });
-      }
-      return { canceled: true, runId: id, ...(reason ? { reason } : {}) };
-    });
+    }).then(
+      () => ({ canceled: true, runId: id, ...(reason ? { reason } : {}) }),
+      (error: unknown) => {
+        // 404: the run is no longer active (already finished or unknown). Nothing to stop.
+        if (error instanceof ConfigApiErrorClass && error.status === 404) {
+          return { canceled: false, runId: id, ...(reason ? { reason } : {}) };
+        }
+        throw error;
+      },
+    );
   },
 
   getArtifact(id: string): Promise<ArtifactDto> {

@@ -172,13 +172,13 @@ def test_only_host_adapters_consume_runtime_and_bootstrap_paths():
             ), (path, module)
 
 
-def test_rest_host_uses_only_the_package_root():
+def test_rest_host_uses_only_the_public_and_host_interfaces():
     for path in (ROOT / "serve").glob("*.py"):
         source = path.read_text()
         for module in imports(path):
             assert not module.startswith(("yaml", "dotenv")), (path, module)
             if module.startswith("dataagent"):
-                assert module == "dataagent", (path, module)
+                assert module in {"dataagent", "dataagent.host"}, (path, module)
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 assert ".dataagent" not in node.value, path
@@ -195,9 +195,12 @@ def test_importing_the_core_and_bootstrap_layer_does_not_load_model_tooling():
         "assert not home.exists()\n"
         "loaded = sorted(m for m in sys.modules if m.startswith(%r))\n"
         "assert not loaded, loaded\n"
-        "from dataagent import build_agent\n"
+        "import dataagent.host\n"
+        "loaded = sorted(m for m in sys.modules if m.startswith(%r))\n"
+        "assert not loaded, loaded\n"
+        "from dataagent.lowlevel import build_graph\n"
         "assert any(m.startswith('langchain') for m in sys.modules)\n"
-    ) % (MODEL_TOOLING,)
+    ) % (MODEL_TOOLING, MODEL_TOOLING)
     subprocess.run([sys.executable, "-c", script], check=True, cwd=ROOT)
 
 
@@ -302,7 +305,7 @@ def test_dependency_guard_accepts_declared_subagent_edge(tmp_path):
     [
         "from dataagent.agent import build_native_middleware",
         "from ..agent import build_native_middleware",
-        "from dataagent import build_agent",
+        "from dataagent.lowlevel import build_graph",
     ],
 )
 @pytest.mark.parametrize("module", ["loading", "hooks"])
@@ -312,3 +315,21 @@ def test_dependency_guard_rejects_undeclared_core_edges(tmp_path, source, module
     path.write_text(source)
     with pytest.raises(AssertionError):
         assert_extension_dependencies(path, root=tmp_path)
+
+
+def test_public_sdk_exports_only_the_high_level_path():
+    import dataagent
+    import dataagent.host
+    import dataagent.lowlevel
+
+    assert set(dataagent.__all__) == {
+        "Agent", "ConfigurationLoadError", "DataAgentError", "LaunchOptions",
+        "LoopDetectedError", "ModelContext", "Runtime", "SemanticServiceClient",
+        "create_agent", "load_mcp_tools", "prepare_runtime", "safe_error",
+    }
+    assert set(dataagent.host.__all__) == {
+        "ERROR_CODES", "error_code", "extension_revision", "refresh_extensions", "server_listen",
+    }
+    assert dataagent.lowlevel.__all__ == ["build_graph"]
+    for name in ("build_graph", "load_extensions", "refresh_extensions", "error_code"):
+        assert not hasattr(dataagent, name), name

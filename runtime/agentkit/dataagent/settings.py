@@ -38,7 +38,7 @@ class LoopDetectionSettings(StrictModel):
 class WorkspaceSettings(StrictModel):
     """A configured read-only input. Writable inputs are rejected in this version."""
 
-    name: str = Field(pattern=r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+    name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
     path: Path
     read_only: Literal[True] = True
 

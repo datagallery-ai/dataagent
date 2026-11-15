@@ -1496,7 +1496,16 @@ export const App: React.FC<AppProps> = ({
             const errorMessage = typeof message === 'string' ? message : 'Agent run failed';
             storeCurrentRunEvent(runtimeEvent);
 
-            if (tui) {
+            if (tui && runtimeEvent.code === 'CANCELLED') {
+              // The server confirmed /stop: same result as the local stop path below.
+              stopRequestedRef.current = null;
+              store.finalizeAssistantMessage();
+              store.addRunSummary(threadId, runId, 'interrupted', performance.now() - startedAt);
+              setCommandNotice({
+                kind: 'info',
+                message: 'Stopped. This conversation stays on the same thread.',
+              });
+            } else if (tui) {
               const code = typeof runtimeEvent.code === 'string' ? runtimeEvent.code : 'RUN_ERROR';
               getLogger().error('Run failed', { threadId, runId, code, message: errorMessage });
               store.appendToAssistantMessage(`\n\nError [${code}]: ${errorMessage}`);

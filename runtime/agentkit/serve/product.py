@@ -43,8 +43,8 @@ def register_product_routes(app: FastAPI) -> None:
     async def ready() -> JSONResponse:
         conversation = conversation_status(app)
         if not conversation.get("ready"):
-            return error("CONVERSATION_UNAVAILABLE", "对话引擎未就绪。", 503)
-        return success({"status": "ready", "control_plane": "ready", "conversation": conversation})
+            return error("CONVERSATION_UNAVAILABLE", "Conversation engine is not ready.", 503)
+        return success({"status": "ready", "conversation": conversation})
 
     @app.get("/api/v1/me")
     async def me() -> JSONResponse:
@@ -59,7 +59,7 @@ def register_product_routes(app: FastAPI) -> None:
         from serve.app import cancel_active_run
 
         if not cancel_active_run(app, run_id):
-            return error("RESOURCE_NOT_FOUND", "该运行未在执行。", 404)
+            return error("RESOURCE_NOT_FOUND", "Run is not active.", 404)
         return Response(status_code=204)
 
 
@@ -83,7 +83,7 @@ class ConversationReadyGuard:
             fastapi_app = scope.get("app")
             agents = getattr(getattr(fastapi_app, "state", None), "agents", None)
             if agents is None:
-                await error("CONVERSATION_UNAVAILABLE", "对话引擎未就绪。", 503)(scope, receive, send)
+                await error("CONVERSATION_UNAVAILABLE", "Conversation engine is not ready.", 503)(scope, receive, send)
                 return
         await self.app(scope, receive, send)
 

@@ -135,7 +135,7 @@ asyncio.run(main())
 | `serve/outputs.py` | 列举和预览业务产物，继续排除内部上下文卸载目录 |
 | `client.py` | 按 `thread_id` 缓存原生图。统一准备会话与 context，再调用带 tracer 的会话图。同步、异步、流式与 AG-UI 共用该逻辑 |
 | `models.py` | 复制会话 context，共享模型缓存、锁和语义客户端，不改共享 context 的路径 |
-| `agent.py` | 继续在构图时绑定固定 backend、路径提示词和插件 `outputs_dir`；SDK 和低层接口均沿用 `build_agent` 绑定的会话 tracer |
+| `agent.py` | 继续在构图时绑定固定 backend、路径提示词和插件 `outputs_dir`；SDK 和低层接口均沿用 `build_graph` 绑定的会话 tracer |
 | REST | 保留原有每会话缓存和扩展刷新。AG-UI 适配器按请求创建，操作对应会话的原生图 |
 
 **`dataagent/core/` 不修改。** 文件、shell、Skills、Memory 和摘要仍使用 core 原生实现，不增加动态 backend 提供函数或代理。

@@ -33,6 +33,8 @@ Scope = Literal["user", "cli", "plugin"]
 class ConfigurationLoadError(ValueError):
     """The selected product file was not loaded."""
 
+    error_code = "CONFIG_ERROR"
+
 
 @dataclass(frozen=True)
 class ConfigSource:

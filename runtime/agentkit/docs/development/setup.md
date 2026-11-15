@@ -54,9 +54,9 @@ SDK 路径不初始化 Home。调试配置层时显式传入 `LaunchOptions(conf
 - `dataagent.bootstrap.startup.prepare_runtime`：配置和路径
 - `dataagent.extensions.compiler.compile_extensions`：插件编译
 - `serve.app.create_app` 里的 `stream`：一轮 HTTP
-- `dataagent.agent.build_agent`：图装配
+- `dataagent.agent.build_graph`：图装配
 
-`import dataagent` 不会加载 LangChain。要在导入后的属性上断点，先访问 `build_agent` 或 `create_agent`。
+`import dataagent` 不会加载 LangChain。要在导入后的属性上断点，先访问 `build_graph` 或 `create_agent`。
 
 ## 检查
 

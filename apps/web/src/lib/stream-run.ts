@@ -40,12 +40,13 @@ export function formatStreamHttpError(status: number, body: string): string {
   let detail = body.trim();
   if (detail) {
     try {
-      const parsed = JSON.parse(detail) as { detail?: unknown };
-      if (typeof parsed.detail === "string" && parsed.detail.trim()) {
-        detail = parsed.detail.trim();
+      const parsed = JSON.parse(detail) as { error?: { message?: unknown } };
+      const message = parsed.error?.message;
+      if (typeof message === "string" && message.trim()) {
+        detail = message.trim();
       }
     } catch {
-      // Keep the raw body when it is not a FastAPI error envelope.
+      // Keep the raw body when it is not a JSON error envelope.
     }
   }
   return detail ? `HTTP ${status}: ${detail}` : `HTTP ${status}`;

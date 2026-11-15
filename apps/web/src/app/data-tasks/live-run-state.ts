@@ -458,7 +458,8 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
       if (shouldIgnoreStaleRunError(state, event)) {
         return state;
       }
-      if (stringValue(event.code) === "abort") {
+      // "abort": the browser stopped the stream. "CANCELLED": the server confirmed a cancel.
+      if (stringValue(event.code) === "abort" || stringValue(event.code) === "CANCELLED") {
         return applyTerminalRunStatus(state, "canceled", {
           runFinishedAt: Date.now(),
           errorMessage: undefined,

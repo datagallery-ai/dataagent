@@ -22,9 +22,9 @@ export class SessionClient {
 
   private async read(path: string): Promise<unknown> {
     const response = await this.fetchImpl(this.baseUrl + path, { signal: AbortSignal.timeout(10_000) });
-    const body = await response.json() as { detail?: unknown };
+    const body = await response.json() as { error?: { message?: string } };
     if (!response.ok) throw new AguiClientError(
-      typeof body.detail === "string" ? body.detail : `Session request failed (${response.status})`,
+      body.error?.message ?? `Session request failed (${response.status})`,
       "HTTP_ERROR", response.status,
     );
     return body;
@@ -46,12 +46,9 @@ export class SessionClient {
     );
     if (response.status === 204 || response.status === 404) return;
     const body = await response.json().catch(() => ({})) as {
-      detail?: unknown;
       error?: { message?: string };
     };
-    const message = typeof body.detail === "string"
-      ? body.detail
-      : body.error?.message ?? `Cancel failed (${response.status})`;
+    const message = body.error?.message ?? `Cancel failed (${response.status})`;
     throw new AguiClientError(message, "HTTP_ERROR", response.status);
   }
 

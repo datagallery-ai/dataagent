@@ -13,7 +13,7 @@ from dataagent.bootstrap.discovery import (
 from dataagent.bootstrap.options import LaunchOptions
 from dataagent.bootstrap.paths import RuntimePaths, builtin_plugins_path, initialize_home
 from dataagent.bootstrap.runtime import Runtime, StartupReport
-from dataagent.bootstrap.startup import prepare_runtime, refresh_extensions
+from dataagent.bootstrap.startup import prepare_runtime, refresh_extensions, server_listen
 
 __all__ = [
     "ConfigSource",
@@ -27,5 +27,6 @@ __all__ = [
     "initialize_home",
     "prepare_runtime",
     "refresh_extensions",
+    "server_listen",
     "extension_revision",
 ]

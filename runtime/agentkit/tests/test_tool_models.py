@@ -17,8 +17,9 @@ from pydantic import SecretStr
 from test_api import client_for, query, sse, terminal
 from test_traces import attributes, read_trace, spans
 
-from dataagent import LaunchOptions, ModelContext, build_agent, create_agent, prepare_runtime
+from dataagent import LaunchOptions, ModelContext, create_agent, prepare_runtime
 from dataagent.agent import load_extensions
+from dataagent.lowlevel import build_graph
 from dataagent.models import build_model
 
 
@@ -157,7 +158,7 @@ async def test_raw_graph_remains_native_and_accepts_explicit_context(tool_runtim
     from langgraph.graph.state import CompiledStateGraph
 
     context = ModelContext(tool_runtime, model=ScriptedModel(responses=agent_responses(False)))
-    graph = build_agent(tool_runtime, context=context)
+    graph = build_graph(tool_runtime, context=context)
     assert isinstance(graph, CompiledStateGraph)
     assert "messages" in graph.get_output_jsonschema()["properties"]
     with patch("dataagent.models.build_model", return_value=ScriptedModel(responses=[AIMessage(content="helper")])):
@@ -347,7 +348,7 @@ async def test_http_deadline_cancels_internal_model(tool_runtime):
             events = sse(await client.post("/dataagent/stream", json=query()))
     assert entered.is_set() and cancelled.is_set()
     assert terminal(events) == ["RUN_ERROR"]
-    assert events[-1]["code"] == "TimeoutError"
+    assert events[-1]["code"] == "TIMEOUT"
 
 
 async def test_sdk_checkpoint_resume_rebuilds_owned_context_not_serialized_clients(tool_runtime):

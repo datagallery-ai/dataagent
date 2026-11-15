@@ -5,11 +5,10 @@ from collections import OrderedDict
 
 from dataagent import (
     create_agent,
-    extension_revision,
     load_mcp_tools,
-    refresh_extensions,
     safe_error,
 )
+from dataagent.host import extension_revision, refresh_extensions
 
 
 class SessionAgents:

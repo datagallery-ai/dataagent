@@ -178,5 +178,5 @@ async def test_whole_run_timeout_includes_native_retry_backoff(runtime, models):
         async with client_for(runtime, models(url)) as (client, _):
             events = sse(await client.post("/dataagent/stream", json=query(), timeout=15))
     assert terminal(events) == ["RUN_ERROR"]
-    assert events[-1]["code"] == "TimeoutError"
+    assert events[-1]["code"] == "TIMEOUT"
     assert len(requests) == 1

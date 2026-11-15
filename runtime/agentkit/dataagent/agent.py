@@ -60,11 +60,11 @@ def build_native_middleware(
     ]
 
 
-def _check_extension_inputs(runtime, mcp_tools):
+def _check_extension_inputs(runtime, mcp_tools, entry="build_graph"):
     settings, extensions = runtime.settings, runtime.extensions
     if extensions.mcp_servers and mcp_tools is None:
         raise ValueError(
-            "MCP is configured: await load_mcp_tools(runtime), then pass mcp_tools to build_agent"
+            f"MCP is configured: await load_mcp_tools(runtime), then pass mcp_tools to {entry}"
         )
     if tuple(binding.spec for binding in extensions.hooks) != settings.dataagent.hooks:
         raise ValueError(
@@ -73,14 +73,16 @@ def _check_extension_inputs(runtime, mcp_tools):
         )
 
 
-def check_agent_configuration(runtime, *, semantic_client, mcp_tools=None) -> None:
-    """Reject what build_agent would reject, without creating sessions or running factories."""
+def check_agent_configuration(
+    runtime, *, semantic_client, mcp_tools=None, entry: str = "build_graph"
+) -> None:
+    """Reject what build_graph would reject, without creating sessions or running factories."""
     if runtime.settings.semantic is not None and semantic_client is None:
         raise ValueError(
             "Semantic service is configured: use create_agent(), or supply a ModelContext "
-            "with a host-owned semantic_client to build_agent() and native graph invocations"
+            "with a host-owned semantic_client to build_graph() and native graph invocations"
         )
-    _check_extension_inputs(runtime, mcp_tools)
+    _check_extension_inputs(runtime, mcp_tools, entry)
     if runtime.settings.dataagent.entry:
         _require_declared_entry(runtime, runtime.settings.dataagent.entry)
         return
@@ -100,11 +102,11 @@ def load_extensions(
     """Compile Python extensions with already discovered native MCP tools.
 
     ``semantic_client`` is the host-owned semantic-service client handed to
-    compiled-subagent factories; build_agent supplies the context's client.
+    compiled-subagent factories; build_graph supplies the context's client.
     ``model_resolver`` maps model aliases to models for compiled subagents;
-    build_agent supplies the context's cached resolver.
+    build_graph supplies the context's cached resolver.
     ``outputs_dir`` is the session output directory for compiled-subagent
-    result files; build_agent supplies the session's ``outputs``.
+    result files; build_graph supplies the session's ``outputs``.
     """
     settings, extensions = runtime.settings, runtime.extensions
     _check_extension_inputs(runtime, mcp_tools)
@@ -204,7 +206,7 @@ def _build_compiled_entry(runtime, *, checkpointer, session, context, mcp_tools)
     )
 
 
-def build_agent(
+def build_graph(
     runtime: Runtime,
     *,
     checkpointer=None,

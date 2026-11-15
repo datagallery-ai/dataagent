@@ -293,3 +293,14 @@ def test_merge_missing_model_variable_reports_field_source_file_and_home(tmp_pat
     assert str(first.path) in message and str(first.home / ".env") in message
     assert "models.primary.name" in message and "NEEDED" in message
     assert str(last.path) not in message and "wrong-layer-value" not in message
+
+
+def test_workspace_name_must_match_whole_pattern() -> None:
+    from pydantic import ValidationError
+
+    from dataagent.settings import WorkspaceSettings
+
+    assert WorkspaceSettings(name="sales_2024", path="/tmp").name == "sales_2024"
+    for bad in ("../../evil name!", "a b", "-lead"):
+        with pytest.raises(ValidationError):
+            WorkspaceSettings(name=bad, path="/tmp")

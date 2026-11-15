@@ -295,7 +295,7 @@ it('/resume list opens the picker and does not load a session id named list', as
         messages: [{ id: 'saved-user', role: 'user', content: 'Previous question' }],
       });
     }
-    return Response.json({ detail: 'missing' }, { status: 404 });
+    return Response.json({ success: false, error: { code: 'RESOURCE_NOT_FOUND', message: 'missing' } }, { status: 404 });
   });
   const current = view({ async *runAgent() { throw new Error('Commands must not invoke the model'); } }, 80, 24, sessions);
   const shown = () => current.frames.map(stripVTControlCharacters).filter((frame) =>
@@ -758,7 +758,7 @@ it('/outputs opens the empty view and q returns to the home composer', async () 
 
 it('/outputs reports backend failures instead of displaying an empty list', async () => {
   const sessions = new SessionClient('http://127.0.0.1:8790', async () =>
-    Response.json({ detail: 'Unable to list session outputs' }, { status: 500 }));
+    Response.json({ success: false, error: { code: 'INTERNAL_ERROR', message: 'Unable to list session outputs' } }, { status: 500 }));
   const current = view({ async *runAgent() { throw new Error('Must not call the model'); } }, 160, 24, sessions);
   await tick();
   await submit(current, '/outputs');

@@ -9,7 +9,6 @@ class LaunchOptions:
     """What a host or SDK caller knows before any file is read."""
 
     cwd: str | Path = field(default_factory=Path.cwd)
-    workspace: str | Path | None = None
     workspaces: tuple[str | Path, ...] = ()
     user_id: str = "default"
     session_id: str | None = None

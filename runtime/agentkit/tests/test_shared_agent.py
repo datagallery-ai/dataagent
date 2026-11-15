@@ -341,7 +341,7 @@ def test_cached_graph_lookup_does_not_wait_for_another_session_build(runtime):
     from dataagent import client
 
     started, release = threading.Event(), threading.Event()
-    real_build = client.build_agent
+    real_build = client.build_graph
 
     def slow_build(*args, **kwargs):
         if kwargs["session"].root.name == "slow":
@@ -351,7 +351,7 @@ def test_cached_graph_lookup_does_not_wait_for_another_session_build(runtime):
 
     with create_agent(runtime, model=ScriptedModel(responses=[])) as agent:
         fast = agent.graph
-        with patch.object(client, "build_agent", slow_build):
+        with patch.object(client, "build_graph", slow_build):
             builder = threading.Thread(target=agent._resolve, args=("slow",))
             builder.start()
             assert started.wait(5)
@@ -441,3 +441,8 @@ def test_create_agent_rejects_configuration_before_any_session(runtime):
     with pytest.raises(ValueError, match="Available compiled subagents"):
         create_agent(_with_entry(runtime, "missing"), model=ScriptedModel(responses=[]))
     assert not (runtime.paths.home / "runtime/users").exists()
+
+
+def test_create_agent_rejects_unknown_keyword(runtime) -> None:
+    with pytest.raises(TypeError, match="checkpointr"):
+        create_agent(runtime, model=ScriptedModel(responses=[]), checkpointr=None)

@@ -11,13 +11,14 @@ import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage
 
-from dataagent import LaunchOptions, build_agent, create_agent, prepare_runtime
+from dataagent import LaunchOptions, create_agent, prepare_runtime
 from dataagent.bootstrap.paths import (
     SessionPaths,
     WorkspaceInput,
     find_session_binding,
     read_session_binding,
 )
+from dataagent.lowlevel import build_graph
 
 
 @pytest.fixture
@@ -119,11 +120,11 @@ def test_new_sessions_are_separate_and_existing_sessions_keep_their_outputs(runt
 
 def test_sdk_also_persists_its_output_binding(runtime, tmp_path):
     original = configured(runtime, str(tmp_path / "reports"))
-    build_agent(original, model=ScriptedModel(responses=[]))
+    build_graph(original, model=ScriptedModel(responses=[]))
     saved = original.paths.for_session("sdk")
     assert read_session_binding(saved).outputs == saved.outputs
     changed = configured(runtime, str(tmp_path / "different-reports"))
-    build_agent(changed, model=ScriptedModel(responses=[]))
+    build_graph(changed, model=ScriptedModel(responses=[]))
     assert changed.paths.for_session("sdk").outputs == saved.outputs
 
 
@@ -131,7 +132,7 @@ def test_sdk_also_persists_its_output_binding(runtime, tmp_path):
 async def test_agent_registers_once_then_reuses_binding_without_writes(runtime, binding_sql, entry):
     model = ScriptedModel(responses=[AIMessage(content="done")] * 2)
     if entry == "raw":
-        agent = build_agent(runtime, model=model)
+        agent = build_graph(runtime, model=model)
     else:
         options = {"session": runtime.paths.for_session("sdk")} if entry == "explicit-session" else {}
         agent = create_agent(runtime, model=model, **options)
@@ -139,7 +140,7 @@ async def test_agent_registers_once_then_reuses_binding_without_writes(runtime, 
     assert binding_sql.count("BEGIN IMMEDIATE") == 1
     binding_sql.clear()
     if entry == "raw":
-        agent = build_agent(runtime, model=model)
+        agent = build_graph(runtime, model=model)
     await agent.ainvoke({"messages": [("user", "again")]})
     assert all(statement.startswith("SELECT ") for statement in binding_sql)
     assert not any("SELECT user_id, thread_id, output_dir FROM" in sql for sql in binding_sql)
@@ -308,7 +309,7 @@ def test_new_output_tree_uses_normal_directory_creation_permissions(runtime, tmp
         assert path.stat().st_mode & 0o777 == reference.stat().st_mode & 0o777
 
 
-@pytest.mark.parametrize("factory", [create_agent, build_agent])
+@pytest.mark.parametrize("factory", [create_agent, build_graph])
 def test_explicit_session_outside_profile_is_rejected_before_writes(runtime, tmp_path, factory):
     root = tmp_path / "foreign/session"
     session = SessionPaths(root, tmp_path / "reports", root / "traces")
@@ -319,7 +320,7 @@ def test_explicit_session_outside_profile_is_rejected_before_writes(runtime, tmp
     assert not runtime.paths.for_session("session").root.exists()
 
 
-@pytest.mark.parametrize("factory", [create_agent, build_agent])
+@pytest.mark.parametrize("factory", [create_agent, build_graph])
 def test_explicit_session_rejects_private_directory_overrides(runtime, tmp_path, factory):
     session = replace(runtime.paths.for_session("explicit"), traces=tmp_path / "traces")
     with pytest.raises(ValueError, match="standard Home path"):
@@ -364,7 +365,7 @@ async def test_explicit_session_keeps_output_and_input_bindings(runtime, tmp_pat
     assert not (session.root / "outputs").exists()
 
 
-@pytest.mark.parametrize("factory", [create_agent, build_agent])
+@pytest.mark.parametrize("factory", [create_agent, build_graph])
 @pytest.mark.parametrize("requested", [None, "same", "alias", "different", "empty"])
 def test_bound_session_only_accepts_matching_explicit_inputs(runtime, tmp_path, factory, requested):
     original = tmp_path / "original"

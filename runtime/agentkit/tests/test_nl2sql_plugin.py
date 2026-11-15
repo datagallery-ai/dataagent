@@ -499,7 +499,7 @@ async def test_compiled_nl2sql_propagates_loop_detection(tmp_path, entry, transp
         async with client_for(runtime, model) as (client, _):
             events = sse(await client.post("/dataagent/stream", json=query("每个部门的员工人数")))
         assert terminal(events) == ["RUN_ERROR"]
-        assert events[-1]["code"] == "LoopDetectedError"
+        assert events[-1]["code"] == "LOOP_DETECTED"
     assert len(model.requests) == len(responses)
 
 

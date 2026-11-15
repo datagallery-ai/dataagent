@@ -135,7 +135,7 @@ for (const status of [401, 403, 409, 422]) it(`preserves HTTP ${status} without 
   let attempts = 0;
   const client = new AguiClient('http://127.0.0.1/stream', async () => {
     attempts++;
-    return Response.json({ detail: 'Rejected run' }, { status });
+    return Response.json({ success: false, error: { code: 'CONFLICT', message: 'Rejected run' } }, { status });
   });
   await assert.rejects(async () => { for await (const _event of client.runAgent(input)) {} }, {
     code: 'HTTP_ERROR', statusCode: status, message: 'Rejected run',

@@ -105,7 +105,7 @@ export async function connectTui(options: {
   }
   if (!response.ok) throw new Error(`Control plane is unavailable (${response.status}) at ${baseUrl}/healthz`);
   const parsed = z.object({
-    protocol: z.literal("dataagent"), status: z.literal("ready"), instanceId: z.string(),
+    protocol: z.literal("dataagent"), ready: z.literal(true), instanceId: z.string(),
     model: z.string(), home: z.string().refine(isAbsolute).optional(),
     workspaces: z.array(z.object({
       name: z.string().min(1), path: z.string().refine(isAbsolute),

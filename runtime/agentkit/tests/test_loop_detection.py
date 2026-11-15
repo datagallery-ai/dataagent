@@ -15,7 +15,7 @@ from test_api import _entry_runtime, client_for, query, sse, terminal
 from test_launch import MODEL, config
 from test_traces import attributes, read_trace, spans
 
-from dataagent import LoopDetectedError, build_agent
+from dataagent import LoopDetectedError
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from dataagent.bootstrap.config_files import load_layers, merge
 from dataagent.extensions.loop_detection import (
@@ -24,6 +24,7 @@ from dataagent.extensions.loop_detection import (
     TextLoopDetector,
     check_action_loop,
 )
+from dataagent.lowlevel import build_graph
 from dataagent.models import build_model
 from dataagent.settings import LoopDetectionSettings
 
@@ -329,7 +330,7 @@ async def test_stream_stops_early_cleans_state_and_propagates_in_both_modes(mode
 @pytest.mark.parametrize("mode", ["sync", "async"])
 async def test_nonstreaming_repetition_is_not_returned_as_success(runtime, mode):
     model = ScriptedModel(responses=[AIMessage(content=REPEAT * 30)])
-    graph = build_agent(runtime, model=model)
+    graph = build_graph(runtime, model=model)
     with pytest.raises(LoopDetectedError):
         if mode == "sync":
             graph.invoke({"messages": [("user", "test")]})
@@ -351,7 +352,7 @@ async def test_tool_loop_hint_lets_the_model_change_approach(runtime, subagent):
         }))
         responses.append(AIMessage(content="The subagent reports a mean of 1.5"))
     model = ScriptedModel(responses=responses)
-    result = await build_agent(runtime, model=model).ainvoke({
+    result = await build_graph(runtime, model=model).ainvoke({
         "messages": [("user", "Compute the mean")],
     })
     assert result["messages"][-1].content == responses[-1].content
@@ -368,7 +369,7 @@ async def test_tool_loop_stops_without_replaying_work_and_next_turn_can_continue
             "subagent_type": "general-purpose", "description": "Compute the mean",
         }))
     model = ScriptedModel(responses=responses + [AIMessage(content="New request completed")])
-    graph = build_agent(runtime, model=model, checkpointer=InMemorySaver())
+    graph = build_graph(runtime, model=model, checkpointer=InMemorySaver())
     run_config = {"configurable": {"thread_id": "loop-test"}}
     with pytest.raises(LoopDetectedError, match="tool_cycle"):
         await graph.ainvoke({"messages": [("user", "Compute the mean")]}, run_config)
@@ -385,7 +386,7 @@ async def test_tool_loop_leaves_complete_model_spans_in_the_trace(runtime):
     async with client_for(runtime, model) as (client, _):
         events = sse(await client.post("/dataagent/stream", json=body))
         assert terminal(events) == ["RUN_ERROR"]
-        assert events[-1]["code"] == "LoopDetectedError"
+        assert events[-1]["code"] == "LOOP_DETECTED"
     # read_trace validates every span's start/end, parent links and OTLP schema.
     data = read_trace(runtime, body)
     models = [span for span in spans(data)
@@ -395,7 +396,7 @@ async def test_tool_loop_leaves_complete_model_spans_in_the_trace(runtime):
 
 async def test_disabled_guard_preserves_existing_behavior(runtime):
     model = ScriptedModel(responses=[AIMessage(content=REPEAT * 30)])
-    result = await build_agent(configured(runtime, enabled=False), model=model).ainvoke({
+    result = await build_graph(configured(runtime, enabled=False), model=model).ainvoke({
         "messages": [("user", "Repeat this intentionally")],
     })
     assert result["messages"][-1].content == REPEAT * 30
@@ -404,7 +405,7 @@ async def test_disabled_guard_preserves_existing_behavior(runtime):
 async def test_disabled_guard_also_skips_tool_cycles(runtime):
     responses = [call("common__summarize_numbers", {"numbers": [1, 2]}) for _ in range(6)]
     model = ScriptedModel(responses=[*responses, AIMessage(content="finished anyway")])
-    result = await build_agent(configured(runtime, enabled=False), model=model).ainvoke({
+    result = await build_graph(configured(runtime, enabled=False), model=model).ainvoke({
         "messages": [("user", "Poll repeatedly on purpose")],
     })
     assert result["messages"][-1].content == "finished anyway"
@@ -418,7 +419,7 @@ async def test_http_stream_reports_one_error_for_root_and_compiled_entry(runtime
     async with client_for(runtime, model) as (client, _):
         events = sse(await client.post("/dataagent/stream", json=query()))
         assert terminal(events) == ["RUN_ERROR"]
-        assert events[-1]["code"] == "LoopDetectedError"
+        assert events[-1]["code"] == "LOOP_DETECTED"
         assert REPEAT not in events[-1]["message"]
     assert len(model.requests) == 1
     assert model.chunks_read < 20
@@ -432,7 +433,7 @@ async def test_http_stream_stops_repeated_prose_after_markdown_prefixes(runtime,
     async with client_for(runtime, model) as (client, _):
         events = sse(await client.post("/dataagent/stream", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
-    assert events[-1]["code"] == "LoopDetectedError"
+    assert events[-1]["code"] == "LOOP_DETECTED"
     assert model.chunks_read < 20
     assert model.stream_closed
 
@@ -562,7 +563,7 @@ async def test_compiled_entry_cannot_turn_a_detection_into_a_reply(runtime, tmp_
     async with client_for(runtime, RepeatingModel(responses=[])) as (client, _):
         events = sse(await client.post("/dataagent/stream", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
-    assert events[-1]["code"] == "LoopDetectedError"
+    assert events[-1]["code"] == "LOOP_DETECTED"
 
 
 async def test_real_provider_stream_closes_without_retry(runtime):

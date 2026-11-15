@@ -34,7 +34,7 @@ def config(path, value):
 
 def options(tmp_path, **kwargs):
     cli = config(tmp_path / "explicit.json", MODEL)
-    return LaunchOptions(cwd=tmp_path, workspace=tmp_path, config=cli, **kwargs)
+    return LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,), config=cli, **kwargs)
 
 
 def test_prepare_has_no_sdk_initialization_or_workspace_writes(tmp_path):
@@ -124,6 +124,7 @@ def test_runtime_separates_settings_paths_extensions_and_report(tmp_path):
         "extensions",
         "report",
         "model_environment",
+        "a2a_auth_token",
     }
     assert {field.name for field in fields(runtime.report)} == {
         "configs",
@@ -231,7 +232,7 @@ def test_explicit_config_replaces_home_config(tmp_path):
             },
         },
     )
-    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspace=tmp_path, config=cli))
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,), config=cli))
     assert runtime.model_name == "explicit-model"
     assert runtime.settings.server.host == "127.0.0.1"
     assert runtime.settings.server.port == 8801
@@ -324,7 +325,7 @@ def test_config_keeps_home_env_until_env_file_replaces_it(tmp_path, monkeypatch,
     assert prepare_runtime(replace(opts, env_file=env_file)).model_name == "explicit"
 
     config(home / "config.json", selected)
-    home_runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspace=tmp_path))
+    home_runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,)))
     assert home_runtime.model_name == "home"
     assert home_runtime.redaction_secrets == ("home-key",)
 
@@ -375,7 +376,7 @@ def test_missing_variable_names_the_selected_env_file(tmp_path):
 
 
 def test_extension_revision_tracks_only_the_selected_env_file(tmp_path):
-    from dataagent import extension_revision
+    from dataagent.host import extension_revision
 
     cli = config(tmp_path / "team/config.json", MODEL)
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
@@ -404,13 +405,13 @@ def test_workspace_precedence_and_missing_directory(tmp_path, monkeypatch):
     first.mkdir()
     second.mkdir()
     monkeypatch.setenv("DATAAGENT_WORKSPACE", "first")
-    assert prepare_runtime(replace(opts, workspace=None)).paths.workspaces[0].path == first
-    assert prepare_runtime(replace(opts, workspace="second")).paths.workspaces[0].path == second
+    assert prepare_runtime(replace(opts, workspaces=())).paths.workspaces[0].path == first
+    assert prepare_runtime(replace(opts, workspaces=("second",))).paths.workspaces[0].path == second
     with pytest.raises(ValueError, match="does not exist"):
-        prepare_runtime(replace(opts, workspace="missing"))
+        prepare_runtime(replace(opts, workspaces=("missing",)))
     assert not (tmp_path / "missing").exists()
     with pytest.raises(ValueError, match="directory"):
-        prepare_runtime(replace(opts, workspace=opts.config))
+        prepare_runtime(replace(opts, workspaces=(opts.config,)))
 
 
 def test_path_helpers_distinguish_lexical_and_real_paths_without_creating_directories(tmp_path):
@@ -667,7 +668,7 @@ def test_selected_config_keeps_its_own_hook_directory(tmp_path, scope):
     runtime = prepare_runtime(
         LaunchOptions(
             cwd=tmp_path,
-            workspace=tmp_path,
+            workspaces=(tmp_path,),
             config=roots["cli"] / "hooks.json" if scope == "cli" else None,
         )
     )
@@ -727,7 +728,7 @@ def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch, exp
 
     opts = options(tmp_path, init_home=True)
     if not explicit_workspace:
-        opts = replace(opts, workspace=None)
+        opts = replace(opts, workspaces=())
     expected = prepare_runtime(opts)
     captured = []
     monkeypatch.chdir(tmp_path)
@@ -738,7 +739,7 @@ def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch, exp
     )
     args = ["serve", "--config", str(opts.config)]
     if explicit_workspace:
-        args.extend(["--workspace", str(opts.workspace)])
+        args.extend(["--workspace", str(opts.workspaces[0])])
     assert entry.main(args) == 0
     assert captured[0].settings == expected.settings
     assert captured[0].paths == expected.paths

@@ -9,7 +9,7 @@ from uuid import uuid4
 import pytest
 from process_helpers import stop_child, wait_ready
 
-from serve.__main__ import _parser, _prepare, check_port, runtime_url
+from serve.__main__ import _listen, _parser, _prepare, check_port, runtime_url
 from serve.sessions import workspace_lock
 
 
@@ -193,3 +193,28 @@ def test_backend_entrypoints_share_serve_module():
     )
     assert reloaded.returncode == 0 and "--reload" in reloaded.stdout
     assert not Path(os.environ["DATAAGENT_HOME"]).exists()
+
+
+def test_degraded_start_keeps_configured_listen_address(tmp_path, monkeypatch) -> None:
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"server": {"host": "0.0.0.0", "port": 8801}}))
+    assert _listen(None, str(config)) == ("0.0.0.0", 8801)
+
+    monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
+    assert _listen(None) == ("127.0.0.1", 8790)
+    (tmp_path / "broken.json").write_text("{")
+    assert _listen(None, str(tmp_path / "broken.json")) == ("127.0.0.1", 8790)
+
+
+def test_degraded_start_expands_env_in_listen_address(tmp_path, monkeypatch) -> None:
+    monkeypatch.delenv("BIND_HOST", raising=False)
+    monkeypatch.delenv("BIND_PORT", raising=False)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({"server": {"host": "$env{BIND_HOST}", "port": "$env{BIND_PORT}"}}))
+    env_file = tmp_path / "custom.env"
+    env_file.write_text("BIND_HOST=0.0.0.0\nBIND_PORT=8802\n")
+    assert _listen(None, str(config), str(env_file)) == ("0.0.0.0", 8802)
+
+    monkeypatch.setenv("BIND_HOST", "127.0.0.2")
+    monkeypatch.setenv("BIND_PORT", "8803")
+    assert _listen(None, str(config)) == ("127.0.0.2", 8803)

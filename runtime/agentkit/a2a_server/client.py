@@ -35,6 +35,8 @@ class A2AResult:
 class A2ACallError(RuntimeError):
     """The remote agent returned a failed or canceled task."""
 
+    error_code = "TOOL_ERROR"
+
 
 class A2ACaller:
     """One remote agent. Each local thread keeps its own remote context id."""

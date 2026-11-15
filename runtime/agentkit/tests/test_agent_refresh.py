@@ -10,7 +10,8 @@ from test_api import client_for, query, sse, terminal
 from test_home_resources import skill
 from test_mcp import stdio
 
-from dataagent import LaunchOptions, extension_revision, prepare_runtime, refresh_extensions
+from dataagent import LaunchOptions, prepare_runtime
+from dataagent.host import extension_revision, refresh_extensions
 from serve import agents
 
 

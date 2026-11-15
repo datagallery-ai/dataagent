@@ -81,6 +81,6 @@ REST 和 TUI 在下一轮查询前比较扩展指纹。插件文件、启用列�
 
 加载过程中文件又发生变化时，这次刷新失败，提示安装结束后再试。
 
-SDK 不会自动刷新。调用 `refresh_extensions`，见 [SDK](../guides/sdk.md)。
+SDK 不会自动刷新。改了扩展后重新 `prepare_runtime` 和 `create_agent`。长驻服务可以用 `dataagent.host.refresh_extensions` 只刷新扩展，见 [Python API](../reference/python-api.md#宿主接口dataagenthost)。
 
-模型、Home 和输入目录不在这轮刷新里。改它们要重启进程。配置里的 `server` 不决定监听地址。
+模型、Home、输入目录和 `server` 监听地址不在这轮刷新里。改它们要重启进程。

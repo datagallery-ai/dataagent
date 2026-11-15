@@ -129,9 +129,49 @@ async def test_bearer_token_protects_invocation_and_not_discovery(runtime):
             headers={"Authorization": "Bearer secret-token"},
         )
     assert denied.status_code == 401
+    assert denied.json()["error"]["code"] == "UNAUTHORIZED"
     assert opened.status_code == 200
     assert task_of(accepted)["status"]["state"] == "TASK_STATE_COMPLETED"
     assert "secret-token" not in accepted.text
+
+
+async def test_bearer_token_applies_under_a_mount_prefix(runtime):
+    from starlette.applications import Starlette
+    from starlette.routing import Mount
+
+    model = ScriptedModel(responses=[AIMessage(content="ok")])
+    app = create_a2a_server(runtime, host="127.0.0.1", port=9999, model=model, auth_token="secret-token")
+    gateway = Starlette(routes=[Mount("/gateway", app=app)])
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=gateway), base_url="http://127.0.0.1:9999"
+        ) as client:
+            headers = {"A2A-Version": "1.0"}
+            denied = await client.post(
+                "/gateway/a2a/jsonrpc", json=message("hello", "thread-a2a-mount"), headers=headers
+            )
+            opened = await client.get("/gateway/.well-known/agent-card.json")
+    assert denied.status_code == 401
+    assert denied.json()["error"]["code"] == "UNAUTHORIZED"
+    assert opened.status_code == 200
+
+
+async def test_bearer_token_strips_root_path_only_on_a_segment_boundary(runtime):
+    from fastapi import FastAPI
+
+    model = ScriptedModel(responses=[AIMessage(content="ok")])
+    app = create_a2a_server(runtime, host="127.0.0.1", port=9999, model=model, auth_token="secret-token")
+    gateway = FastAPI(root_path="/a")
+    gateway.mount("/", app)
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=gateway), base_url="http://127.0.0.1:9999"
+        ) as client:
+            headers = {"A2A-Version": "1.0"}
+            for path in ("/a2a/jsonrpc", "/a/a2a/jsonrpc"):
+                denied = await client.post(path, json=message("hello", f"thread{path}"), headers=headers)
+                assert denied.status_code == 401, path
+    assert model.requests == []
 
 
 def test_serve_a2a_help_has_no_legacy_bindings(capsys):
@@ -262,3 +302,64 @@ async def test_other_profile_cannot_read_the_same_context(tmp_path, common_plugi
     assert second["status"]["state"] == "TASK_STATE_FAILED"
     assert "not in profile" in second["status"]["message"]["parts"][0]["text"]
     assert bob_model.requests == []
+
+
+async def test_serve_uses_shared_token_only_on_jsonrpc(runtime):
+    from dataclasses import replace
+
+    secured = replace(runtime, a2a_auth_token="shared-token")
+    assert "shared-token" in secured.redaction_secrets
+    app = create_app(secured, instance_id="test", model=ScriptedModel(responses=[AIMessage(content="ok")]))
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8790"
+        ) as client:
+            denied = await rpc(client, message("hello", "thread-shared"))
+            accepted = await rpc(
+                client, message("hello", "thread-shared"),
+                headers={"Authorization": "Bearer shared-token"},
+            )
+            assert (await client.get("/healthz")).status_code == 200
+            assert (await client.get("/.well-known/agent-card.json")).status_code == 200
+    assert denied.status_code == 401
+    assert denied.json()["error"]["code"] == "UNAUTHORIZED"
+    assert task_of(accepted)["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
+def test_a2a_token_comes_from_effective_environment(tmp_path, monkeypatch):
+    from test_launch import MODEL, config
+
+    from dataagent import LaunchOptions, prepare_runtime
+
+    monkeypatch.delenv("DATAAGENT_A2A_AUTH_TOKEN", raising=False)
+    cli = config(tmp_path / "explicit.json", MODEL)
+    env_file = tmp_path / "token.env"
+    env_file.write_text("DATAAGENT_A2A_AUTH_TOKEN=from-dotenv\n")
+    options = LaunchOptions(cwd=tmp_path, config=cli, env_file=env_file)
+    assert prepare_runtime(options).a2a_auth_token == "from-dotenv"
+    monkeypatch.setenv("DATAAGENT_A2A_AUTH_TOKEN", "from-process")
+    assert prepare_runtime(options).a2a_auth_token == "from-process"
+    assert prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli)).a2a_auth_token == "from-process"
+
+
+def test_serve_a2a_defaults_to_configured_listen_address(runtime, monkeypatch):
+    from dataclasses import replace
+
+    import a2a_server
+    import serve.__main__ as cli
+    from dataagent.settings import ServerSettings
+
+    configured = replace(runtime, settings=runtime.settings.model_copy(
+        update={"server": ServerSettings(host="127.0.0.1", port=8801)}
+    ), a2a_auth_token="env-token")
+    seen = {}
+    monkeypatch.setattr(cli, "check_port", lambda host, port: None)
+    monkeypatch.setattr(cli, "configure_logging", lambda runtime: None)
+    monkeypatch.setattr(a2a_server, "run_a2a_server", lambda rt, **kw: seen.update(kw))
+
+    cli.serve_a2a(configured, cli._parser().parse_args(["serve-a2a"]))
+    assert seen == {"host": "127.0.0.1", "port": 8801, "auth_token": "env-token"}
+    cli.serve_a2a(configured, cli._parser().parse_args(
+        ["serve-a2a", "--port", "9000", "--auth-token", "cli-token"]
+    ))
+    assert seen == {"host": "127.0.0.1", "port": 9000, "auth_token": "cli-token"}

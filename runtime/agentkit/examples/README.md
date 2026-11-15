@@ -17,8 +17,7 @@
 | 子 Agent 声明 | 如 `subagents/statistics.json` | 由插件 `subagents` 引用 |
 | MCP 服务配置 | `<home>/.mcp.json`、启用插件的 `<plugin_root>/.mcp.json` | 只加载这两处；使用 `mcpServers`，不参与 config.json 合并 |
 
-这是格式替换，不增加第二套配置体系：字段、schema 版本、Hooks 函数签名和合并规则不变。
-产品配置版本仍为 `3`，插件清单版本仍为 `2`。只接受标准 JSON；不再解析 YAML 配置。
+产品配置版本为 `3`，插件清单版本为 `2`。只接受标准 JSON。
 
 已有 Home、显式配置和外部插件需要把配置**内容**转为 JSON，并改名为上述文件名；仅改后缀不够。
 插件清单中的 `subagents` 路径也要同步改为 `.json`。原文件可留作备份，但不会被自动加载；不要把真实凭证提交到仓库。
@@ -88,7 +87,7 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 ## 六类 Hooks
 
 每个事件对应数组；条目包含 `entrypoint`、可选 `params`（默认 `{}`），工具事件还可包含 `matcher`。
-组内不再填写 `event`；现有扁平列表也可使用。产品、插件和 SubAgent 共用同一声明格式。
+组内不写 `event`。也可以写成带 `event` 的扁平列表。产品、插件和 SubAgent 共用同一声明格式。
 
 ```json
 {

@@ -49,10 +49,11 @@ REST 启动时，在对外就绪前加载 MCP 工具。配置或发现失败会�
 SDK：
 
 ```python
-tools = await load_mcp_tools(runtime)
-graph = build_agent(runtime, mcp_tools=tools, context=context)
+from dataagent import create_agent, load_mcp_tools
+
+agent = create_agent(runtime, mcp_tools=await load_mcp_tools(runtime))
 ```
 
-没有 MCP 配置时不必调用。配置了却没把工具传给 `build_agent` 时，装配会失败。
+没有 MCP 配置时不必调用。配置了却没把工具传给 `create_agent` 时，`create_agent` 立即报错。
 
 每次工具调用都会打开并关闭一次 MCP 会话。stdio 服务因此在每次调用时启动。需要跨调用保留的数据，请放在文件或外部服务中。
