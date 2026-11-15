@@ -22,8 +22,9 @@ from test_api import client_for, query, sse, terminal
 from test_launch import MODEL, config
 from test_launcher import check_port, config_file, open_listener, spawn_inherited
 
-from dataagent import LaunchOptions, build_agent, load_mcp_tools, prepare_runtime
+from dataagent import LaunchOptions, load_mcp_tools, prepare_runtime
 from dataagent.agent import load_extensions
+from dataagent.lowlevel import build_graph
 from serve.app import create_app
 
 SERVER = Path(__file__).parent / "fixtures/mcp_server.py"
@@ -65,7 +66,7 @@ def test_two_sources_only_disabled_plugins_and_adjacent_configs_ignored(tmp_path
     config(plugin / ".plugin.json", {"id": "analytics"})
     config(plugin / ".mcp.json", {"mcpServers": {"calc": stdio()}})
     external = config(tmp_path / "config.json", {**MODEL, "plugins": {"enabled": ["analytics"]}})
-    runtime = prepare(tmp_path, {"calc": stdio()}, config=external, workspace=tmp_path / "input")
+    runtime = prepare(tmp_path, {"calc": stdio()}, config=external, workspaces=(tmp_path / "input",))
     assert list(runtime.extensions.mcp_servers) == ["mcp__user__calc", "mcp__analytics__calc"]
     assert runtime.extensions.mcp_servers["mcp__analytics__calc"]["cwd"] == str(plugin)
     with pytest.raises(TypeError):
@@ -140,12 +141,12 @@ async def test_stdio_discovery_calls_errors_and_process_cleanup(tmp_path):
 async def test_sdk_requires_explicit_async_loading_then_uses_native_tools(tmp_path):
     runtime = prepare(tmp_path, {"calc": stdio()})
     with pytest.raises(ValueError, match="await load_mcp_tools"):
-        build_agent(runtime, model=ScriptedModel(responses=[]))
+        build_graph(runtime, model=ScriptedModel(responses=[]))
     model = ScriptedModel(responses=[
         call("mcp__user__calc_add", {"a": 4, "b": 5}), AIMessage(content="9"),
     ])
     tools = await load_mcp_tools(runtime)
-    result = await build_agent(runtime, model=model, mcp_tools=tools).ainvoke({"messages": [("user", "add")]})
+    result = await build_graph(runtime, model=model, mcp_tools=tools).ainvoke({"messages": [("user", "add")]})
     message = next(m for m in result["messages"] if isinstance(m, ToolMessage))
     assert message.name == "mcp__user__calc_add" and message.status == "success"
     assert "9" in str(message.content)
@@ -320,7 +321,7 @@ async def test_plugin_subagent_allowlist_hooks_and_namespaces(tmp_path):
         call("mcp__analytics__calc_add", {"a": 6, "b": 7}),
         AIMessage(content="13"), AIMessage(content="13"),
     ])
-    result = await build_agent(runtime, mcp_tools=tools, model=model).ainvoke({"messages": [("user", "delegate")]})
+    result = await build_graph(runtime, mcp_tools=tools, model=model).ainvoke({"messages": [("user", "delegate")]})
     assert marker.read_text() == "mcp__analytics__calc_add"
     assert result["messages"][-1].content == "13"
     # An explicit empty child list must not inherit MCP tools.
@@ -335,7 +336,7 @@ async def test_general_purpose_delegate_inherits_mcp_tools(tmp_path):
         call("task", {"subagent_type": "general-purpose", "description": "Add 1 and 2"}),
         call("mcp__user__calc_add", {"a": 1, "b": 2}), AIMessage(content="3"), AIMessage(content="3"),
     ])
-    graph = build_agent(runtime, model=model, mcp_tools=await load_mcp_tools(runtime))
+    graph = build_graph(runtime, model=model, mcp_tools=await load_mcp_tools(runtime))
     await graph.ainvoke({"messages": [("user", "delegate")]})
     assert any(isinstance(message, ToolMessage) and message.name == "mcp__user__calc_add"
                for request in model.requests for message in request)
@@ -390,3 +391,14 @@ async def test_remote_transports_and_configured_headers(tmp_path, transport, end
         assert result.status == "success" and "9" in str(result.content)
     finally:
         stop_child(child)
+
+
+@pytest.mark.parametrize("entry", ["build_graph", "create_agent"])
+def test_missing_mcp_tools_error_names_the_called_entry(tmp_path, entry):
+    import dataagent
+    import dataagent.lowlevel
+
+    runtime = prepare(tmp_path, {"calc": stdio()})
+    factory = dataagent.create_agent if entry == "create_agent" else dataagent.lowlevel.build_graph
+    with pytest.raises(ValueError, match=f"pass mcp_tools to {entry}"):
+        factory(runtime, model=ScriptedModel(responses=[]))

@@ -132,3 +132,10 @@ it('a suspended native child is never marked successful', () => {
   assert.equal(state.toolCalls[0]!.progress?.steps[0]?.status, 'suspended');
   assert.equal(state.toolCalls[0]!.status, 'running');
 });
+
+it('a server-confirmed cancel reads as a stop, not a failure message', () => {
+  let state = reduceLiveRunEvent(createInitialLiveRun(), { type: 'RUN_STARTED', runId: 'root' });
+  state = reduceLiveRunEvent(state, { type: 'RUN_ERROR', code: 'CANCELLED', message: 'Run was cancelled.' });
+  assert.equal(state.runStatus, 'failed');
+  assert.equal(state.errorMessage, 'Stopped');
+});

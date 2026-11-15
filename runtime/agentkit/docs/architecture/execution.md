@@ -35,7 +35,7 @@ Checkpoint 使用 `<stateDir>/checkpoints.sqlite` 的 `AsyncSqliteSaver`。同�
 
 ## 图里有什么
 
-未设置 `dataagent.entry` 时，`build_agent` 调用 `create_deep_agent`。产品放进去的中间件顺序是：
+未设置 `dataagent.entry` 时，`build_graph` 调用 `create_deep_agent`。产品放进去的中间件顺序是：
 
 1. 根 Agent 的 `TodoListMiddleware`。子代理没有
 2. 模型次数限制，超出则错误

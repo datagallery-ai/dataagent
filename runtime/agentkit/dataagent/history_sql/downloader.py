@@ -139,8 +139,9 @@ def fetch_all_entities(
             stagnant_pages += 1
             if stagnant_pages >= max_stagnant_pages:
                 raise CorpusDownloadError(
-                    f"分页熔断：连续 {max_stagnant_pages} 页零新增记录（offset={offset} 起全部为重复 guid）,"
-                    "服务端 offset 分页疑似失效，中止以防死循环"
+                    f"Pagination stopped: {max_stagnant_pages} consecutive pages added no new records "
+                    f"(all guids duplicated from offset={offset}). Server offset paging looks broken; "
+                    "aborting to avoid an endless loop"
                 )
         offset += page_size
     return result
@@ -160,14 +161,14 @@ def _fetch_page(
         except httpx.HTTPStatusError as err:
             status = getattr(err.response, "status_code", None)
             if status is None or not 500 <= status < 600:
-                raise CorpusDownloadError(f"search/basic 请求失败：HTTP {status}（offset={offset}）") from err
+                raise CorpusDownloadError(f"search/basic request failed: HTTP {status} (offset={offset})") from err
             last_error = err
         except (httpx.TransportError, ValueError, DataAgentError) as err:
             last_error = err
         if attempt < max_attempts:
             time.sleep(2 ** (attempt - 1))
     raise CorpusDownloadError(
-        f"search/basic 重试 {max_attempts} 次仍失败（offset={offset}）：{last_error}"
+        f"search/basic failed after {max_attempts} attempts (offset={offset}): {last_error}"
     ) from last_error
 
 
@@ -244,7 +245,7 @@ def build_output_filename(
     """
     base = _base_name(table)
     if len(base) > MAX_TABLE_NAME_LENGTH or not _FILENAME_RE.fullmatch(base):
-        raise ValueError(f"表名不符合语料文件命名约束（[A-Z0-9_]+ 且 ≤{MAX_TABLE_NAME_LENGTH} 字符）：{table!r}")
+        raise ValueError(f"Table name violates corpus file naming rule ([A-Z0-9_]+, at most {MAX_TABLE_NAME_LENGTH} chars): {table!r}")
     name = f"{base}.sql" if not multi else f"{base}_{_hash12(sql_id, guid)}.sql"
     if name in used:
         stem = name[: -len(".sql")]
@@ -414,4 +415,4 @@ def _chmod_quiet(path: str, mode: int) -> None:
     try:
         os.chmod(path, mode)
     except OSError as err:
-        logger.warning("history_sql_downloader: chmod {} -> {:o} 失败：{}", path, mode, err)
+        logger.warning("history_sql_downloader: chmod {} -> {:o} failed: {}", path, mode, err)

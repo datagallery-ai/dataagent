@@ -15,7 +15,6 @@
     "status": "ok",
     "conversation": {
       "ready": true,
-      "status": "ready",
       "protocol": "dataagent",
       "instanceId": "<uuid-or-launch-id>",
       "model": "<provider model name>",
@@ -29,22 +28,19 @@
 }
 ```
 
-引擎未就绪时 `conversation` 只有 `ready: false`。`model` 是解析后的服务商模型名。`plugins` 是启用 ID。`entry` 是 `dataagent.entry`，未设置时为 `null`；这里不检查这个名字是否对应一个编译型子代理。
+`conversation.ready` 是唯一的就绪标志。引擎未就绪时 `conversation` 只有 `ready: false`。`instanceId` 是本进程的启动标识，TUI 用它确认连上的是自己拉起的后端。`timeoutSeconds` 是 `dataagent.limits.timeout_seconds`。`model` 是解析后的服务商模型名。`plugins` 是启用 ID。`entry` 是 `dataagent.entry`，未设置时为 `null`；这里不检查这个名字是否对应一个编译型子代理。
 
 ## `GET /ready`
 
-引擎就绪时返回 200，`data.status` 和 `data.control_plane` 都是 `ready`。未就绪时返回 503，错误码 `CONVERSATION_UNAVAILABLE`。
+引擎就绪时返回 200，`data.status` 是 `ready`，`data.conversation` 同 `/healthz`。未就绪时返回 503，错误码 `CONVERSATION_UNAVAILABLE`。
 
 ## `/api/v1`
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | `GET` | `/api/v1/me` | 当前用户。引擎未就绪时 id 为 `default` |
-| `POST` | `/runs/{runId}/cancel` | 取消正在执行的一轮。成功是 204。没有这一轮时是 404 |
 
 未知路径返回 404 信封，错误码 `RESOURCE_NOT_FOUND`。`/api/copilotkit` 和 `/api/copilotkit/info` 不在其中。对话路径在引擎未就绪时返回 503。
-
-同一个进程还提供 `GET /.well-known/agent-card.json` 和 `POST /a2a/jsonrpc`。约定见 [A2A](a2a.md)。这两条路由和其余本机对话路由一样，不另加 Bearer。
 
 ## `POST /dataagent/stream`
 
@@ -53,15 +49,40 @@
 约束：
 
 - `threadId`、`runId` 是最长 128 的安全 ID
-- `messages` 恰好一条，`role` 为 `user`，`content` 为非空字符串
+- `messages` 恰好一条，带 `id`，`role` 为 `user`，`content` 为非空字符串
 - 不接受子代理消息
 - `state` 只能是 `null` 或 `{}`
-- `tools`、`context`、`forwardedProps` 必须为空
+- `tools`、`context`、`forwardedProps` 必须出现，且为空（`[]`、`[]`、`{}`）
 - `resume` 和 `parentRunId` 不能使用
 
 成功响应是 `text/event-stream`，带 `Cache-Control: no-cache` 和 `X-Accel-Buffering: no`。事件见 [事件](events.md)。
 
 客户端断开时，服务取消上游流，并在后台把未完成的会话标成中断。
+
+## `POST /runs/{runId}/cancel`
+
+停止正在执行的一轮。`runId` 是这一轮 `POST /dataagent/stream` 请求体里的 `runId`。路径不在 `/api/v1` 下，`/api/v1/runs/{runId}/cancel` 返回 404。
+
+- 成功返回空的 204。
+- 这一轮不存在或已经结束时，返回 404 信封，错误码 `RESOURCE_NOT_FOUND`。
+- 取消后，对应的事件流以 `RUN_ERROR` 结束，`code` 为 `CANCELLED`。
+- `runId` 只在运行期间登记。正在运行的 `runId` 再次用于 `POST /dataagent/stream`（即使换了 `threadId`）返回 409。
+- A2A 的运行使用内部 ID，不能通过这条路由取消。
+- 会话状态记为 `interrupted`，并写入图已经到达的 Checkpoint。下一轮在同一 `threadId` 上从这个 Checkpoint 继续。见 [事件](events.md)。
+
+## A2A 路由
+
+`dataagent serve` 在同一个进程上挂 A2A 1.0 的两条路由。完整约定见 [A2A](a2a.md)。
+
+| 方法 | 路径 | 作用 |
+| --- | --- | --- |
+| `GET` | `/.well-known/agent-card.json` | Agent Card。只声明 JSON-RPC，`streaming` 为 false |
+| `POST` | `/a2a/jsonrpc` | JSON-RPC 入口，例如 `SendMessage`。请求必须带 `A2A-Version: 1.0` 头 |
+
+- `contextId` 就是会话的 `threadId`，和 `/dataagent/stream` 共用会话索引和 Checkpoint。
+- 设置环境变量 `DATAAGENT_A2A_AUTH_TOKEN` 后，`/a2a/jsonrpc` 需要 `Authorization: Bearer <token>`，否则返回 401 信封，错误码 `UNAUTHORIZED`。Agent Card 和其他路由不受影响。未设置时不校验。
+- 引擎未就绪时返回 503 信封，错误码 `CONVERSATION_UNAVAILABLE`。
+- JSON-RPC 的错误按 JSON-RPC 规范返回，不用本文的错误信封。
 
 ## `GET /sessions`
 
@@ -119,14 +140,24 @@
 
 ## 错误
 
-校验失败由 FastAPI 返回 422。业务拒绝多用 409，正文是 `{"detail": "<message>"}`。
+所有 HTTP 错误都用同一个信封。`serve/envelopes.py` 的 `register_error_handlers` 把 `HTTPException` 和请求校验错误转成这个格式：
 
-| HTTP | 典型原因 |
-| --- | --- |
-| 400 | 非法会话 ID 或产物路径 |
-| 404 | 会话或文件不存在，或会话属于其他 profile |
-| 409 | 同一会话已有一轮在跑、profile 不匹配、绑定打不开、重复 run、扩展重载失败、输出目录不是普通目录 |
-| 415 | 预览不是 UTF-8 文本 |
-| 500 | 列目录或读文件时的操作系统错误 |
+```json
+{"success": false, "error": {"code": "CONFLICT", "message": "A run is already active for this session"}}
+```
+
+校验失败返回 422，`message` 是第一条校验错误，格式为 `<字段位置>: <原因>`。
+
+| HTTP | `code` | 典型原因 |
+| --- | --- | --- |
+| 400 | `BAD_REQUEST` | 非法会话 ID 或产物路径 |
+| 404 | `RESOURCE_NOT_FOUND` | 会话或文件不存在，或会话属于其他 profile |
+| 409 | `CONFLICT` | 同一会话已有一轮在跑、profile 不匹配、绑定打不开、重复 run、扩展重载失败、输出目录不是普通目录 |
+| 415 | `UNSUPPORTED_FILE_TYPE` | 预览不是 UTF-8 文本 |
+| 422 | `BAD_REQUEST` | 请求体或查询参数校验失败 |
+| 500 | `INTERNAL_ERROR` | 列目录或读文件时的操作系统错误 |
+| 503 | `CONVERSATION_UNAVAILABLE` | 对话引擎未就绪 |
+
+A2A 的 `/a2a/jsonrpc` 不用这个信封，它按 JSON-RPC 规范返回错误。
 
 流内的运行失败不是这些 HTTP 码。连接已经是 200 的事件流，终止事件见 [事件](events.md)。

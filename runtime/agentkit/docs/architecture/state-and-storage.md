@@ -23,7 +23,7 @@ SDK 与 REST 共用数据库文件，但不读写 REST 的 `sessions` 索引表�
 
 ## 绑定
 
-`session_bindings` 是 user、thread、输入列表和输出目录绑定的唯一来源。只有 `open_session(create=True)` 在缺少绑定时登记：短连接在 `BEGIN IMMEDIATE` 事务中检查目录重叠并插入，不切换日志模式。绑定已存在时只查询本会话、校验路径并确保目录存在，不申请写锁或扫描其他会话。`build_agent` 和 `create_agent` 都通过 `open_session` 准备会话，不直接写表。
+`session_bindings` 是 user、thread、输入列表和输出目录绑定的唯一来源。只有 `open_session(create=True)` 在缺少绑定时登记：短连接在 `BEGIN IMMEDIATE` 事务中检查目录重叠并插入，不切换日志模式。绑定已存在时只查询本会话、校验路径并确保目录存在，不申请写锁或扫描其他会话。`build_graph` 和 `create_agent` 都通过 `open_session` 准备会话，不直接写表。
 
 只读查询不创建数据库；首版不读取或迁移旧文件格式。恢复执行时检查输入目录存在且可读。REST 将打开会话和装配 Agent 都放到工作线程，避免同步 I/O 阻塞事件循环。
 

@@ -40,7 +40,7 @@ REST 的缓存键是线程 ID 加输入绑定。指纹未变且键存在时直�
 
 Skill 中间件把修订号放进私有状态。修订变化才重新扫描元数据，避免每轮重读全部 Skill 正文。
 
-SDK 没有这层缓存。调用方比较 `extension_revision`，自行 `refresh_extensions` 后再 `create_agent`。
+SDK 没有这层缓存。其他宿主可以用 `dataagent.host` 的 `extension_revision` 比较指纹，`refresh_extensions` 成功后再 `create_agent`。只调用 Agent 的程序直接重新 `prepare_runtime`。
 
 ## 仍然要重启的变更
 

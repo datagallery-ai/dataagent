@@ -93,7 +93,6 @@ const readyHealth = {
     conversation: {
       ready: true,
       protocol: "dataagent",
-      status: "ready",
       instanceId: "00000000-0000-4000-8000-000000000001",
       model: "GLM-5.2",
       timeoutSeconds: 180,
@@ -486,7 +485,7 @@ it("an explicit stream URL attaches without starting a backend", async () => {
   const code = await runTui({
     argv: ["--runtime-url", "http://127.0.0.1:8790/dataagent/stream"],
     fetchImpl: async () => Response.json({
-      protocol: "dataagent", status: "ready", instanceId: "test", model: "GLM-5.2",
+      protocol: "dataagent", ready: true, instanceId: "test", model: "GLM-5.2",
       home: directory, stateDir: join(directory, ".dataagent/state"), timeoutSeconds: 180,
     }),
     renderApp: async (options) => {
@@ -506,7 +505,7 @@ it("Startup bypasses auth and legacy config, retaining actual model/Home", async
       calls.push(String(url));
       assert.equal(new Headers(init?.headers).get("authorization"), null);
       assert.equal(init?.redirect, "error");
-      return Response.json({ protocol: "dataagent", status: "ready", instanceId: "test", model: "GLM-5.2", home: directory,
+      return Response.json({ protocol: "dataagent", ready: true, instanceId: "test", model: "GLM-5.2", home: directory,
         workspaces: [{ name: "inputs", path: "/business/中文 data" }],
         stateDir: join(directory, ".dataagent/state"), timeoutSeconds: 180 });
     },
@@ -541,7 +540,7 @@ it("Health check accepts without filesystem paths", async () => {
   const code = await connectTui({
     runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
     fetchImpl: async () => Response.json({
-      protocol: "dataagent", status: "ready", instanceId: "test", model: "test",
+      protocol: "dataagent", ready: true, instanceId: "test", model: "test",
       timeoutSeconds: 180,
     }),
     renderApp: async () => {
@@ -591,7 +590,7 @@ it("A relative stateDir without rendering", async () => {
   await assert.rejects(connectTui({
     runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
     fetchImpl: async () => Response.json({
-      protocol: "dataagent", status: "ready", instanceId: "test", model: "test",
+      protocol: "dataagent", ready: true, instanceId: "test", model: "test",
       home: "/workspace", stateDir: "relative/state", timeoutSeconds: 180,
     }),
     renderApp: async () => { assert.fail("Invalid health must not enter Ink"); },

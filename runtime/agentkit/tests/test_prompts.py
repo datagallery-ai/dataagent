@@ -8,7 +8,7 @@ from unittest.mock import Mock
 import pytest
 from conftest import ScriptedModel
 
-from dataagent.agent import build_agent
+from dataagent.agent import build_graph
 from dataagent.bootstrap.paths import WorkspaceInput
 from dataagent.prompts import render_agent_prompt, render_filesystem_prompt, render_subagent_prompt
 
@@ -94,7 +94,7 @@ def test_filesystem_prompt_windows_notes_only_on_win32(monkeypatch):
 def test_agent_assembly_keeps_root_and_child_prompt_scopes(runtime, monkeypatch):
     factory = Mock()
     monkeypatch.setattr("dataagent.agent.create_deep_agent", factory)
-    build_agent(runtime, model=ScriptedModel(responses=[]))
+    build_graph(runtime, model=ScriptedModel(responses=[]))
     kwargs = factory.call_args.kwargs
     filesystem = render_filesystem_prompt(
         outputs=runtime.paths.for_session("sdk").outputs, workspaces=runtime.paths.workspaces,

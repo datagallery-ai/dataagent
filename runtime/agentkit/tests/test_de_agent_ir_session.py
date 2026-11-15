@@ -292,7 +292,7 @@ async def test_native_graph_runs_hooks_across_two_turns_without_todos(tmp_path, 
     from conftest import ScriptedModel, call
     from langgraph.checkpoint.memory import InMemorySaver
 
-    from dataagent.agent import build_agent
+    from dataagent.agent import build_graph
     from dataagent.bootstrap import LaunchOptions, prepare_runtime
 
     config = tmp_path / "config.json"
@@ -308,7 +308,7 @@ async def test_native_graph_runs_hooks_across_two_turns_without_todos(tmp_path, 
     paths, _ = runtime.paths.open_session("ir-graph", create=True)
     context = ModelContext(runtime, model=model, session=paths)
     before_modules = set(sys.modules)
-    graph = build_agent(runtime, model=model, context=context, session=paths,
+    graph = build_graph(runtime, model=model, context=context, session=paths,
                         checkpointer=InMemorySaver())
     loaded = [module for name, module in tuple(sys.modules.items()) if name not in before_modules]
     cores = [module for module in loaded if Path(getattr(module, "__file__", "") or "") ==

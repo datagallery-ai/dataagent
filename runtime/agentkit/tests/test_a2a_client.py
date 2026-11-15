@@ -5,7 +5,8 @@ import pytest
 from conftest import ScriptedModel
 from langchain_core.messages import AIMessage
 
-from a2a_server import A2ACaller, A2ACallError, create_a2a_server, remote_agent_tool
+from a2a_server import A2ACaller, A2ACallError, create_a2a_server
+from a2a_server.client import remote_agent_tool
 
 
 @asynccontextmanager

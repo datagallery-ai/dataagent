@@ -107,8 +107,6 @@ LLM_BASE_URL=https://api.deepseek.com
 LLM_API_KEY=your-api-key
 ```
 
-Put a reverse proxy in front for a public host; see [`deploy/nginx.datagallery.conf.example`](https://github.com/datagallery-lab/datafoundry/blob/main/deploy/nginx.datagallery.conf.example) — compress static assets; keep `/dataagent/stream` uncompressed and unbuffered for SSE.
-
 ### 3. Build and start (same for formal test and real production)
 
 `npm run build` compiles the web app and TUI. `npm run start` starts the control plane when that address is down, serves the web app, and leaves the TUI ready for another terminal:

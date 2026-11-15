@@ -51,7 +51,7 @@
 | `outputs/.../artifacts/` | 长工具结果和对话卸载。列表接口跳过 `large_tool_results` 和 `conversation_history` |
 | `traces/<run_id>.json` | 根运行结束时的本地导出。控制面会话目录里只有这一处 |
 
-会话目录不再创建 `logs/` 或 `outputs/`。服务日志只在 `runtime/logs/backend.log`。SDK 未指定会话时，thread id 用 `sdk`。
+会话目录不含 `logs/` 或 `outputs/`。服务日志只在 `runtime/logs/backend.log`。SDK 未指定会话时，thread id 用 `sdk`。
 
 绑定规则和产物目录优先级见 [会话与产物](../guides/sessions-and-outputs.md)。
 

@@ -18,7 +18,7 @@ TUI 日志固定写入 `<home>/runtime/logs/tui.log`，与 `backend.log` 同目�
 
 ## Trace
 
-`build_agent` 绑定 `LocalLangChainTracer`。链路是 LangChain tracer、LangSmith SDK 的 OTEL 模式、只含本地文件导出器的 `TracerProvider`。不需要 LangSmith 账号。本地文件的目的地固定。实时推送只认构造参数，或进程环境里的 `DATAAGENT_OTLP_TRACES_ENDPOINT`（完整 traces URL）和 `DATAAGENT_OTLP_HEADERS`。`OTEL_EXPORTER_OTLP_*` 与 `LANGSMITH_TRACING` 不改变这两处。
+`build_graph` 绑定 `LocalLangChainTracer`。链路是 LangChain tracer、LangSmith SDK 的 OTEL 模式、只含本地文件导出器的 `TracerProvider`。不需要 LangSmith 账号。本地文件的目的地固定。实时推送只认构造参数，或进程环境里的 `DATAAGENT_OTLP_TRACES_ENDPOINT`（完整 traces URL）和 `DATAAGENT_OTLP_HEADERS`。`OTEL_EXPORTER_OTLP_*` 与 `LANGSMITH_TRACING` 不改变这两处。
 
 根运行完成、失败或被正常取消时，写入：
 

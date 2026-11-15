@@ -1,106 +1,159 @@
 # Python API
 
-导入 `dataagent` 时只加载轻量名称。图、模型和语义客户端在第一次使用时导入。
+包版本是 `0.1.0`。请安装 `runtime/agentkit` 这一份，不要和旧的 `dataagent` 包混在同一环境。导入 `dataagent` 时只加载轻量名称；图、模型和语义客户端在第一次使用时导入。
 
-包版本是 `0.1.0`。请安装 `runtime/agentkit` 这一份，不要和旧的 `dataagent` 包混在同一环境。
+接口分三层。先用公开 SDK；只有在写宿主服务或需要原生 LangGraph 图时，才用后两层。
 
-## 导出
+| 层 | 模块 | 给谁 | 稳定性 |
+| --- | --- | --- | --- |
+| 公开 SDK | `dataagent` | 在 Python 里调用 Agent 的人、写工具的人 | 对外契约 |
+| 宿主接口 | `dataagent.host` | 把 Agent 提供给其他客户端的服务，例如 `dataagent serve` | 对外契约，面向宿主 |
+| 低层接口 | `dataagent.lowlevel` | 需要自己管理 LangGraph 图和上下文的人 | 跟随 LangGraph 变化，可能调整 |
+
+不在这三个模块 `__all__` 里的名称都是内部实现，可能随时改变。
+
+## 公开 SDK（`dataagent`）
 
 | 名称 | 作用 |
 | --- | --- |
-| `LaunchOptions` | 启动前调用方已知的输入。冻结数据类 |
-| `prepare_runtime` | `LaunchOptions` 到 `Runtime` |
-| `Runtime` | 不可变的设置、路径、扩展位置、报告和模型环境快照 |
-| `refresh_extensions` | 重读插件、Hook 和 MCP。保留模型、路径和启动策略 |
-| `extension_revision` | 扩展来源的 SHA-256 指纹。不含业务输入和会话状态 |
-| `create_agent` | 创建 `Agent`。配置了语义服务时拥有客户端，除非调用方传入 |
-| `Agent` | `graph` 加 `ModelContext`。提供 invoke/stream 和 `as_agui` |
-| `build_agent` | 返回原生 `CompiledStateGraph`。`dataagent.entry` 有值时，`build_entry_graph` 只挂该工厂 Runnable。不启动服务 |
-| `load_extensions` | 把已发现的声明编译成 Deep Agents 参数 |
-| `load_mcp_tools` | 按 Runtime 里的 MCP 连接加载工具。异步 |
-| `ModelContext` | `get_model` 和 `semantic_client`。不进入 Checkpoint |
+| `LaunchOptions` | 启动输入：配置文件、环境文件、用户、输入目录。冻结数据类 |
+| `prepare_runtime` | `LaunchOptions` → `Runtime`。读取配置并校验，不创建 Agent |
+| `Runtime` | `prepare_runtime` 的结果：设置、路径和扩展位置。只读，不要自己构造 |
+| `create_agent` | 由 `Runtime` 创建 `Agent`。唯一推荐的创建方式 |
+| `Agent` | `create_agent` 的返回类型。用于类型标注，不要自己构造 |
+| `load_mcp_tools` | 配置了 MCP 时，先 `await` 它，再把结果传给 `create_agent` |
+| `ModelContext` | 工具里 `ToolRuntime[ModelContext]` 的上下文类型：配置的模型、语义客户端、插件配置 |
 | `SemanticServiceClient` | 语义服务 HTTP 客户端 |
-| `DataAgentError` | 客户端错误类型 |
-| `safe_error` | 返回 `{"code", "message"}`。`code` 是异常类名，消息截断到 1500，并替换已知密钥 |
+| `ConfigurationLoadError` | 配置文件不存在、不是合法 JSON 或校验失败。`ValueError` 的子类 |
+| `DataAgentError` | 结构化错误，字段为 `source`、`component`、`fact`、`trace_id`。目前由语义服务客户端抛出 |
+| `LoopDetectedError` | 循环检测终止本轮。`kind` 说明是文本复读还是工具循环 |
+| `safe_error` | 把异常渲染成 `{"code", "message"}`：去掉已知密钥和终端控制符，消息截断到 1500。`code` 的取值见 [事件](events.md) |
 
-拒绝一次 Hook 时，在函数中抛出异常。
+### 典型用法
 
-## `LaunchOptions`
+```python
+from dataagent import LaunchOptions, create_agent, prepare_runtime
+
+runtime = prepare_runtime(LaunchOptions(workspaces=("/existing/data",)))
+async with create_agent(runtime, checkpointer=checkpointer) as agent:
+    result = await agent.ainvoke(
+        {"messages": [("user", "Summarize 1, 2, 3")]},
+        config={"configurable": {"thread_id": "task-a"}},
+    )
+```
+
+步骤和注意事项见 [SDK](../guides/sdk.md)。
+
+### `LaunchOptions`
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `cwd` | `Path.cwd()` | 相对路径基准 |
-| `workspace` | `None` | 单个输入。不能和 `workspaces` 同时使用 |
-| `workspaces` | `()` | 多个输入 |
-| `user_id` | `"default"` | 本地 profile |
-| `session_id` | `None` | 恢复会话 |
-| `config` | `None` | 显式配置文件 |
-| `env_file` | `None` | 显式环境文件。设置后用这一份代替 Home `.env` |
+| `config` | `None` | 配置文件。省略时读 Home `config.json` |
+| `env_file` | `None` | 环境文件。设置后用这一份代替 Home `.env` |
+| `user_id` | `"default"` | 本地用户 ID，决定 `runtime/users/<user>/` |
+| `workspaces` | `()` | 只读输入目录 |
+| `cwd` | `Path.cwd()` | 相对路径的基准 |
 | `init_home` | `False` | `True` 时创建 Home 模板，不覆盖已有文件 |
+| `session_id` | `None` | 宿主用：沿用该会话创建时记录的输入目录。不选择对话；对话由调用时的 `thread_id` 决定 |
 
-## `Runtime.paths.open_session`
+### `create_agent`
 
 ```python
-session, workspaces = runtime.paths.open_session(
-    "task-a", create=True, output_dir="~/reports/task-a",
-)
+create_agent(runtime, *, model=None, checkpointer=None, mcp_tools=None, semantic_client=None)
 ```
 
-返回 `(SessionPaths, tuple[WorkspaceInput, ...])`，可传给 `create_agent` 的 `session` 和 `input_workspaces`。`SessionPaths` 包含控制面目录 `root`、产物目录 `outputs` 和轨迹目录 `traces`；`artifacts` 为 `outputs / "artifacts"`，没有会话级 `logs` 字段。
-
-- `create=True`：绑定不存在时登记；存在时恢复，不重新写库或扫描其他会话。`create=False`：只恢复，不存在时返回 `None`。
-- `output_dir`：可选 `str | Path`，直接指定新会话的最终产物目录。只接受绝对路径或 `~/` 开头的路径；其他相对路径报错。已有文件但不属于任何会话的目录会被接管。
-- `input_workspaces`：可选 `tuple[WorkspaceInput, ...]`。`None` 表示沿用已有绑定，新会话使用配置默认值；显式传入时，路径列表及顺序必须与已有绑定一致。`()` 是显式指定空列表。
-- 未传 `output_dir` 时，新会话采用 `<output_root>/<user>/<thread>/`，`output_root` 默认是 `<home>/outputs`。派生目录里已有不明来源的文件时抛出 `ValueError`。
-- 已有会话始终使用保存的目录；显式传入不同目录会抛出 `ValueError`。不会改变 Runtime 或其他会话的路径。
-- 产物目录与同一 Home 的其他已登记会话目录重叠时抛出 `ValueError`，不登记绑定。规则见 [会话与产物](../guides/sessions-and-outputs.md#规则每个会话独占一个产物目录)。
-- 产物目录不得与 Home 重叠，只有 `<home>/outputs` 区域例外；也不得与输入 workspace 重叠。
-
-## `Agent`
-
-| 方法 | 行为 |
+| 参数 | 说明 |
 | --- | --- |
-| `invoke` / `ainvoke` / `stream` / `astream` / `astream_events` | 接受调用级 `output_dir`；按 `config.configurable.thread_id` 选择或创建会话图，注入本轮 context，沿用该图的 tracer |
-| `graph_for(thread_id)` | 取得已有会话的原生图；会话不存在时抛出 `ValueError`，不创建会话 |
-| `graph` | 取得默认会话的原生图；首次访问会创建默认会话并固定输出目录 |
-| `as_agui(name="dataagent", **kwargs)` | 仅创建适配器，不打开默认会话；执行 `run(input)` 时按 `input.thread_id` 初始化原生 AG-UI。不要跨请求缓存适配器 |
-| `close` / `aclose` | 关闭本句柄创建的语义客户端。传入的客户端保持打开 |
-| 上下文管理器 | 同步和异步都支持，退出时关闭自有客户端 |
+| `checkpointer` | LangGraph checkpointer。要跨进程保留对话历史时传持久化实现 |
+| `mcp_tools` | 配置了 MCP 时必传，值来自 `await load_mcp_tools(runtime)`。没有 `.mcp.json` 时省略 |
+| `semantic_client` | 宿主已有语义客户端时传入，Agent 不关闭它。省略时，配置了 `semantic` 就由 Agent 创建并拥有 |
+| `model` | 覆盖默认模型对象，主要用于测试 |
 
-`create_agent(runtime, *, semantic_client=None, **kwargs)` 先检查配置，出错时立即抛出 `ValueError`，不创建会话目录。它把 `model`、`checkpointer`、`session`、`input_workspaces`、`mcp_tools`、`extension_revision` 传给 `build_agent`。
+`create_agent` 立即检查配置（入口、插件声明、MCP、Hook、语义客户端）。出错时抛出 `ValueError`，不创建会话目录。参数名写错时抛出 `TypeError`。另外三个参数（`session`、`input_workspaces`、`extension_revision`）给宿主用，见 [宿主接口](#宿主接口dataagenthost)。
 
-显式传入 `session` 时，root、traces 必须是当前 Home/user 下的标准会话地址，否则立即报错；outputs 规范化后保留。`input_workspaces=None` 对新会话使用配置默认值，对已有会话沿用保存值；显式元组必须与绑定的路径列表及顺序一致，`()` 也会参与检查。名称不参与比较。会话登记统一经过 `open_session`，`create_agent` 和 `build_agent` 不直接写绑定表。
+### `Agent`
 
-不同 session 可并发。同一 Agent 的同一 session 拒绝重叠调用。同步 `stream()` 在调用时校验会话与路径，开始迭代后占用 session；流结束、异常或显式关闭时释放。提前停止必须使用 `closing` / `aclosing` 或显式关闭流，不能依赖 `break` 或 GC。会话首次保存输出路径后，不允许重新绑定其他目录。
+| 成员 | 行为 |
+| --- | --- |
+| `invoke` / `ainvoke` / `stream` / `astream` / `astream_events` | 参数同 LangGraph，另加调用级 `output_dir`。按 `config["configurable"]["thread_id"]` 选择会话，首次使用时创建 |
+| `close` / `aclose` | 关闭本 Agent 创建的语义客户端。传入的客户端保持打开 |
+| 上下文管理器 | `with` 和 `async with` 都支持，退出时调用 `close` |
 
-`build_agent` 是低层接口，固定会话、backend 和默认 trace。SDK 沿用会话图绑定的 tracer，每轮按独立 run ID 导出并清理记录。`core` 的构图和 backend 机制保持不变，多任务应用用 `create_agent`。
+- 不同 `thread_id` 可以并发。同一 `thread_id` 上的重叠调用会报错。
+- 流式调用开始迭代后占用会话，流结束、出错或关闭时释放。提前停止时用 `contextlib.closing` / `aclosing` 关闭流，不能只靠 `break`。
+- `output_dir` 只在会话首次调用时生效，之后不能改。规则见 [会话与产物](../guides/sessions-and-outputs.md)。
 
-`build_agent` 在配置了 MCP 且未传 `mcp_tools` 时失败。配置了语义服务且上下文没有客户端时失败。
+### `ModelContext`
 
-## A2A 服务
+工具通过 `runtime.context` 拿到它，SDK 用户不需要自己构造。
+
+| 成员 | 说明 |
+| --- | --- |
+| `get_model(alias=None)` | 返回配置的模型。省略别名时用 `dataagent.model.default`。未知别名抛出 `ValueError` |
+| `semantic_client` | 语义客户端，没有配置 `semantic` 时为 `None` |
+| `session.outputs` | 本轮产物目录 |
+| `home` | 已解析的 Home 路径，用于跨会话共享的资源 |
+| `get_plugin_config(plugin_id)` | `plugins.config.<plugin_id>` 的副本。插件未启用时抛出 `ValueError` |
+| `get_plugin_state(plugin_id)` | 该插件在本 Agent 内的私有内存字典。不进入 Checkpoint，进程重启后清空。插件自己负责并发同步 |
+
+## 宿主接口（`dataagent.host`）
+
+宿主是把 Agent 提供给其他客户端的长驻服务，例如 `dataagent serve`。只调用 Agent 的程序不需要这一节。
+
+| 名称 | 作用 |
+| --- | --- |
+| `refresh_extensions(runtime)` | 重读插件、Hook 和 MCP 声明，返回新的 `Runtime`。保留模型、路径和启动策略。先编译成功再替换正在使用的 Runtime；进行中的调用继续用旧图 |
+| `extension_revision(runtime)` | 扩展来源的 SHA-256 指纹，用来判断是否需要刷新。不含业务输入和会话状态 |
+| `server_listen(options=None)` | 读所选配置的 `server` 段，按 `prepare_runtime` 的环境规则展开 `$env{NAME}`（含 `options.env_file`），返回 `(host, port)`。读不到、缺少变量或校验失败时返回 `127.0.0.1:8790`。`prepare_runtime` 失败时也能用 |
+| `error_code(error)` | 把异常映射为固定错误码 |
+| `ERROR_CODES` | 全部错误码。取值和含义见 [事件](events.md)。异常类可用类属性 `error_code` 声明自己的码 |
+
+宿主另外使用这些成员：
+
+- `create_agent(..., session=, input_workspaces=, extension_revision=)`：
+  - `session` 指定默认会话，必须是当前 Home 和用户下的标准会话路径，否则立即报错。
+  - `input_workspaces=None` 时，新会话用配置默认值，已有会话沿用保存值；显式元组（包括 `()`）必须和已有绑定的路径及顺序一致。名称不参与比较。
+  - `extension_revision` 是上面 `extension_revision(runtime)` 的值，用来让 Skill 缓存跟随扩展刷新。
+- `runtime.paths.open_session(thread_id, *, create, output_dir=None, input_workspaces=None)`：登记或恢复会话，返回 `(SessionPaths, workspaces)`，可传给上面两个参数。`create=False` 时会话不存在返回 `None`。目录规则见 [会话与产物](../guides/sessions-and-outputs.md)。
+- `agent.as_agui(name="dataagent", **kwargs)`：创建 AG-UI 适配器，执行 `run(input)` 时按 `input.thread_id` 选择会话。每个请求用新的适配器。
+- `agent.graph_for(thread_id)`：取得已有会话的原生图，例如读状态 `graph_for(t).aget_state(config)`。会话不存在时抛出 `ValueError`。`agent.graph` 是默认会话的图，首次访问会创建默认会话。
+
+## 低层接口（`dataagent.lowlevel`）
+
+`build_graph` 返回一张原生 LangGraph `CompiledStateGraph`，绑定一个会话。它不拥有语义客户端，不按 `thread_id` 缓存图，也不管理产物目录。调用方每次调用都要传上下文。多任务应用请用 `create_agent`。
+
+```python
+from dataagent import ModelContext, load_mcp_tools
+from dataagent.lowlevel import build_graph
+
+context = ModelContext(runtime, semantic_client=client)
+graph = build_graph(
+    runtime, context=context, checkpointer=checkpointer,
+    mcp_tools=await load_mcp_tools(runtime),
+)
+result = await graph.ainvoke(inputs, config, context=context)
+```
+
+```python
+build_graph(runtime, *, checkpointer=None, model=None, session=None,
+            input_workspaces=None, mcp_tools=None, extension_revision=None, context=None)
+```
+
+- 省略 `session` 和 `context` 时用名为 `sdk` 的会话。
+- 配置了 MCP 却没传 `mcp_tools` 时失败。配置了语义服务、而 `context` 没有语义客户端时失败。
+- `dataagent.entry` 有值时只挂该编译型入口。
+- 额外的 LangChain callback 放在调用的 `config["callbacks"]`，或用 `graph.with_config(callbacks=[...])`。
+
+## A2A（`a2a_server`）
 
 `a2a_server` 不随 `import dataagent` 加载。
 
-```python
-from a2a_server import create_a2a_server, run_a2a_server
-```
+| 名称 | 给谁 | 作用 |
+| --- | --- | --- |
+| `A2ACaller(base_url, *, auth_token=None, timeout=180)` | 调用方 | 调用另一个 A2A 1.0 Agent。`await send(text, *, thread_id=None)` 返回 `A2AResult` |
+| `A2AResult` | 调用方 | 结果：`text`、`context_id`、`task_id`、`state` |
+| `A2ACallError` | 调用方 | 远端任务失败、取消或拒绝 |
+| `create_a2a_server(runtime, *, host, port, auth_token=None)` | 宿主 | 返回只含 A2A 路由的 Starlette 应用 |
+| `run_a2a_server(runtime, *, host, port, auth_token=None)` | 宿主 | 用 uvicorn 运行上面的应用。命令行入口是 `dataagent serve-a2a` |
 
-`dataagent serve` 在同一个进程上挂 Agent Card 和 `POST /a2a/jsonrpc`。`create_a2a_server(runtime, *, host, port, ...)` 返回只含这组路由的 Starlette 应用，`run_a2a_server` 用 uvicorn 跑起来。命令行入口是 `dataagent serve-a2a`。
-
-`A2ACaller(base_url)` 调用另一个 A2A 1.0 agent。配置里的 `a2a.agents` 由 `load_extensions` 收成名为 `a2a__<id>` 的工具。约定见 [A2A](a2a.md)。
-
-## `ModelContext`
-
-```python
-ModelContext(runtime, *, model=None, semantic_client=None)
-```
-
-- `get_model()` 使用 `dataagent.model.default`
-- `get_model(alias)` 使用 `models.<alias>`
-- 传入的 `model` 只覆盖默认别名，便于测试
-- `semantic_client` 可能是 `None`
-- `home` 是已解析的 AgentKit Home 路径，供插件定位跨会话共享资源；会话产物仍使用 `session.outputs`。
-- `session.outputs` 是本轮产物路径；`agent.context` 保存默认会话，不表示最近一次调用
-- 编译型插件工厂按会话创建，使用 `services.outputs_dir` 获取该会话的固定产物目录
-
-未知别名抛出 `ValueError`。
+配置里的 `a2a.agents` 会自动变成名为 `a2a__<id>` 的工具，不需要调用 Python 接口。约定见 [A2A](a2a.md)。

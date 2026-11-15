@@ -89,7 +89,7 @@ async def test_health_derives_model_and_plugins_from_replaced_settings(runtime):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
         assert (await client.get("/healthz")).json()["data"]["conversation"] == {
             "ready": True,
-            "status": "ready", "protocol": "dataagent", "instanceId": "test-instance",
+            "protocol": "dataagent", "instanceId": "test-instance",
             "model": "replacement-model", "plugins": [],
             "home": str(runtime.paths.home), "entry": None,
             "user": runtime.paths.user_id,
@@ -192,7 +192,7 @@ async def test_failure_log_and_sse_include_only_redacted_exception_chain(runtime
     record, = [r for r in caplog.records if r.name == "dataagent.api" and "RUN_ERROR" in r.getMessage()]
     message = record.getMessage()
     assert body["runId"] in message and body["threadId"] in message
-    assert "stage=agent_stream" in message and "code=ConnectionError" in message
+    assert "stage=agent_stream" in message and "code=INTERNAL_ERROR error=ConnectionError" in message
     assert "OSError: socket failed" in message and "OSError: socket failed" in events[-1]["message"]
     assert "test-secret" not in message and "transport-secret" not in message
     assert "test-secret" not in events[-1]["message"] and "transport-secret" not in events[-1]["message"]
@@ -216,7 +216,7 @@ async def test_upstream_run_error_is_also_logged_redacted(runtime, caplog, monke
         events = sse(await client.post("/dataagent/stream", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["message"] == "upstream failed: [REDACTED]"
-    assert events[-1]["code"] == "provider [REDACTED]"
+    assert events[-1]["code"] == "INTERNAL_ERROR"
     assert "rawEvent" not in events[-1]
     assert "raw_event" not in events[-1]
     assert "do-not-forward" not in json.dumps(events)
@@ -400,18 +400,18 @@ async def test_deadline_covers_iteration_and_releases_session(runtime):
     async with client_for(runtime, NeverModel(responses=[])) as (client, app):
         events = sse(await client.post("/dataagent/stream", json=query()))
         assert terminal(events) == ["RUN_ERROR"]
-        assert events[-1]["code"] == "TimeoutError"
+        assert events[-1]["code"] == "TIMEOUT"
         assert (await client.get("/sessions/thread-1")).status_code == 200
 
 
 async def test_native_child_progress_visible_but_internal_content_hidden(runtime, monkeypatch):
     import importlib
 
-    from dataagent.agent import build_agent
+    from dataagent.agent import build_graph
 
     recorder = RecordingCallback()
-    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_agent",
-                        lambda *args, **kwargs: build_agent(*args, **kwargs).with_config(callbacks=[recorder]))
+    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_graph",
+                        lambda *args, **kwargs: build_graph(*args, **kwargs).with_config(callbacks=[recorder]))
     model = ScriptedModel(responses=[
         call("task", {"subagent_type": "general-purpose", "description": "statistics"}),
         call("common__summarize_numbers", {"numbers": [1, 2]}),
@@ -464,12 +464,12 @@ async def test_real_http_disconnect_cancels_model_and_releases_session(runtime, 
     from langchain_core.messages import AIMessageChunk
     from langchain_core.outputs import ChatGenerationChunk
 
-    from dataagent.agent import build_agent
+    from dataagent.agent import build_graph
 
     cancelled = asyncio.Event()
     recorder = RecordingCallback()
-    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_agent",
-                        lambda *args, **kwargs: build_agent(*args, **kwargs).with_config(callbacks=[recorder]))
+    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_graph",
+                        lambda *args, **kwargs: build_graph(*args, **kwargs).with_config(callbacks=[recorder]))
 
     class WaitingStream(ScriptedModel):
         async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
@@ -529,20 +529,20 @@ async def test_sdk_and_http_share_hook_lifecycle(runtime, monkeypatch, scenario)
     from conftest import RecordingCallback
     from langchain_core.messages import HumanMessage
 
-    from dataagent.agent import build_agent
+    from dataagent.agent import build_graph
 
     responses = [] if scenario == "model_error" else [
         call("common__summarize_numbers", {"numbers": "wrong" if scenario == "tool_error" else [1, 2, 3]}),
         AIMessage(content="result"),
     ]
     sdk_hooks, http_hooks = RecordingCallback(), RecordingCallback()
-    graph = build_agent(runtime, model=ScriptedModel(responses=responses)).with_config(callbacks=[sdk_hooks])
+    graph = build_graph(runtime, model=ScriptedModel(responses=responses)).with_config(callbacks=[sdk_hooks])
     try:
         await graph.ainvoke({"messages": [HumanMessage(content="test")]})
     except RuntimeError:
         assert scenario == "model_error"
-    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_agent",
-                        lambda *args, **kwargs: build_agent(*args, **kwargs).with_config(callbacks=[http_hooks]))
+    monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_graph",
+                        lambda *args, **kwargs: build_graph(*args, **kwargs).with_config(callbacks=[http_hooks]))
     async with client_for(runtime, ScriptedModel(responses=responses)) as (client, app):
         events = sse(await client.post("/dataagent/stream", json=query()))
         assert terminal(events) == (["RUN_ERROR"] if scenario == "model_error" else ["RUN_FINISHED"])
@@ -576,7 +576,7 @@ async def test_configured_hook_error_reaches_http_without_false_success_or_retry
     async with client_for(runtime, model) as (client, app):
         events = sse(await client.post("/dataagent/stream", json=query()))
         assert terminal(events) == ["RUN_ERROR"]
-        assert events[-1]["code"] == "RuntimeError"
+        assert events[-1]["code"] == "INTERNAL_ERROR"
         assert "Policy failure" in events[-1]["message"]
         assert (await client.get("/sessions/thread-1")).json()["status"] == "error"
     assert len(model.requests) == (0 if event in {"before_agent", "before_model"}
@@ -677,3 +677,20 @@ async def test_compiled_entry_streams_model_chunks(runtime, tmp_path, model_sour
             "/dataagent/stream", json=query("ask", thread=f"{model_source}-entry"),
         ))
     _assert_model_stream_visible(stream)
+
+
+async def test_concurrent_requests_with_one_run_id_get_one_409(runtime):
+    model = ScriptedModel(responses=[AIMessage(content="ok")] * 2)
+    first = query(thread="thread-dup-a")
+    second = query(thread="thread-dup-b", runId=first["runId"])
+    async with client_for(runtime, model) as (client, _app):
+        responses = await asyncio.gather(
+            client.post("/dataagent/stream", json=first),
+            client.post("/dataagent/stream", json=second),
+        )
+        # A finished run frees its runId.
+        third = query(thread="thread-dup-c", runId=first["runId"])
+        reused = await client.post("/dataagent/stream", json=third)
+    assert sorted(response.status_code for response in responses) == [200, 409]
+    assert reused.status_code == 200
+

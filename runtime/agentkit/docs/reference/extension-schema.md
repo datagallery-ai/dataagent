@@ -53,16 +53,19 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `kind` | `standard` 或 `compiled` | 默认 `standard`。`compiled` 表示由 Python 工厂提供整张图 |
 | `name` | 字符串 | 资源 ID |
-| `description` | 非空字符串 | 交给 `task` 工具的说明 |
-| `system_prompt` | 相对路径 | 读取为提示正文 |
+| `description` | 非空字符串 | 交给 `task` 工具的说明。和 `description_file` 必须二选一 |
+| `description_file` | 相对路径 | 读取为 `description` 的正文 |
+| `system_prompt` | 相对路径 | 读取为提示正文。`standard` 必填，`compiled` 禁止 |
+| `entrypoint` | `file.py:symbol` | `compiled` 必填，指向图工厂。`standard` 不用 |
 | `tools` | 字符串数组或省略 | 省略继承全部；`[]` 不附加声明工具 |
 | `skills` | 字符串数组或省略 | 省略继承；`[]` 不加载 |
 | `hooks` | 分组或列表 | 默认空，只作用于该子代理 |
 | `filesystem_tools` | 原生文件工具名数组或省略 | 省略沿用框架默认；必须含 `read_file`，例如 `["ls", "read_file"]` |
 
 `filesystem_tools` 通过原生 FilesystemMiddleware 设置该子代理的文件工具集合，独立于插件工具 `tools`。
-编译子代理自行管理执行图，不接受此字段。
+`compiled` 子代理自行管理执行图，不接受 `system_prompt`、`tools`、`skills`、`hooks` 和 `filesystem_tools`。
 
 ## 产品配置里的 Hook
 

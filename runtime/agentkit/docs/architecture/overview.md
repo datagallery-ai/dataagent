@@ -11,7 +11,7 @@ flowchart TB
   end
   subgraph product [产品装配]
     Client[client.Agent]
-    Agent[agent.build_agent]
+    Agent[agent.build_graph]
     Ext[extensions 编译]
     Prompt[prompts]
   end

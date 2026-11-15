@@ -77,6 +77,7 @@ AgentKit 是本地数据 Agent 运行时。Python 包名和命令名是 `dataage
 | 文档 | 内容 |
 | --- | --- |
 | [开发环境](development/setup.md) | 依赖和调试 |
+| [对外接口总览](development/external-interfaces.md) | 接口分类、统一规则和优化清单 |
 | [测试](development/testing.md) | 单元测试、集成测试和真实模型测试 |
 | [内置 core](development/core-maintenance.md) | `dataagent/core` 的来源和维护 |
 | [发布](development/release.md) | 构建、检查和兼容 |

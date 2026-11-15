@@ -25,7 +25,9 @@ from pydantic import ConfigDict, model_validator
 from starlette.background import BackgroundTask
 
 from dataagent import Runtime, SemanticServiceClient, load_mcp_tools, safe_error
+from dataagent.host import ERROR_CODES
 from serve.agents import SessionAgents
+from serve.envelopes import register_error_handlers
 from serve.outputs import list_outputs, preview_output
 from serve.product import ConversationReadyGuard, register_not_found, register_product_routes
 from serve.sessions import (
@@ -100,7 +102,6 @@ class QueryInput(RunAgentInput):
 def agentkit_health_body(runtime: Runtime, instance_id: str) -> dict:
     """Read model and plugin readiness from an in-process runtime. Does not start a process."""
     return {
-        "status": "ready",
         "protocol": "dataagent",
         "instanceId": instance_id,
         "model": runtime.model_name,
@@ -272,14 +273,19 @@ async def _iter_until_cancelled(upstream, handle: _ActiveRun):
         yield event
 
 
+class _StreamProtocolError(RuntimeError):
+    """The upstream adapter broke the one-terminal-event stream contract."""
+
+    error_code = "INCOMPLETE_STREAM"
+
+
 def _public_run_error(event, secrets: tuple[str, ...]) -> RunErrorEvent:
     """Return a terminal error without credentials or the upstream raw payload."""
     message = safe_error(
         RuntimeError(str(getattr(event, "message", "") or "RUN_ERROR")), secrets,
     )["message"]
-    code = safe_error(
-        RuntimeError(str(getattr(event, "code", "") or "RUN_ERROR")), secrets,
-    )["message"]
+    upstream = str(getattr(event, "code", "") or "")
+    code = upstream if upstream in ERROR_CODES else "INTERNAL_ERROR"
     return RunErrorEvent(message=message, code=code)
 
 
@@ -431,9 +437,18 @@ def register_conversation_routes(
         user_id = local_user_id()
         thread_id = body.thread_id
         sessions = app.state.sessions
-        opened = await _acquire_run(
-            app, sessions, busy, user_id, thread_id, rejected_status=409,
-        )
+        # Cancel addresses runs by runId alone, so an active runId must stay unique.
+        if body.run_id in app.state.active_runs:
+            raise HTTPException(409, "A run with this runId is already active")
+        # Reserve the runId before the first await so concurrent duplicates also get 409.
+        handle = _register_run(app, body.run_id)
+        try:
+            opened = await _acquire_run(
+                app, sessions, busy, user_id, thread_id, rejected_status=409,
+            )
+        except BaseException:
+            _unregister_run(app, body.run_id, handle)
+            raise
         _session, agent, run_runtime = opened
         graph = agent.graph
         secrets = agent.context.redaction_secrets
@@ -465,15 +480,17 @@ def register_conversation_routes(
             await turn.start(body.run_id, _turn_text(body.messages))
         except HTTPException:
             busy.discard((user_id, thread_id))
+            _unregister_run(app, body.run_id, handle)
             raise
         except ValueError as error:
             busy.discard((user_id, thread_id))
+            _unregister_run(app, body.run_id, handle)
             raise HTTPException(409, str(error)) from None
         except BaseException:
             busy.discard((user_id, thread_id))
+            _unregister_run(app, body.run_id, handle)
             raise
 
-        handle = _register_run(app, body.run_id)
         release_session = _release_turn(
             turn, busy, (user_id, thread_id),
             unregister=lambda: _unregister_run(app, body.run_id, handle),
@@ -499,11 +516,11 @@ def register_conversation_routes(
                             continue
                         if event.type in (EventType.RUN_FINISHED, EventType.RUN_ERROR):
                             if terminal is not None:
-                                raise RuntimeError("Upstream emitted more than one terminal event")
+                                raise _StreamProtocolError("Upstream emitted more than one terminal event")
                             terminal = event
                             continue
                         if terminal is not None:
-                            raise RuntimeError("Upstream emitted events after its terminal event")
+                            raise _StreamProtocolError("Upstream emitted events after its terminal event")
                         # Emit one authoritative final snapshot below. An adapter configured
                         # with an older recovery checkpoint may otherwise snapshot that old state.
                         if event.type in (
@@ -525,7 +542,7 @@ def register_conversation_routes(
                                 event.code = safe_error(RuntimeError(event.code), secrets)["message"]
                         yield encoder.encode(event)
                     if terminal is None:
-                        raise RuntimeError(
+                        raise _StreamProtocolError(
                             "INCOMPLETE_STREAM: upstream ended without a terminal event"
                         )
                     if terminal.type == EventType.RUN_ERROR:
@@ -554,17 +571,21 @@ def register_conversation_routes(
                         )
                     )
             except _RunCancelled:
-                return
+                # The session stays "interrupted"; tell the client this was a requested stop.
+                yield encoder.encode(
+                    RunErrorEvent(code="CANCELLED", message="Run was cancelled.")
+                )
             except (asyncio.CancelledError, GeneratorExit):
                 raise
             except Exception as error:
                 turn.status = "error"
                 details = safe_error(error, secrets)
                 logger.error(
-                    "RUN_ERROR run=%s thread=%s stage=agent_stream code=%s message=%s",
+                    "RUN_ERROR run=%s thread=%s stage=agent_stream code=%s error=%s message=%s",
                     body.run_id,
                     thread_id,
                     details["code"],
+                    type(error).__name__,
                     details["message"],
                 )
                 yield encoder.encode(RunErrorEvent(**details))
@@ -620,6 +641,14 @@ def create_app(runtime: Runtime | None, *, instance_id: str | None = None, model
     app.state.conversation_runtime = runtime
     app.state.conversation_instance_id = identity
     app.add_middleware(ConversationReadyGuard)
+    if runtime is not None and runtime.a2a_auth_token:
+        from a2a_server.agent_card import JSONRPC_PATH
+        from a2a_server.server import BearerGuard
+
+        app.add_middleware(
+            BearerGuard, token=runtime.a2a_auth_token, paths=frozenset({JSONRPC_PATH}),
+        )
+    register_error_handlers(app)
     register_product_routes(app)
     if runtime is not None:
         register_conversation_routes(app, runtime, instance_id=identity)

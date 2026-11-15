@@ -13,11 +13,18 @@ ErrorSource = str
 
 _VALID_SOURCES = frozenset({"config", "llm", "tool", "internal", "constraint"})
 _SOURCE_FACTS: dict[str, str] = {
-    "config": "配置无效",
-    "llm": "模型调用失败",
-    "tool": "工具执行失败",
-    "constraint": "触发约束",
-    "internal": "内部错误",
+    "config": "Invalid configuration",
+    "llm": "Model call failed",
+    "tool": "Tool execution failed",
+    "constraint": "Constraint triggered",
+    "internal": "Internal error",
+}
+_SOURCE_CODES: dict[str, str] = {
+    "config": "CONFIG_ERROR",
+    "llm": "MODEL_ERROR",
+    "tool": "TOOL_ERROR",
+    "constraint": "LIMIT_EXCEEDED",
+    "internal": "INTERNAL_ERROR",
 }
 _SECRET_KEYS = frozenset(
     {
@@ -175,9 +182,16 @@ class DataAgentError(Exception):
         """Build a structured error; ``fact`` falls back to the source default."""
         self.source = _normalize_source(source)
         self.component = component
-        self.fact = _sanitize_text(str(fact or _SOURCE_FACTS.get(self.source, "内部错误")))
+        self.fact = _sanitize_text(str(fact or _SOURCE_FACTS.get(self.source, "Internal error")))
         self.trace_id = trace_id or uuid4().hex
         super().__init__(self.fact)
+
+    @property
+    def error_code(self) -> str:
+        """Public error code for this source; see dataagent.diagnostics.ERROR_CODES."""
+        if self.source == "constraint" and isinstance(self.__cause__, TimeoutError):
+            return "TIMEOUT"
+        return _SOURCE_CODES[self.source]
 
     def __str__(self) -> str:
         """Return the sanitized fact."""

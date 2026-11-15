@@ -72,6 +72,11 @@ def lookup(query: str, runtime: ToolRuntime[ModelContext]) -> str:
 | `search_fulltext` / `search_basic` / `search_dsl` | 对应 search 接口 |
 | `get_entity_by_guid` / `get_entity_by_unique_attribute` | 实体查询 |
 | `get_retrieval_table_schema` | 表结构 |
+| `search_entities(type_name, *, limit=200, offset=0)` | `search/basic`（GET），按类型分页列出实体 |
+| `list_retrieval_tables` | `retrieval/tables` |
+| `hybrid_table_columns(tables)` | `hybrid/table-columns`，批量取表的物理列 |
+
+`with_scenario(scenario)` 返回共用同一连接的客户端视图，它的请求带上场景请求头。
 
 列标识使用 `db.table.column`。`get_columns_sample_values` 的 `sample_count` 范围是 0 到 100。
 

@@ -19,6 +19,26 @@ afterEach(() => {
 });
 
 describe("config api adapter", () => {
+  it("treats cancel of a run that is no longer active as already stopped", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      success: false,
+      error: { code: "RESOURCE_NOT_FOUND", message: "Run is not active." },
+    }), { headers: { "Content-Type": "application/json" }, status: 404 })));
+    await expect(configApi.cancelRun("run-1")).resolves.toMatchObject({ canceled: false, runId: "run-1" });
+  });
+
+  it("reads code and message from a session error envelope", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      success: false,
+      error: { code: "RESOURCE_NOT_FOUND", message: "Session not found" },
+    }), { headers: { "Content-Type": "application/json" }, status: 404 })));
+    await expect(configApi.getNativeSession("missing")).rejects.toMatchObject({
+      code: "RESOURCE_NOT_FOUND",
+      message: "Session not found",
+      status: 404,
+    });
+  });
+
   it("does not add development auth headers to REST requests", async () => {
     const fetchMock = vi.fn(async () => new Response(JSON.stringify({
       success: true,

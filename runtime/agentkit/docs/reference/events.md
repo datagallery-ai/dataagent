@@ -19,9 +19,23 @@
 
 ## 失败
 
-`RUN_ERROR` 的 `code` 和 `message` 经过 `safe_error`。`code` 通常是异常类名。消息最长 1500，并去掉已知密钥。
+`RUN_ERROR` 的 `code` 和 `message` 经过 `safe_error`。`code` 取下表中的固定值，消息最长 1500，并去掉已知密钥。
 
-上游若已经发出 `RUN_ERROR`，服务改写其 code 和 message 后再转发，并把会话标为 `error`。
+| `code` | 含义 |
+| --- | --- |
+| `TIMEOUT` | 超过 `dataagent.limits.timeout_seconds`，或模型请求超时 |
+| `CANCELLED` | 客户端调用了 `POST /runs/{runId}/cancel` |
+| `LOOP_DETECTED` | 循环检测终止了本轮 |
+| `LIMIT_EXCEEDED` | 超过 `model_calls_per_agent` 或 `tool_calls_per_agent` |
+| `INCOMPLETE_STREAM` | 上游没有终止事件，或终止事件之后还有事件 |
+| `CONFIG_ERROR` | 配置无效 |
+| `MODEL_ERROR` | 模型服务返回错误 |
+| `TOOL_ERROR` | 工具或远端 Agent 调用失败 |
+| `INTERNAL_ERROR` | 其他错误 |
+
+客户端可以按 `code` 分支；新增取值会写进本表。`message` 是给人看的说明，不要按它分支。服务端日志另外记录异常类名（`error=`）。
+
+上游若已经发出 `RUN_ERROR`，服务改写其 message 后再转发，并把会话标为 `error`。上游 code 不在上表时改为 `INTERNAL_ERROR`。
 
 缺少终止事件、超时、扩展以外的执行异常，也编码成 `RUN_ERROR`。超时使用 `dataagent.limits.timeout_seconds`，包住模型重试、退避和工具时间。
 
@@ -31,7 +45,8 @@
 | --- | --- | --- |
 | `RUN_FINISHED` | `complete`，并记下新的 Checkpoint | 用最后的 `MESSAGES_SNAPSHOT` 作为该轮消息。可以显示 `durationMs` |
 | `RUN_ERROR` | `error`。图里已经有消息时，索引指向这一轮到达的 Checkpoint | 保留已显示的部分输出和错误码。不要用同一个 `runId` 重放。下一轮留在同一线程 |
-| 显式取消或连接断开，没有终止事件 | `interrupted` | 和停止同一条存储结果。有 Checkpoint 就从它继续，否则读该线程最新图状态。不新开线程 |
+| `RUN_ERROR`，`code` 为 `CANCELLED` | `interrupted` | 显式取消。按“已停止”显示，不按失败显示。有 Checkpoint 就从它继续，否则读该线程最新图状态。不新开线程 |
+| 连接断开，没有终止事件 | `interrupted` | 存储结果和取消相同 |
 
 同一 `threadId` 在运行中再发请求会得到 HTTP 409。等这轮结束或确认中断后，用新的 `runId` 和新的用户消息继续。
 
@@ -48,6 +63,8 @@ TUI 把这三种结果画成完成、失败或 `Interrupted — continue this co
 | `SUBAGENT_STARTED` | 通过 `subagentRunId` 标识子代理，通过 `parentToolCallId` 关联外层 `task`；嵌套子代理另有 `parentSubagentRunId` |
 | `STEP_STARTED` / `STEP_FINISHED` | 通过 `subagentRunId` 和 `stepName` 展示该子代理的图节点进度 |
 | `SUBAGENT_FINISHED` / `SUBAGENT_ERROR` | 结束子代理的进度。它们不代表外层工具或根运行已经完成 |
+
+根运行的其他事件按 AG-UI 原样转发：`TEXT_MESSAGE_*`、`TOOL_CALL_*`、`REASONING_*`、根图的 `STEP_STARTED` / `STEP_FINISHED`，以及适配器或工具发出的 `CUSTOM` 事件。服务端自己不定义 `CUSTOM` 名字；客户端应忽略不认识的 `CUSTOM`。服务端丢弃上游的 `RUN_STARTED`、`MESSAGES_SNAPSHOT` 和 `STATE_SNAPSHOT`，自己发出一次 `RUN_STARTED`，并在成功时发出最终的 `MESSAGES_SNAPSHOT`。
 
 子代理文本、内部工具和状态事件不进入父对话流。最终消息快照仍取自根图。子代理错误消息与根错误一样经过脱敏。产物通过会话的 `outputs/` 目录读取，见 [HTTP 接口](rest-api.md)。`after_model` 在每次模型调用返回后于服务内执行，不对应逐 token 的 AG-UI 事件。
 

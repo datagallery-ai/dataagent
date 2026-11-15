@@ -37,7 +37,7 @@ Home `config.json` 和 `--config` 不同时参与。插件配置仍在选中的�
 - `models.<id>` 按模型 ID 和字段合并。
 - `dataagent.hooks` 按层追加。`"hooks": []` 或空事件组只表示这一层不追加。
 - 其他列表由高层整表替换。`plugins.enabled: []` 会清空低层的启用列表。
-- 相对路径以声明它的配置文件所在目录为基准，支持 `~/`。
+- 相对路径以声明它的配置文件所在目录为基准，支持 `~/`。`dataagent.output_root` 例外，见下文。
 - 未知字段、重复键、错误类型和非有限数值会使启动失败。
 
 环境文件同样只读一份，再由进程里的非空值覆盖：
@@ -75,7 +75,7 @@ Home `config.json` 和 `--config` 不同时参与。插件配置仍在选中的�
 
 **换默认模型。** 在 `models` 增加一个 ID，把 `dataagent.model.default` 改成该 ID，然后重启。没有自动回退。
 
-**限制一轮时长和循环次数。** 改 `dataagent.limits`。`timeout_seconds` 同时是 REST 整轮时限和模型请求超时。SDK 调用方自己控制整轮时限。
+**限制一轮时长和循环次数。** 改 `dataagent.limits`。`timeout_seconds` 同时是 REST 整轮时限、模型请求超时，以及 shell、MCP 和 A2A 调用的超时，完整列表见 [配置字段](../reference/configuration.md)。SDK 调用方自己控制整轮时限。
 
 **加入只读输入。** 在 `dataagent.workspaces` 写 `name`、已存在的 `path` 和 `"read_only": true`。命令行 `--workspace` 和环境变量 `DATAAGENT_WORKSPACE` 会盖过配置里的列表。
 

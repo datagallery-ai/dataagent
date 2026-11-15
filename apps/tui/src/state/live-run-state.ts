@@ -250,7 +250,10 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
         state,
         "failed",
         "failed",
-        stringValue(event.message) ?? "Agent 运行失败",
+        // The server confirmed a requested stop; show it like a local stop.
+        stringValue(event.code) === "CANCELLED"
+          ? "Stopped"
+          : stringValue(event.message) ?? "Agent 运行失败",
       );
     case "STATE_SNAPSHOT":
       return reduceStateSnapshot(state, event);

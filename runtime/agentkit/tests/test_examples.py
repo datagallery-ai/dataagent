@@ -9,8 +9,9 @@ from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, ToolMessage
 from test_api import client_for, query, sse, terminal
 
-from dataagent import LaunchOptions, build_agent, prepare_runtime
+from dataagent import LaunchOptions, prepare_runtime
 from dataagent.declarations import HookSpec, normalize_hooks
+from dataagent.lowlevel import build_graph
 from dataagent.settings import (
     A2ASettings,
     AgentSettings,
@@ -62,7 +63,7 @@ async def test_shipped_config_runs_python_hooks(example_runtime):
         call("common__summarize_numbers", {"numbers": [1, 2, 3]}),
         AIMessage(content="Count 3, sum 6."),
     ])
-    graph = build_agent(example_runtime, model=model)
+    graph = build_graph(example_runtime, model=model)
     result = await graph.ainvoke({"messages": [("user", "请统计 1、2、3")]})
     message = next(item for item in result["messages"] if isinstance(item, ToolMessage))
     assert json.loads(message.content)["sum"] == 6
@@ -72,7 +73,7 @@ async def test_shipped_config_runs_python_hooks(example_runtime):
 async def test_shipped_python_hook_rejects_before_model(example_runtime):
     model = ScriptedModel(responses=[])
     with pytest.raises(ValueError, match="4000"):
-        await build_agent(example_runtime, model=model).ainvoke({
+        await build_graph(example_runtime, model=model).ainvoke({
             "messages": [("user", "中" * 4001)],
         })
     assert model.requests == []
@@ -96,7 +97,7 @@ async def test_tool_hook_denial_reaches_http_as_one_real_error(example_runtime):
     async with client_for(runtime, model) as (client, app):
         events = sse(await client.post("/dataagent/stream", json=query("统计 1、2")))
     assert terminal(events) == ["RUN_ERROR"]
-    assert events[-1]["code"] == "ValueError"
+    assert events[-1]["code"] == "INTERNAL_ERROR"
     assert "blocked by the configured policy" in events[-1]["message"]
     assert len(model.requests) == 1
 
@@ -108,7 +109,7 @@ async def test_sdk_explicitly_clearing_hooks_and_bindings_does_not_keep_stale_de
     runtime = replace(example_runtime, settings=settings,
                       extensions=replace(example_runtime.extensions, hooks=()))
     model = ScriptedModel(responses=[AIMessage(content="ok")])
-    result = await build_agent(runtime, model=model).ainvoke({"messages": [("user", "中" * 4001)]})
+    result = await build_graph(runtime, model=model).ainvoke({"messages": [("user", "中" * 4001)]})
     assert result["messages"][-1].content == "ok"
 
 
@@ -122,4 +123,4 @@ def test_sdk_cannot_silently_use_stale_hook_bindings(example_runtime, change):
         "dataagent": example_runtime.settings.dataagent.model_copy(update={"hooks": hooks}),
     })
     with pytest.raises(ValueError, match="Hook bindings do not match"):
-        build_agent(replace(example_runtime, settings=settings), model=ScriptedModel(responses=[]))
+        build_graph(replace(example_runtime, settings=settings), model=ScriptedModel(responses=[]))

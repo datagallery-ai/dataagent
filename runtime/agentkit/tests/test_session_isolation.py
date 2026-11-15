@@ -8,7 +8,7 @@ import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 
-from dataagent.agent import build_agent
+from dataagent.agent import build_graph
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from dataagent.bootstrap.paths import ensure_session
 from dataagent.core.backends import LocalShellBackend
@@ -103,7 +103,7 @@ async def test_native_file_tools_and_shell_can_access_inputs(tmp_path):
         call("execute", {"command": f"touch {left}/hacked.txt"}),
         AIMessage(content="done"),
     ])
-    result = await build_agent(runtime, model=model, session=runtime.paths.for_session("sess-a")).ainvoke({
+    result = await build_graph(runtime, model=model, session=runtime.paths.for_session("sess-a")).ainvoke({
         "messages": [HumanMessage(content="read both inputs")],
     })
     text = tool_text(result, "read_file")
@@ -128,7 +128,7 @@ async def test_session_outputs_have_separate_cwd_not_access_isolation(tmp_path):
         call("execute", {"command": "printf extra >> result.csv"}),
         AIMessage(content="wrote"),
     ])
-    await build_agent(runtime, model=model, session=first).ainvoke({
+    await build_graph(runtime, model=model, session=first).ainvoke({
         "messages": [HumanMessage(content="write")],
     })
     assert (first.outputs / "result.csv").read_text() == "from-aextra"
@@ -139,7 +139,7 @@ async def test_session_outputs_have_separate_cwd_not_access_isolation(tmp_path):
         call("execute", {"command": f"cat {first.outputs / 'result.csv'}"}),
         AIMessage(content="checked"),
     ])
-    result = await build_agent(runtime, model=other, session=second).ainvoke({
+    result = await build_graph(runtime, model=other, session=second).ainvoke({
         "messages": [HumanMessage(content="look")],
     })
     assert "from-a" in tool_text(result, "read_file")
@@ -174,7 +174,7 @@ async def test_file_tools_and_shell_share_real_paths(tmp_path, child, common_plu
         responses = [call("task", {"subagent_type": "general-purpose", "description": "Write and verify a file"}),
                      *responses, AIMessage(content="done")]
     model = ScriptedModel(responses=responses)
-    await build_agent(runtime, model=model, session=session).ainvoke({
+    await build_graph(runtime, model=model, session=session).ainvoke({
         "messages": [HumanMessage(content="Write and verify a file")],
     })
     assert output.read_text() == "helloshell"

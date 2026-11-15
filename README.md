@@ -113,7 +113,7 @@ npm install
 cp .env.example .env
 ```
 
-Configure an optional server-side model in the root `.env` (you can also configure the model only in the Web UI):
+Configure the server-side model in the root `.env` (the Web UI cannot change the model). These values override the Home `~/.dataagent/.env`:
 
 ```bash
 LLM_MODEL=qwen-plus                # or deepseek-chat, gpt-4o, ...
@@ -135,8 +135,6 @@ Show me the tables in this datasource and explain the main fields of each.
 ```
 
 You will see the full chain: schema inspection → read-only SQL → SQL audit → table output → replayable run history.
-
-For real production, also configure SMTP and a reverse proxy: [`deploy/nginx.datagallery.conf.example`](deploy/nginx.datagallery.conf.example) (gzip/brotli static assets; keep `/dataagent/stream` uncompressed and unbuffered for SSE).
 
 > Full steps and the two-environment matrix: [Quick Start](docs/en/quick-start.md). Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
 

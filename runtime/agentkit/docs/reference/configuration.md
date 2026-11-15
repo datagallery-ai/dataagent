@@ -4,7 +4,7 @@
 
 文件是标准 JSON。未知字段、重复键、错误类型和非有限数值都会失败。`schema_version` 必须是 `3`。省略时按 `3` 校验。
 
-相对路径以该配置文件所在目录为基准，并解析 `~/`。
+相对路径以该配置文件所在目录为基准，并解析 `~/`。例外：`dataagent.output_root` 只接受绝对路径或 `~/` 开头的路径。
 
 ## 顶层
 
@@ -14,15 +14,16 @@
 | `dataagent` | 对象 | 见下表 | 模型选择、限额、Hook、只读输入、入口 |
 | `models` | 对象 | 必填 | 模型 ID 到连接。至少要能解析 `dataagent.model.default` |
 | `plugins` | 对象 | `enabled: []`，`paths: []` | 启用列表和额外插件目录 |
-| `server` | 对象 | 见下表 | 唯一的监听地址。网页和部署读同一字段 |
+| `server` | 对象 | 见下表 | 后端监听地址。`dataagent serve`、`dataagent serve-a2a`（可用 `--host`、`--port` 覆盖）、网页和部署读同一字段 |
 | `semantic` | 对象或省略 | 省略 | 省略时不创建语义客户端 |
+| `a2a` | 对象或省略 | 省略 | 本进程要调用的远端 Agent。见下文 `a2a` 一节 |
 
 ## `dataagent`
 
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |
 | `model.default` | 字符串 | `"primary"` | 必须是 `models` 的键 |
-| `limits.timeout_seconds` | 数 | `180` | 大于 0。REST 整轮时限，也是模型请求超时 |
+| `limits.timeout_seconds` | 数 | `180` | 大于 0。同时用于：REST 和 A2A 服务的整轮时限；模型请求超时；shell 命令超时；MCP 读超时；MCP 工具发现时限（取它和 20 秒中的较小值）；远端 A2A 调用的默认超时 |
 | `limits.model_calls_per_agent` | 整数 | `128` | 大于 0。每个 Agent 每次调用的模型循环上限 |
 | `limits.tool_calls_per_agent` | 整数 | `128` | 大于 0。每个 Agent 每次调用的工具次数上限 |
 | `loop_detection.enabled` | 布尔 | `true` | 检测模型输出复读和无进展工具循环。复读命中后终止本轮；工具循环第一次命中先提示模型换方法，第二次命中再终止 |
@@ -40,14 +41,14 @@
 | `path` | 字符串 | 必须是已存在且可读的目录，解析后唯一 |
 | `read_only` | `true` | 只能是 `true` |
 
-`entry` 由高层替换；省略则继承低层。改它要重启进程，`refresh_extensions` 不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /dataagent/stream` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent`、`loop_detection.ignored_tools` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍然是整轮时限。
+`entry` 由高层替换；省略则继承低层。改它要重启进程，扩展刷新不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /dataagent/stream` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent`、`loop_detection.ignored_tools` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍然是整轮时限。
 
 ### 复读与循环检测
 
 检测只使用本地规则，不产生额外模型调用，不改变模型的流式设置。实现位于 `dataagent/extensions/loop_detection.py`，与 `extensions/tracing.py` 同层，只依赖 LangChain 公开接口。两类检测装在不同的位置：
 
 - **工具循环**由 `LoopDetectionMiddleware` 检查。`agent.py` 的 `build_native_middleware()` 把它装进主代理和标准子代理，位置在调用次数上限之后、插件 Hook 之前。中间件钩子有准确的轮边界，命中时模型 span 已经结束，不会在追踪里留下未闭合的记录。
-- **文本复读**由 `LoopDetectionCallback` 检查。`build_agent()` 和 `build_entry_graph()` 通过 `with_config(callbacks=...)` 安装，LangChain 将其传递给内部模型和子代理调用。只有流式回调能在整段回复被消费完之前停下退化的解码，所以这部分留在回调上。
+- **文本复读**由 `LoopDetectionCallback` 检查。装配图时通过 `with_config(callbacks=...)` 安装，LangChain 将其传递给内部模型和子代理调用。只有流式回调能在整段回复被消费完之前停下退化的解码，所以这部分留在回调上。
 
 具体规则：
 

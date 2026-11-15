@@ -9,7 +9,7 @@ from conftest import RecordingCallback, ScriptedModel, call
 from langchain_core.messages import AIMessage, HumanMessage
 from langgraph.checkpoint.memory import InMemorySaver
 
-from dataagent.agent import build_agent
+from dataagent.agent import build_graph
 
 EVENTS = ["before_agent", "before_model", "after_model", "before_tool", "after_tool", "after_agent"]
 
@@ -67,7 +67,7 @@ async def test_configured_hooks_follow_native_lifecycle(runtime, tmp_path, scena
         AIMessage(content="finished"),
     ]
     recorder = RecordingCallback()
-    graph = build_agent(runtime, model=ScriptedModel(responses=responses)).with_config(callbacks=[recorder])
+    graph = build_graph(runtime, model=ScriptedModel(responses=responses)).with_config(callbacks=[recorder])
     if scenario == "model_error":
         with pytest.raises(RuntimeError, match="ran out"):
             await graph.ainvoke({"messages": [HumanMessage(content="test")]})
@@ -97,7 +97,7 @@ async def test_explicit_child_hooks_keep_native_scope(runtime, tmp_path):
         AIMessage(content="child result"), AIMessage(content="root result"),
     ])
     recorder = RecordingCallback(agents=("dataagent", "traced-statistics"))
-    graph = build_agent(runtime, model=model).with_config(callbacks=[recorder])
+    graph = build_graph(runtime, model=model).with_config(callbacks=[recorder])
     await graph.ainvoke({"messages": [HumanMessage(content="delegate")]},
                        {"configurable": {"thread_id": "scoped"}})
     values = recorded(output)
@@ -122,7 +122,7 @@ async def test_root_hooks_do_not_implicitly_apply_to_general_purpose(runtime, tm
         AIMessage(content="child result"), AIMessage(content="root result"),
     ])
     recorder = RecordingCallback()
-    graph = build_agent(runtime, model=model).with_config(callbacks=[recorder])
+    graph = build_graph(runtime, model=model).with_config(callbacks=[recorder])
     await graph.ainvoke({"messages": [HumanMessage(content="delegate")]})
     values = recorded(output)
     assert {item["scope"] for item in values} == {"dataagent"}
@@ -133,7 +133,7 @@ async def test_root_hooks_do_not_implicitly_apply_to_general_purpose(runtime, tm
 
 async def test_sdk_run_name_override_does_not_change_after_agent_hook(runtime, tmp_path):
     runtime, output = configured_hooks(runtime, tmp_path, events=["after_agent"])
-    graph = build_agent(runtime, model=ScriptedModel(responses=[AIMessage(content="done")]))
+    graph = build_graph(runtime, model=ScriptedModel(responses=[AIMessage(content="done")]))
     await graph.ainvoke({"messages": [HumanMessage(content="hello")]}, {"run_name": "sdk-custom-name"})
     assert [item["event"] for item in recorded(output)] == ["after_agent"]
 
@@ -146,7 +146,7 @@ async def test_initialization_failure_only_reaches_native_error_callback(runtime
             raise RuntimeError("Checkpoint initialization failed")
 
     recorder = RecordingCallback()
-    graph = build_agent(runtime, model=ScriptedModel(responses=[]), checkpointer=BrokenSaver()).with_config(callbacks=[recorder])
+    graph = build_graph(runtime, model=ScriptedModel(responses=[]), checkpointer=BrokenSaver()).with_config(callbacks=[recorder])
     with pytest.raises(RuntimeError, match="Checkpoint initialization failed"):
         await graph.ainvoke({"messages": [HumanMessage(content="test")]},
                            {"configurable": {"thread_id": "broken"}})
@@ -165,7 +165,7 @@ async def test_cancellation_does_not_run_native_after_agent_hook(runtime, tmp_pa
             await asyncio.Event().wait()
 
     recorder = RecordingCallback()
-    graph = build_agent(runtime, model=WaitingModel(responses=[])).with_config(callbacks=[recorder])
+    graph = build_graph(runtime, model=WaitingModel(responses=[])).with_config(callbacks=[recorder])
     task = asyncio.create_task(graph.ainvoke({"messages": [HumanMessage(content="test")]}))
     await asyncio.wait_for(ready.wait(), 5)
     task.cancel()
@@ -185,7 +185,7 @@ def test_safe_error_preserves_connection_cause_and_redacts_credentials():
     error = ConnectionError("Connection error.")
     error.__cause__ = cause
     result = safe_error(error, ("private-key",))
-    assert result["code"] == "ConnectionError"
+    assert result["code"] == "INTERNAL_ERROR"
     assert "Server disconnected" in result["message"]
     assert "private-key" not in result["message"]
 
@@ -203,3 +203,36 @@ def test_safe_error_preserves_empty_causes_and_honors_suppressed_context():
     assert "TimeoutError" not in safe_error(error)["message"]
     error.__cause__.__cause__ = error
     assert len(safe_error(error)["message"]) < 100  # Cycles terminate.
+
+
+def test_error_code_maps_known_errors_and_hides_class_names():
+    import anthropic
+    import httpx
+    import openai
+    from langchain.agents.middleware.model_call_limit import ModelCallLimitExceededError
+
+    from a2a_server.client import A2ACallError
+    from dataagent import ConfigurationLoadError, DataAgentError
+    from dataagent.extensions.loop_detection import LoopDetectedError
+    from dataagent.host import ERROR_CODES, error_code
+
+    request = httpx.Request("POST", "http://model.invalid")
+    wrapped = RuntimeError("model failed")
+    wrapped.__cause__ = TimeoutError()
+    cases = {
+        TimeoutError(): "TIMEOUT",
+        wrapped: "TIMEOUT",
+        LoopDetectedError("tool_cycle"): "LOOP_DETECTED",
+        ModelCallLimitExceededError(thread_count=1, run_count=2, thread_limit=None, run_limit=1): "LIMIT_EXCEEDED",
+        ConfigurationLoadError("bad"): "CONFIG_ERROR",
+        DataAgentError(source="tool", fact="x"): "TOOL_ERROR",
+        DataAgentError.from_exception(TimeoutError("slow")): "TIMEOUT",
+        A2ACallError("remote failed"): "TOOL_ERROR",
+        openai.APITimeoutError(request=request): "TIMEOUT",
+        anthropic.APITimeoutError(request=request): "TIMEOUT",
+        openai.APIConnectionError(request=request): "MODEL_ERROR",
+        ValueError("other"): "INTERNAL_ERROR",
+    }
+    for error, expected in cases.items():
+        assert error_code(error) == expected, error
+        assert expected in ERROR_CODES

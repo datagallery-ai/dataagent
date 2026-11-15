@@ -119,7 +119,7 @@ describe("live run state reducer", () => {
     expect(canceledByFinished.runFinishedAt).toBeTypeOf("number");
   });
 
-  it("treats only an abort code as canceled and ignores a busy-session error", () => {
+  it("treats abort and CANCELLED codes as canceled and ignores a busy-session error", () => {
     const started = reduceLiveRunEvent(createInitialLiveRun(), { type: "RUN_STARTED" });
     const canceled = reduceLiveRunEvent(started, {
       type: "RUN_ERROR",
@@ -128,6 +128,14 @@ describe("live run state reducer", () => {
     });
     expect(canceled.runStatus).toBe("canceled");
     expect(canceled.errorMessage).toBeUndefined();
+
+    const serverCanceled = reduceLiveRunEvent(started, {
+      type: "RUN_ERROR",
+      code: "CANCELLED",
+      message: "Run was cancelled.",
+    });
+    expect(serverCanceled.runStatus).toBe("canceled");
+    expect(serverCanceled.errorMessage).toBeUndefined();
 
     const busy = reduceLiveRunEvent(started, {
       type: "RUN_ERROR",

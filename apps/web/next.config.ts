@@ -7,9 +7,7 @@ const nextConfig: NextConfig = {
   outputFileTracingRoot: workspaceRoot,
   // Next's default `compress: true` applies gzip to `text/*`, including
   // `text/event-stream`. Even with flush hooks, compression is the wrong layer
-  // for AG-UI SSE. Disable here; terminate TLS/gzip at the reverse proxy for
-  // HTML/assets (see deploy/nginx.datagallery.conf.example), and leave
-  // `/dataagent/stream` uncompressed.
+  // for AG-UI SSE, so keep it disabled.
   compress: false,
   // Production / test builds: tree-shake heavy package entrypoints.
   experimental: {

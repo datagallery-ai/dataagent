@@ -10,13 +10,14 @@ from fastapi.testclient import TestClient
 from langgraph.runtime import Runtime as GraphRuntime
 from pydantic import ValidationError
 
-from dataagent import ModelContext, build_agent, create_agent
+from dataagent import ModelContext, create_agent
 from dataagent.bootstrap import LaunchOptions, prepare_runtime, refresh_extensions
 from dataagent.bootstrap.config_files import load_layers, merge
 from dataagent.declarations import HookSpec, PluginSpec
 from dataagent.errors import DataAgentError
 from dataagent.extensions.compiler import compile_extensions
 from dataagent.extensions.hooks import compile_hook
+from dataagent.lowlevel import build_graph
 from dataagent.semantic_client import SemanticServiceClient
 from dataagent.semantic_client.tls import build_ssl_context
 from dataagent.settings import SemanticSettings, SemanticTLSSettings
@@ -284,7 +285,7 @@ def test_sdk_build_failure_closes_owned_client(runtime, monkeypatch, explicit_se
         raise ValueError("assembly failed")
 
     monkeypatch.setattr(SemanticServiceClient, "from_settings", record)
-    monkeypatch.setattr(sdk, "build_agent", fail)
+    monkeypatch.setattr(sdk, "build_graph", fail)
     with pytest.raises(ValueError, match="assembly failed"):
         kwargs = {"session": runtime.paths.for_session("explicit")} if explicit_session else {}
         with create_agent(_with_semantic(runtime), **kwargs) as agent:
@@ -295,7 +296,7 @@ def test_sdk_build_failure_closes_owned_client(runtime, monkeypatch, explicit_se
 def test_low_level_graph_requires_explicit_semantic_context(runtime):
     """Avoid silently creating an unowned connection pool in the raw graph API."""
     with pytest.raises(ValueError, match="use create_agent"):
-        build_agent(_with_semantic(runtime))
+        build_graph(_with_semantic(runtime))
 
 
 def test_sdk_without_semantic_configuration_has_no_client(runtime):

@@ -113,7 +113,7 @@ npm install
 cp .env.example .env
 ```
 
-在根目录 `.env` 配置可选的服务端模型（也可以只在网页里配置）：
+在根目录 `.env` 配置服务端模型（网页上不能改模型）。这里的值会覆盖 Home `~/.dataagent/.env`：
 
 ```bash
 LLM_MODEL=qwen-plus                # 或 deepseek-chat、gpt-4o……
@@ -135,8 +135,6 @@ npm run start        # 网页默认 127.0.0.1:3000，可用 --web-host / --web-p
 ```
 
 你会看到完整的一条链路：schema 检查 → 只读 SQL → SQL 审计 → 表格产出 → 可回放的 run history。
-
-真实生产请再配 SMTP 与反代：[`deploy/nginx.datagallery.conf.example`](deploy/nginx.datagallery.conf.example)（静态 gzip/brotli；`/dataagent/stream` 关压缩与缓冲以保护 SSE）。
 
 > 完整步骤与两种环境对照见 [快速开始](docs/zh/quick-start.md)。接入自己的 PostgreSQL / MySQL / CSV 等见 [数据源指南](docs/zh/guides/data-sources.md)。
 

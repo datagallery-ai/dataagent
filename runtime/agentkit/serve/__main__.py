@@ -15,7 +15,14 @@ from uuid import uuid4
 # the event loop (no model calls, /healthz hangs).
 os.environ.setdefault("LANGCHAIN_REVISION_ID", "local")
 
-from dataagent import ConfigurationLoadError, LaunchOptions, Runtime, prepare_runtime, safe_error
+from dataagent import (
+    ConfigurationLoadError,
+    LaunchOptions,
+    Runtime,
+    prepare_runtime,
+    safe_error,
+)
+from dataagent.host import server_listen
 
 # Reload watches source only. The project root also holds .venv, which the
 # polling reloader would rescan every tick.
@@ -118,9 +125,14 @@ def _parser() -> argparse.ArgumentParser:
         help="Read-only input workspace; repeat for more than one",
     )
     a2a.add_argument("--env-file", help="Environment file resolved by the backend")
-    a2a.add_argument("--host", default="127.0.0.1", help="Bind address (default: 127.0.0.1)")
-    a2a.add_argument("--port", "-p", type=int, default=9999, help="Bind port (default: 9999)")
-    a2a.add_argument("--auth-token", default=None, help="Require Authorization: Bearer <token>")
+    a2a.add_argument("--host", default=None, help="Bind address (default: config server.host)")
+    a2a.add_argument(
+        "--port", "-p", type=int, default=None, help="Bind port (default: config server.port)",
+    )
+    a2a.add_argument(
+        "--auth-token", default=None,
+        help="Require Authorization: Bearer <token> (default: DATAAGENT_A2A_AUTH_TOKEN)",
+    )
     return parser
 
 
@@ -146,11 +158,13 @@ def _instance_id() -> str:
     return (os.environ.get("DATAAGENT_INSTANCE_ID") or "").strip() or str(uuid4())
 
 
-def _listen(runtime: Runtime | None) -> tuple[str, int]:
-    """Bind only config.json server.host and server.port."""
-    if runtime is None:
-        return "127.0.0.1", 8790
-    return runtime.settings.server.host, runtime.settings.server.port
+def _listen(
+    runtime: Runtime | None, config: str | None = None, env_file: str | None = None
+) -> tuple[str, int]:
+    """Bind only config.json server.host and server.port, also in a degraded start."""
+    if runtime is not None:
+        return runtime.settings.server.host, runtime.settings.server.port
+    return server_listen(LaunchOptions(config=config or None, env_file=env_file or None))
 
 
 def reload_app():
@@ -216,14 +230,14 @@ def serve_a2a(runtime: Runtime, args) -> int:
     from a2a_server import run_a2a_server
     from a2a_server.agent_card import JSONRPC_PATH
 
-    if not args.host:
-        raise ValueError("Host must be specified")
-    check_port(args.host, args.port)
+    host = args.host or runtime.settings.server.host
+    port = args.port or runtime.settings.server.port
+    check_port(host, port)
     configure_logging(runtime)
-    logging.getLogger("dataagent.a2a").info(
-        "A2A JSON-RPC %s%s", http_origin(args.host, args.port), JSONRPC_PATH
+    logging.getLogger("dataagent.a2a").info("A2A JSON-RPC %s%s", http_origin(host, port), JSONRPC_PATH)
+    run_a2a_server(
+        runtime, host=host, port=port, auth_token=args.auth_token or runtime.a2a_auth_token,
     )
-    run_a2a_server(runtime, host=args.host, port=args.port, auth_token=args.auth_token)
     return 0
 
 
@@ -266,7 +280,7 @@ def main(argv=None) -> int:
             return serve_a2a(runtime, args)
         if args.stdio_ready and runtime is None:
             return 1
-        host, port = _listen(runtime)
+        host, port = _listen(runtime, args.config, args.env_file)
         if args.reload:
             return _run_reload(argv, host, port)
         return serve(runtime, host, port, stdio_ready=args.stdio_ready)

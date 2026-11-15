@@ -106,7 +106,7 @@ CREATE TABLE IF NOT EXISTS session_bindings (
 
 - 数据库位置由 `RuntimePaths.sessions_db` 决定。bootstrap 只建 `session_bindings` 表，REST 只建 `sessions` 表，两张表互相不读。
 - `open_session(create=True)` 是唯一登记入口，只在绑定不存在时调用内部写入函数。写入用同步 `sqlite3` 短连接，在 `BEGIN IMMEDIATE` 事务中检查并插入，等锁最多 5 秒，不切换 WAL。
-- 绑定已存在时，无论 `create` 为何值，都只查询本会话、校验路径并确保目录存在。不申请写锁、不全表扫描。SDK 续聊和 REST 重新装配都沿用这条路径；`build_agent` 和 `create_agent` 不直接写绑定表。
+- 绑定已存在时，无论 `create` 为何值，都只查询本会话、校验路径并确保目录存在。不申请写锁、不全表扫描。SDK 续聊和 REST 重新装配都沿用这条路径；`build_graph` 和 `create_agent` 不直接写绑定表。
 - 只读查询用 `mode=ro` 打开，数据库不存在时返回“无绑定”，不创建文件。
 - REST 在工作线程里打开会话，数据库等锁不会阻塞事件循环。
 - 并发登记同一会话时，后到的一方读取先到一方写入的绑定。

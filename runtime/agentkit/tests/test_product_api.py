@@ -45,7 +45,7 @@ async def test_ready_returns_control_plane_status(client) -> None:
     assert response.status_code == 200
     data = response.json()["data"]
     assert data["status"] == "ready"
-    assert data["control_plane"] == "ready"
+    assert "control_plane" not in data
     assert data["conversation"]["ready"] is True
 
 
@@ -362,6 +362,8 @@ async def test_cancel_stops_the_running_turn(client, app, monkeypatch) -> None:
     assert response.status_code == 200
     assert "RUN_FINISHED" not in response.text
     assert "should-not-finish" not in response.text
+    last = [line for line in response.text.splitlines() if line.startswith("data:")][-1]
+    assert '"type":"RUN_ERROR"' in last and '"code":"CANCELLED"' in last
     await asyncio.wait_for(stopped.wait(), 5)
     assert (user_id, "cancel-thread") not in app.state.conversation_busy
     row = await app.state.sessions.get(user_id, "cancel-thread")
@@ -398,3 +400,51 @@ def test_port_is_validated() -> None:
         ServerSettings(port=0)
     with pytest.raises(ValueError):
         ServerSettings(port=70000)
+
+
+async def test_conversation_errors_use_error_envelope(client) -> None:
+    invalid = await client.get("/sessions", params={"limit": "0"})
+    assert invalid.status_code == 422
+    body = invalid.json()
+    assert body["success"] is False
+    assert body["error"]["code"] == "BAD_REQUEST"
+    assert "limit" in body["error"]["message"]
+
+    stream = await client.post("/dataagent/stream", json={})
+    assert stream.status_code == 422
+    assert stream.json()["error"]["code"] == "BAD_REQUEST"
+
+    missing = await client.get("/sessions/no-such-thread/outputs/preview", params={"path": "a.md"})
+    assert missing.status_code == 404
+    assert missing.json() == {
+        "success": False,
+        "error": {"code": "RESOURCE_NOT_FOUND", "message": "Output file not found"},
+    }
+
+
+async def test_active_run_id_cannot_be_reused_on_another_thread(client, app, monkeypatch) -> None:
+    started = asyncio.Event()
+
+    async def hang(self, body):
+        del self, body
+        started.set()
+        await asyncio.Event().wait()
+        yield  # pragma: no cover
+
+    monkeypatch.setattr("ag_ui_langgraph.LangGraphAgent.run", hang)
+
+    def body(thread_id: str) -> dict:
+        return {
+            "threadId": thread_id, "runId": "shared-run", "state": {},
+            "messages": [{"id": f"m-{thread_id}", "role": "user", "content": "hello"}],
+            "tools": [], "context": [], "forwardedProps": {},
+        }
+
+    running = asyncio.create_task(client.post("/dataagent/stream", json=body("thread-a")))
+    await asyncio.wait_for(started.wait(), 5)
+    duplicate = await client.post("/dataagent/stream", json=body("thread-b"))
+    assert duplicate.status_code == 409
+    assert duplicate.json()["error"]["code"] == "CONFLICT"
+
+    assert (await client.post("/runs/shared-run/cancel")).status_code == 204
+    assert (await asyncio.wait_for(running, 5)).status_code == 200

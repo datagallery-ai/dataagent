@@ -179,7 +179,10 @@ describe("StreamHttpAgent", () => {
   it("surfaces a busy session as HTTP 409", async () => {
     const agent = new StreamHttpAgent({
       fetch: async () =>
-        new Response(JSON.stringify({ detail: "A run is already active for this session" }), {
+        new Response(JSON.stringify({
+          success: false,
+          error: { code: "CONFLICT", message: "A run is already active for this session" },
+        }), {
           status: 409,
           headers: { "content-type": "application/json" },
         }),

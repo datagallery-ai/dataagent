@@ -2,6 +2,7 @@
 
 import asyncio
 from collections import OrderedDict
+from collections.abc import Sequence
 from contextlib import AbstractContextManager, aclosing, contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -9,10 +10,12 @@ from threading import Lock
 
 from ag_ui_langgraph import LangGraphAgent
 from langchain_core.runnables.config import merge_configs
+from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
-from dataagent.agent import build_agent, check_agent_configuration
+from dataagent.agent import build_graph, check_agent_configuration
 from dataagent.bootstrap import Runtime
+from dataagent.bootstrap.paths import SessionPaths, WorkspaceInput
 from dataagent.models import ModelContext
 from dataagent.semantic_client import SemanticServiceClient
 
@@ -110,7 +113,7 @@ class Agent:
             return cached
         context = self.context.for_session(session)
         with _BUILD_LOCK:
-            graph = build_agent(
+            graph = build_graph(
                 runtime, session=session, context=context,
                 **{**self._graph_options, "input_workspaces": workspaces},
             )
@@ -211,7 +214,15 @@ class Agent:
 
 
 def create_agent(
-    runtime: Runtime, *, semantic_client: SemanticServiceClient | None = None, **kwargs
+    runtime: Runtime,
+    *,
+    model=None,
+    checkpointer=None,
+    session: SessionPaths | None = None,
+    input_workspaces: tuple[WorkspaceInput, ...] | None = None,
+    mcp_tools: Sequence[BaseTool] | None = None,
+    extension_revision: str | None = None,
+    semantic_client: SemanticServiceClient | None = None,
 ) -> Agent:
     """Create an Agent owning its configured semantic client unless a host supplies one."""
     owned_client = None
@@ -221,9 +232,8 @@ def create_agent(
     try:
         # Fail before any session exists; graphs are built per thread on first use.
         check_agent_configuration(
-            runtime, semantic_client=semantic_client, mcp_tools=kwargs.get("mcp_tools"),
+            runtime, semantic_client=semantic_client, mcp_tools=mcp_tools, entry="create_agent",
         )
-        session = kwargs.get("session")
         if session is not None:
             expected = runtime.paths.for_session(session.root.name)
             if session.root != expected.root:
@@ -232,15 +242,21 @@ def create_agent(
                 raise ValueError("session.traces must use the standard Home path")
             session, _ = runtime.paths.open_session(
                 session.root.name, create=True, output_dir=session.outputs,
-                input_workspaces=kwargs.get("input_workspaces"),
+                input_workspaces=input_workspaces,
             )
         context = ModelContext(
             runtime,
-            model=kwargs.get("model"),
+            model=model,
             semantic_client=semantic_client,
             session=session,
         )
-        options = {key: value for key, value in kwargs.items() if key != "session"}
+        options = {
+            "checkpointer": checkpointer,
+            "model": model,
+            "input_workspaces": input_workspaces,
+            "mcp_tools": mcp_tools,
+            "extension_revision": extension_revision,
+        }
         agent = Agent(
             context, _graph_options=options,
             _owned_semantic_client=owned_client,

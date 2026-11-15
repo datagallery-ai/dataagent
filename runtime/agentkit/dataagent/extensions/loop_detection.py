@@ -55,6 +55,8 @@ _REASONING_BLOCKS = ("reasoning", "thinking", "reasoning_content")
 class LoopDetectedError(RuntimeError):
     """A model repeated content or actions without making progress."""
 
+    error_code = "LOOP_DETECTED"
+
     def __init__(self, kind: str):
         self.kind = kind
         # Do not expose model text or tool arguments in errors/logs.
