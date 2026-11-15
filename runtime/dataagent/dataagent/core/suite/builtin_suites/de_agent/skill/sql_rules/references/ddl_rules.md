@@ -16,12 +16,45 @@
 严禁在交付 SQL 中使用 SQLite 语法（如 `INSERT OR REPLACE`、`CREATE TABLE ... PRIMARY KEY`、无 `PARTITIONED BY` 的建表语句）。
 
 ## SQL 构造
-- DDL 使用 Hive：`CREATE EXTERNAL TABLE IF NOT EXISTS`、字段 `COMMENT`、`PARTITIONED BY (pt_* string COMMENT ...)`、`STORED AS ORC`。
+- DDL 使用 Hive：`CREATE EXTERNAL TABLE IF NOT EXISTS`、字段级和表级的 `COMMENT`、`PARTITIONED BY (pt_* string COMMENT ...)`、`STORED AS ORC`。
 - 普通字段类型只使用 `STRING`、`TINYINT`、`SMALLINT`、`INT`、`BIGINT`、`DECIMAL(p,s)`。
 - **禁止使用当前方言不支持的类型做列声明**：Hive DDL 不得使用 `REAL`、`NUMERIC`、`FLOAT`、`DOUBLE`、`TEXT`、`VARCHAR`、`BOOLEAN`、`DATE`、`TIMESTAMP` 等白名单外类型（`REAL` 常见于 PostgreSQL/SQLite，Hive 不支持）。小数落表用 `DECIMAL(p,s)`。
 - 输出：DDL 草案
 
 ## 表名与列名词根校验
+
+### 表名格式
+
+- 数据库名一般为 biads 。
+- 表名限定使用小写英文字母、下划线、数字，用单个名词或名词短语表达业务含义。
+- 普通表的表名格式为：`<层级>_<主题域/业务代码>_<内部类型>_<维度>_<业务过程>_<版本>_<表>类型>_<周期类型+ETL类型>`，按需省略可选段。
+- 临时表的表名格式为：`temp.tmp_<输出表名>_$date[_$hour][_$i]`，其中`$i`代表临时表编号
+- `<层级>`例如：`ods`, `dwd`, `dws`, `ads` 等
+- `<主题域/业务代码>`例如：`hispace` 应用市场。 
+- `<周期类型+ETL类型>`例如：`ds` 每日全量，`dm` 每日增量等。d代表天，h代表小时，w代表周，m代表月。
+
+### 特征列命名格式
+
+- 特征列命名需要使用如下格式：`{场景}_{描述}_{行为}_{口径}_{by_排序}_{时间}_{ID体系}`
+- 特征列名限定小写字母、数字、下划线，使用业务术语，清晰表达含义。
+
+| 位置 | 含义 | 示例 |
+|---|---|---|
+| 场景 | 特征归属场景（前缀） | user（用户侧）, app（应用侧） |
+| 描述 | 对象/主题/词根 | appid, appc2, appc3, owner_vehicle, consume_frequency |
+| 行为 | 行为类型（可选） | click, download, search, update, run, activate, retention, pay, restart, register, use |
+| 口径 | 计算口径 | avg, sum, max, min, cnt, std, median, ratio, seq{长度}, set{长度} |
+| by_排序 | 序列排序（可选） | by_time, by_cnt |
+| 时间 | 时间窗口 | h, d, w, m, y, rt, all |
+| ID体系 | 归属 ID（可选） | udid, dsid, usid, aid, auid |
+
+
+特征列命名样例：
+- 单值特征：`user_education_dsid`
+- 序列特征：`user_register_appid_seq20_by_time_auid`, `user_use_appid_seq20_by_cnt_23d_usid`
+- 多主键特征，将主键放到最后，按 {第二主键}_{第一主键}的方式：`user_use_ratio_30d_appc2_usid`, `user_use_appid_seq20_by_time_1y_appc2_usid`
+
+### 词根校验规则
 
 - DDL 中使用的表名和列名需通过词根校验。使用 `write_file` 或 `edit_file` 写入 `create_*.sql` 后，hook 自动校验新建表的表名和列名；写入 `alter_*.sql` 后，仅校验 ADD COLUMN(S) 中的新增列，不校验已有表名，不处理修改、删除列或新增分区等其他 ALTER 操作。无需在编写 DDL 前额外调用词根校验工具。
 - 对未命中词根，结合业务含义和 `candidates` 中的中文名、描述及相关度选择合适候选做替换，重新写入 DDL 后自动复验。

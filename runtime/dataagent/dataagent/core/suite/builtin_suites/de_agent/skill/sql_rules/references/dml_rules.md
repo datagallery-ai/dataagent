@@ -2,9 +2,9 @@
 
 ## 绝对禁令（Zero-Tolerance，违反即交付失败）
 以下规则具有最高优先级，必须在写任何 SQL 之前内化：
-2. **DML 必须使用 INSERT OVERWRITE + PARTITION**：每条 INSERT 必须写成 `INSERT OVERWRITE {db}.{table} PARTITION ... SELECT ...`。使用 `INSERT INTO`、`INSERT OR REPLACE`、或省略 PARTITION 子句的 INSERT 一律视为交付失败。
-3. **WITH/CTE 必须位于 INSERT OVERWRITE 之前**：当 INSERT 语句使用 WITH/CTE 时，无论 SparkSQL 使用什么版本，都要保证 WITH/CTE 必须位于 INSERT OVERWRITE 之前，正确示例（correct syntax）是 `WITH ... INSERT OVERWRITE ... PARTITION ... SELECT ...`。
-4. **JOIN 前必须预聚合，禁止明细直连**：多事实表（或事实表与维表关联键存在重复行）场景下，每张参与 JOIN 的子表必须先按 JOIN 键 GROUP BY 聚合到唯一粒度，再做 JOIN。未预聚合的明细表直接 JOIN 导致笛卡尔积膨胀，一律视为交付失败。具体要求：
+1. **DML 必须使用 INSERT OVERWRITE + PARTITION**：每条 INSERT 必须写成 `INSERT OVERWRITE {db}.{table} PARTITION ... SELECT ...`。使用 `INSERT INTO`、`INSERT OR REPLACE`、或省略 PARTITION 子句的 INSERT 一律视为交付失败。
+2. **WITH/CTE 必须位于 INSERT OVERWRITE 之前**：当 INSERT 语句使用 WITH/CTE 时，无论 SparkSQL 使用什么版本，都要保证 WITH/CTE 必须位于 INSERT OVERWRITE 之前，正确示例（correct syntax）是 `WITH ... INSERT OVERWRITE ... PARTITION ... SELECT ...`。
+3. **JOIN 前必须预聚合，禁止明细直连**：多事实表（或事实表与维表关联键存在重复行）场景下，每张参与 JOIN 的子表必须先按 JOIN 键 GROUP BY 聚合到唯一粒度，再做 JOIN。未预聚合的明细表直接 JOIN 导致笛卡尔积膨胀，一律视为交付失败。具体要求：
 - 每个 JOIN 的两侧子查询/CTE 必须在 JOIN 键上已做 GROUP BY 或可证明唯一（如维表主键）。
 - 若两张表在 JOIN 键上都有多行（N:N），必须各自先聚合到 JOIN 键粒度。
 - 维表若在关联键上有重复（如一个业务对象 ID 对应多行），也必须先去重或聚合。
@@ -149,6 +149,7 @@
    - 无法证明任意一侧包含另一侧时（如各时间窗口各有独立过滤、用户集合互不为子集），禁止把某一侧的表作为左表LEFT JOIN其他侧——这会丢失只在其他侧出现的数据。
    - 此时必须使用更保守的拼接方式：用FULL OUTER JOIN直接拼接；或先把各窗口的用户（实体）集合做UNION得到全部用户作为基准表，再对每个窗口的结果LEFT JOIN基准表。
    - 示例：7d/14d/30d三个窗口分别按各自窗口过滤非零得分后，用户集合互不相同；应先用三个窗口的用户做UNION得到全部用户，再LEFT JOIN各窗口序列，禁止以单个窗口（如30d）为左表拼接其他窗口。
+23. **禁止使用COUNT(DISTINCT)，将需要去重的字段放入GROUP BY中。**
 
 ## 空值处理矩阵（必须先定策略再写 SQL）
 所有判空逻辑必须写进需求表的“空值/去重策略”，并在自检中逐项核对。不要把所有空值都机械地 `COALESCE`。

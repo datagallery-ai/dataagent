@@ -59,8 +59,6 @@ not found"）：日期 = 系统当前日期 - 7 天（默认探查"前一周"，
 需要覆盖默认值时显式传 `partition_filter`：
 
 - 用户明确要"今天"或"前 N 天" → 自己计算 yyyymmdd 后传入。
-- 业务侧已确认分区列不是 `pt_d` → 工具白名单不接受，改用普通 SQL 工具
-  （`sql_reader` / `dataops_execute_sql`）。
 
 ## 典型调用
 
