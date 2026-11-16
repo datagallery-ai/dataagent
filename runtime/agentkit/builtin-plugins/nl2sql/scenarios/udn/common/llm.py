@@ -30,6 +30,8 @@ from nl2sql.errors import DataAgentError
 from nl2sql.prompt_manager import PromptTemplate
 from nl2sql.utils.nl2sql_utils import json_parser
 
+from dataagent import LoopDetectedError
+
 
 async def execute_with_llm(
     model: BaseChatModel,
@@ -55,6 +57,9 @@ async def execute_with_llm_json(
     for attempt in range(3):
         try:
             return json.loads(json_parser(await execute_with_llm(model, prompt_dir, action, context)))
+        except LoopDetectedError:
+            # Scenario model calls have the same terminal-error contract as base nodes.
+            raise
         except (DataAgentError, json.JSONDecodeError) as exc:
             if attempt == 2:
                 if isinstance(exc, DataAgentError):

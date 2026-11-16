@@ -5,7 +5,7 @@ from pathlib import Path
 
 from langchain_core.messages import ToolMessage
 
-from dataagent.history_sql.config import corpus_path, enabled
+from dataagent.history_sql import corpus_path, enabled
 
 REFERENCE_NOTICE = (
     "历史 SQL 仅为未验证的写法参考，不是已确认业务口径。"

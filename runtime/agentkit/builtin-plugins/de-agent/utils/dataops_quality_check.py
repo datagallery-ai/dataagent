@@ -48,7 +48,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 from utils.dataops_mcp import IntegrationClient, dataops_options, getenv
 from utils.dataops_prod_adapter import prod_collect_result, prod_execute_sql, prod_get_query_result
 
@@ -633,7 +633,7 @@ def _split_top_level_commas(text: str) -> list[str]:
     return parts
 
 
-def _find_ddl_in_workspace(context: ModelContext | None) -> str:
+def _find_ddl_in_workspace(context: AgentContext | None) -> str:
     """在 workspace 里找交付的 ``create_*.sql``（取第一个）。"""
     raw = context.session.outputs if context is not None else None
     if not isinstance(raw, (str, Path)) or not str(raw).strip():
@@ -657,7 +657,7 @@ def _find_ddl_in_workspace(context: ModelContext | None) -> str:
     return ""
 
 
-def _column_types_for_table(context: ModelContext | None, target_table: str) -> dict[str, str]:
+def _column_types_for_table(context: AgentContext | None, target_table: str) -> dict[str, str]:
     """从 workspace 的 DDL 里取**指定那张表**的列类型。
 
     直连真实目标表时，workspace 里的 ``create_*.sql`` 可能是**另一张表**的
@@ -751,7 +751,7 @@ def _pick(sections: tuple[dict[str, Any], ...], key: str) -> Any:
     return None
 
 
-def resolve_config(context: ModelContext | None = None) -> QualityCheckConfig:
+def resolve_config(context: AgentContext | None = None) -> QualityCheckConfig:
     """Read native plugin quality options, with existing environment/default fallbacks."""
     config = dataops_options(context).get("quality_check", {})
     return _resolve_config_locked(config)
@@ -1363,7 +1363,7 @@ def default_partition_date() -> str:
 async def run_quality_check(
     sql: str,
     *,
-    context: ModelContext,
+    context: AgentContext,
     config: QualityCheckConfig | None = None,
     temp_table: str | None = None,
     _partition_date: str | None = None,
@@ -1436,7 +1436,7 @@ async def run_quality_check(
 async def _run_quality_check_impl(
     sql: str,
     *,
-    context: ModelContext,
+    context: AgentContext,
     config: QualityCheckConfig,
     temp_table: str | None,
     partition_date: str | None,

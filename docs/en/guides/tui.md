@@ -4,7 +4,7 @@ This guide is for terminal users, remote server users, and developers. After rea
 
 ## How to start
 
-With no extra flags it connects to `/dataagent/stream` from `config.json`: it starts `dataagent serve` when nothing is listening, and attaches when a control plane is already up. The old login and CopilotKit client are gone.
+With no extra flags it connects to `/api/v1/runs` from `config.json`: it starts `dataagent serve` when nothing is listening, and attaches when a control plane is already up. The old login and CopilotKit client are gone.
 
 ```bash
 npm run start:tui
@@ -42,7 +42,7 @@ Type `/` and use `Tab` to complete. Built-in commands:
 | --- | --- | --- |
 | `/help` | List available commands. | `/help` |
 | `/clear` | Start a new conversation. Saved sessions stay on disk. | `/clear` |
-| `/stop` | Stop the current turn. Calls `POST /runs/{runId}/cancel`, then aborts the local stream. The session stays on the same thread. | `/stop` |
+| `/stop` | Stop the current turn. Calls `POST /api/v1/runs/{runId}/cancel`, then aborts the local stream. The session stays on the same thread. | `/stop` |
 | `/outputs` | Open the outputs page for the current session. | `/outputs` |
 | `/resume` | Open the session picker. | `/resume` |
 | `/resume list` | Open the session picker. | `/resume list` |
@@ -68,9 +68,9 @@ Type `/` and use `Tab` to complete. Built-in commands:
 
 ## Runtime behavior
 
-The TUI sends natural-language input to the control plane's `/dataagent/stream` and shares the session list with the Web UI. Session outputs are available through `/outputs`.
+The TUI sends natural-language input to the control plane's `/api/v1/runs` and shares the session list with the Web UI. Session outputs are available through `/outputs`.
 
-`/resume` calls `GET /sessions` on the stream origin (`http://<server.host>:<server.port>`) with no authentication. There is no login prompt. Restore stays on the `threadId` the server returns. `/stop` uses the same cancel route as the Web UI.
+`/resume` calls `GET /api/v1/sessions` on the stream origin (`http://<server.host>:<server.port>`) with no authentication. There is no login prompt. Restore stays on the `threadId` the server returns. `/stop` uses the same cancel route as the Web UI.
 
 ## Typical flow
 
@@ -101,7 +101,7 @@ Use the Web workbench for full visual demos. Use the TUI to verify agent runtime
 - Cannot connect: run `npm run start:tui`. It uses Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`, and starts a backend when nothing is listening there. For a control plane already started with another `--config`, pass `--runtime-url`. For a stack managed by `./deploy.sh`, run `./deploy.sh tui`; it uses the API address recorded at start.
 - Attach without starting: pass `--runtime-url`. The host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
 - Model not responding: check `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in root `.env`.
-- Session restore fails: confirm `GET /sessions` on the stream origin (`http://<server.host>:<server.port>`) answers. The TUI sends that request with no authentication.
+- Session restore fails: confirm `GET /api/v1/sessions` on the stream origin (`http://<server.host>:<server.port>`) answers. The TUI sends that request with no authentication.
 - Command has no effect: run `/help` and check errors in the command hint area.
 
 Continue with [Web workbench guide](web-workbench.md).

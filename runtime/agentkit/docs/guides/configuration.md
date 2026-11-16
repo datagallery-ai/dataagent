@@ -57,7 +57,7 @@ Home `config.json` 和 `--config` 不同时参与。插件配置仍在选中的�
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "models": {
     "primary": {
       "provider": "openai",
@@ -73,7 +73,7 @@ Home `config.json` 和 `--config` 不同时参与。插件配置仍在选中的�
 
 ## 常见改动
 
-**换默认模型。** 在 `models` 增加一个 ID，把 `dataagent.model.default` 改成该 ID，然后重启。没有自动回退。
+**换默认模型。** 在 `models` 增加一个 ID，把 `dataagent.model` 改成该 ID，然后重启。没有自动回退。
 
 **限制一轮时长和循环次数。** 改 `dataagent.limits`。`timeout_seconds` 同时是 REST 整轮时限、模型请求超时，以及 shell、MCP 和 A2A 调用的超时，完整列表见 [配置字段](../reference/configuration.md)。SDK 调用方自己控制整轮时限。
 

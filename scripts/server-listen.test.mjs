@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { readServerListen, writeServerListen } from "./server-listen.mjs";
+import { readServerListen, resolveHome, writeServerListen } from "./server-listen.mjs";
 
 const agentkit = fileURLToPath(new URL("../runtime/agentkit", import.meta.url));
 
@@ -56,10 +56,8 @@ test("listen address comes from Home config.json", () => {
       host: "0.0.0.0",
       port: "8877",
     });
-    assert.deepEqual(readServerListen({ DATAAGENT_HOME: "" }), {
-      host: "127.0.0.1",
-      port: "8790",
-    });
+    // A blank value means unset, like the backend: both read ~/.dataagent.
+    assert.deepEqual(readServerListen({ DATAAGENT_HOME: "  " }), readServerListen({}));
     const selected = join(home, "selected.json");
     writeFileSync(selected, JSON.stringify({ plugins: { enabled: [] } }));
     assert.deepEqual(readServerListen({ DATAAGENT_HOME: home }, selected), {
@@ -76,7 +74,7 @@ test("a new Home gets the full template and can load its model", () => {
   try {
     writeServerListen({ DATAAGENT_HOME: home }, { host: "127.0.0.1", port: "8801" });
     const doc = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
-    assert.equal(doc.schema_version, 3);
+    assert.equal(doc.schema_version, 4);
     assert.equal(doc.models.primary.provider, "openai");
     assert.equal(doc.models.primary.name, "$env{LLM_MODEL}");
     assert.equal(doc.models.primary.base_url, "$env{LLM_BASE_URL}");
@@ -100,7 +98,7 @@ test("an existing config only updates the listen fields", () => {
   const home = tempHome();
   const file = join(home, "config.json");
   const original = {
-    schema_version: 3,
+    schema_version: 4,
     models: {
       primary: { name: "kept-model", base_url: "https://kept.example/v1", api_key: "kept-secret" },
     },
@@ -115,7 +113,7 @@ test("an existing config only updates the listen fields", () => {
     assert.deepEqual(doc.models, original.models);
     assert.deepEqual(doc.plugins, original.plugins);
     assert.deepEqual(doc.dataagent, original.dataagent);
-    assert.equal(doc.schema_version, 3);
+    assert.equal(doc.schema_version, 4);
     assert.deepEqual(doc.server, { host: "127.0.0.1", port: 8810 });
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -152,4 +150,14 @@ test("a JSON value that is not an object is left unchanged", () => {
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
+});
+
+test("resolveHome follows the backend rule for blank, ~ and relative values", () => {
+  const fallback = join(homedir(), ".dataagent");
+  assert.equal(resolveHome({}), fallback);
+  assert.equal(resolveHome({ DATAAGENT_HOME: "" }), fallback);
+  assert.equal(resolveHome({ DATAAGENT_HOME: " \t" }), fallback);
+  assert.equal(resolveHome({ DATAAGENT_HOME: "~" }), homedir());
+  assert.equal(resolveHome({ DATAAGENT_HOME: "~/da" }), join(homedir(), "da"));
+  assert.equal(resolveHome({ DATAAGENT_HOME: "rel/home" }), resolve(process.cwd(), "rel/home"));
 });

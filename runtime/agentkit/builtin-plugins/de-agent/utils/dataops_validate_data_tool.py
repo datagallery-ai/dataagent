@@ -48,7 +48,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 from utils.dataops_quality_check import (
     _SCOPE_TABLE,
     render_metrics_table,
@@ -89,7 +89,7 @@ async def validate_data(
     sql_file_path: str | None = None,
     target_table: str = "",
     partition_filter: str = "",
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, Any]:
     """对一张真实表做数据正确性校验。
 
@@ -274,7 +274,7 @@ async def validate_data(
 def _fetch_column_types_best_effort(
     table_name: str,
     *,
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, str] | None:
     """查表的列类型（semantic 元数据），拿不到就返回 ``None``。
 
@@ -305,7 +305,7 @@ def _resolve_target_and_fields(
     *,
     partition_filter: str,
     config: Any,
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, Any]:
     """解析出 ``(目标表, 字段, 字段类型, 字段来源)``。
 

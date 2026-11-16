@@ -72,7 +72,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage
 from loguru import logger
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 from utils.dataops_log_utils import bound_error_excerpt
 from utils.dataops_mcp import IntegrationClient, dataops_options
 from utils.dataops_quality_check import resolve_config, run_quality_check
@@ -95,7 +95,7 @@ async def trial_compute_table(
     *,
     dml_path: str | None = None,
     query: str = "",
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, Any]:
     """Run ``dml_path`` into a scratch table and validate the resulting data.
 
@@ -262,7 +262,7 @@ async def trial_compute_table(
 
 async def _drop_scratch_table(
     sqls: list[str],
-    context: ModelContext,
+    context: AgentContext,
     partition_date: str,
     payload: dict[str, Any],
 ) -> None:
@@ -281,7 +281,7 @@ async def _drop_scratch_table(
         payload["cleanup_job_id"] = job_ids[0]
 
 
-def _find_ddl(context: ModelContext) -> Path | None:
+def _find_ddl(context: AgentContext) -> Path | None:
     """Locate the deliverable ``create_*.sql`` in the workspace.
 
     Mirrors ``verify._locate_sql``: the DDL defines the scratch table's

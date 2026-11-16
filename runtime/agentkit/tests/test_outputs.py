@@ -21,20 +21,20 @@ async def test_native_output_listing_and_preview_survive_restart(runtime, tmp_pa
         AIMessage(content="Saved"),
     ])
     async with client_for(runtime, model) as (client, _):
-        assert (await client.get("/sessions/new/outputs")).json() == {"files": []}
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        assert (await client.get("/api/v1/sessions/new/outputs")).status_code == 404
+        events = sse(await client.post("/api/v1/runs", json=query()))
         assert terminal(events) == ["RUN_FINISHED"]
         assert not any(event.get("name") == "artifact" for event in events)
-        response = await client.get("/sessions/thread-1/outputs")
+        response = await client.get("/api/v1/sessions/thread-1/outputs")
         assert response.status_code == 200
-        assert [file["path"] for file in response.json()["files"]] == ["销售报告.md"]
-        assert response.json()["files"][0]["size"] > 0
+        assert [file["path"] for file in response.json()["data"]["files"]] == ["销售报告.md"]
+        assert response.json()["data"]["files"][0]["size"] > 0
 
     restarted = replace(runtime, paths=replace(runtime.paths, output_root=tmp_path / "new-reports"))
     async with client_for(restarted, ScriptedModel(responses=[])) as (client, app):
-        assert (await client.get("/sessions/thread-1/outputs")).json() == response.json()
-        preview = await client.get("/sessions/thread-1/outputs/preview", params={"path": "销售报告.md"})
-        assert preview.json()["content"] == "# Sales\n\nTotal: 42"
+        assert (await client.get("/api/v1/sessions/thread-1/outputs")).json()["data"] == response.json()["data"]
+        preview = await client.get("/api/v1/sessions/thread-1/outputs/preview", params={"path": "销售报告.md"})
+        assert preview.json()["data"]["content"] == "# Sales\n\nTotal: 42"
         assert not app.state.agents.cache  # Listing/preview never assembles an Agent.
 
 
@@ -60,20 +60,20 @@ async def test_outputs_only_list_current_session_regular_business_files(runtime,
         (root / "link.txt").symlink_to(other / "private.txt")
         (root / "linked-directory").symlink_to(other, target_is_directory=True)
         os.mkfifo(root / "pipe")
-        files = (await client.get("/sessions/one/outputs")).json()["files"]
+        files = (await client.get("/api/v1/sessions/one/outputs")).json()["data"]["files"]
         assert {file["path"] for file in files} == {"nested/result.csv", "artifacts/chart.svg"}
         for path in ("link.txt", "linked-directory/private.txt", "pipe", "missing.txt",
                      "artifacts/conversation_history", "artifacts/large_tool_results",
                      "artifacts/conversation_history/internal.txt"):
-            result = await client.get("/sessions/one/outputs/preview", params={"path": path})
+            result = await client.get("/api/v1/sessions/one/outputs/preview", params={"path": path})
             assert result.status_code == 404
         for path in ("../private-state", str(other / "private.txt"), "nested/../../private-state"):
-            result = await client.get("/sessions/one/outputs/preview", params={"path": path})
+            result = await client.get("/api/v1/sessions/one/outputs/preview", params={"path": path})
             assert result.status_code == 400
         await app.state.sessions.start("someone-else", "foreign", "run", "test")
-        assert (await client.get("/sessions/foreign/outputs")).status_code == 404
+        assert (await client.get("/api/v1/sessions/foreign/outputs")).status_code == 404
         (root / "nested" / "result.csv").unlink()
-        files = (await client.get("/sessions/one/outputs")).json()["files"]
+        files = (await client.get("/api/v1/sessions/one/outputs")).json()["data"]["files"]
         assert [file["path"] for file in files] == ["artifacts/chart.svg"]
 
 
@@ -85,16 +85,19 @@ async def test_output_preview_limits_binary_and_changed_root(runtime, tmp_path):
         (root / "large.md").write_text("中" * PREVIEW_BYTES)
         (root / "binary.png").write_bytes(b"\x89PNG\x00\xff")
         (root / "empty.txt").touch()
-        response = await client.get("/sessions/one/outputs/preview", params={"path": "large.md"})
+        response = await client.get("/api/v1/sessions/one/outputs/preview", params={"path": "large.md"})
         assert response.status_code == 200
-        assert "Preview truncated" in response.json()["content"]
+        body = response.json()["data"]
+        assert body["path"] == "large.md" and body["truncated"] is True
+        assert "Preview truncated" not in body["content"]
         assert len(response.content) < PREVIEW_BYTES + 1024
-        assert (await client.get("/sessions/one/outputs/preview", params={"path": "binary.png"})).status_code == 415
-        assert (await client.get("/sessions/one/outputs/preview", params={"path": "empty.txt"})).json()["content"] == ""
+        assert (await client.get("/api/v1/sessions/one/outputs/preview", params={"path": "binary.png"})).status_code == 415
+        empty = (await client.get("/api/v1/sessions/one/outputs/preview", params={"path": "empty.txt"})).json()["data"]
+        assert empty == {"type": "file", "path": "empty.txt", "content": "", "truncated": False}
         root.rename(root.with_name("saved-outputs"))
         root.symlink_to(tmp_path, target_is_directory=True)
-        assert (await client.get("/sessions/one/outputs")).status_code == 409
-        assert (await client.get("/sessions/one/outputs/preview", params={"path": "something"})).status_code == 404
+        assert (await client.get("/api/v1/sessions/one/outputs")).status_code == 409
+        assert (await client.get("/api/v1/sessions/one/outputs/preview", params={"path": "something"})).status_code == 404
 
 
 def test_listing_errors_are_not_hidden_as_empty(tmp_path, monkeypatch):

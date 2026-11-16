@@ -25,7 +25,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 
 from . import session as ir_session
 from .fill import (
@@ -54,21 +54,21 @@ class IRRefreshError(RuntimeError):
     """
 
 
-def ir_failure_policy(context: ModelContext) -> str:
+def ir_failure_policy(context: AgentContext) -> str:
     policy = _ir_option(context, "failure_policy", "fallback_without_ir")
     if policy not in {"fallback_without_ir", "strict"}:
         raise ValueError("DataTaskIR 配置错误：failure_policy 必须为 fallback_without_ir 或 strict")
     return policy
 
 
-def ir_consistency_policy(context: ModelContext) -> str:
+def ir_consistency_policy(context: AgentContext) -> str:
     policy = _ir_option(context, "consistency_policy", "warn")
     if policy not in {"warn", "enforce"}:
         raise ValueError("DataTaskIR 配置错误：consistency_policy 必须为 warn 或 enforce")
     return policy
 
 
-def _block_ir_refresh(context: ModelContext, signature: str, reasons: list[str]) -> None:
+def _block_ir_refresh(context: AgentContext, signature: str, reasons: list[str]) -> None:
     cache = ir_state(context)
     message = (
         "DataTaskIR 尚未通过本轮检查；当前输入的自动检查/修复已结束。不能使用本次或旧版本 IR 作为已确认约束；请核验以下诊断，必要时补充证据或澄清。\n"
@@ -91,7 +91,7 @@ def _structural_issues(templates: list[dict], fields: list[dict]) -> list[str]:
     ]
 
 
-def _extraction_failed(context: ModelContext, signature: str) -> None:
+def _extraction_failed(context: AgentContext, signature: str) -> None:
     cache = ir_state(context)
     failures = cache.get("ir_extraction_failures") or {"signature": signature, "count": 0}
     if failures["signature"] != signature:
@@ -215,7 +215,7 @@ async def _check_and_repair_ir(
     return (fields, warnings, completed)
 
 
-async def create_ir(context: ModelContext) -> None:
+async def create_ir(context: AgentContext) -> None:
     """Initialize templates and empty fields after a successful plan write."""
     cache = ir_state(context)
     if cache.get("ir_rendered_context"):
@@ -231,7 +231,7 @@ async def create_ir(context: ModelContext) -> None:
     cache["ir_field_templates"] = field_templates
 
 
-def _resolve_ir_trace_dir(context: ModelContext) -> str | None:
+def _resolve_ir_trace_dir(context: AgentContext) -> str | None:
     """Resolve the offline fill-trace root under the workspace.
 
     Each update_ir call gets its own ``run_N`` directory so successive updates
@@ -262,7 +262,7 @@ def _resolve_ir_trace_dir(context: ModelContext) -> str | None:
 
 
 async def fill_ir_fields(
-    context: ModelContext,
+    context: AgentContext,
     *,
     user_query: str,
     tool_evidence: str,
@@ -331,7 +331,7 @@ def render_ir(field_outputs: list[dict]) -> str:
 
 
 async def _ir_consistency_gate(
-    context: ModelContext,
+    context: AgentContext,
     *,
     user_query: str,
     tool_evidence: str,
@@ -474,7 +474,7 @@ async def _refresh_with_policy(context, state):
     return deepcopy(cache.get("ir_fallback"))
 
 
-async def update_ir(context: ModelContext, state: dict) -> dict | None:
+async def update_ir(context: AgentContext, state: dict) -> dict | None:
     """Refresh IR after a successful todo completion, or defer until consumption."""
     cache = ir_state(context)
     await ir_session.ensure_task_bound(context, state)
@@ -493,7 +493,7 @@ async def update_ir(context: ModelContext, state: dict) -> dict | None:
         return await _refresh_with_policy(context, state)
 
 
-def _update_lock(context: ModelContext) -> asyncio.Lock:
+def _update_lock(context: AgentContext) -> asyncio.Lock:
     cache = ir_state(context)
     lock = cache.get("ir_update_lock")
     if lock is None:
@@ -502,7 +502,7 @@ def _update_lock(context: ModelContext) -> asyncio.Lock:
     return lock
 
 
-async def ensure_ir_ready(context: ModelContext, state: dict) -> dict | None:
+async def ensure_ir_ready(context: AgentContext, state: dict) -> dict | None:
     """Refresh from current state/evidence before a configured IR consumer runs.
 
     Both refresh policies check inputs even if no todo completed. The plugin's
@@ -532,7 +532,7 @@ def _input_digest(value: object) -> str:
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
 
 
-def _ir_option(context: ModelContext, name: str, default):
+def _ir_option(context: AgentContext, name: str, default):
     """Keep tuning scoped to the agent configuration, including child agents."""
     return ir_options(context).get(name, default)
 
@@ -545,7 +545,7 @@ def validate_ir_config(context):
         raise ValueError("DataTaskIR refresh_policy must be eager or on_consume")
 
 
-async def _update_ir_locked(context: ModelContext, state: dict) -> None:
+async def _update_ir_locked(context: AgentContext, state: dict) -> None:
     cache = ir_state(context)
     await ir_session.ensure_task_bound(context, state)
     if cache.get("ir_turn_suppressed"):
@@ -720,7 +720,7 @@ async def _update_ir_locked(context: ModelContext, state: dict) -> None:
     )
 
 
-def get_ir_context(context: ModelContext) -> str:
+def get_ir_context(context: AgentContext) -> str:
     """Return consumable constraints; keep gate diagnostics in trace and snapshots."""
     cache = ir_state(context)
     if cache.get("ir_turn_suppressed") or (
@@ -740,7 +740,7 @@ def get_ir_context(context: ModelContext) -> str:
     return rendered
 
 
-def read_ir(context: ModelContext) -> str:
+def read_ir(context: AgentContext) -> str:
     """Read the current IR without refreshing it, as in the legacy implementation."""
     if not ir_state(context).get("ir_rendered_context"):
         logger.error("[read_ir] task ir not created, use create_ir to init IR.")

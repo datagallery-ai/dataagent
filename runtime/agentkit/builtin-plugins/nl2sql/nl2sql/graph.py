@@ -45,7 +45,7 @@ from nl2sql.nodes import (
 from nl2sql.state import NL2SQLState
 
 if TYPE_CHECKING:
-    from dataagent.semantic_client import SemanticServiceClient
+    from dataagent import SemanticServiceClient
 
 # 节点顺序与前缀链规则由 NL2SQLConfig.enabled_nodes 校验；
 # reflector/selector 是仅有的两个条件路由节点。

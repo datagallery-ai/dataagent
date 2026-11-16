@@ -4,12 +4,12 @@ Both use host permissions without sandboxing. Input protection and output placem
 are prompt conventions, not enforced access boundaries.
 """
 
-from dataagent.bootstrap import Runtime
+from dataagent.bootstrap import PreparedRuntime
 from dataagent.bootstrap.paths import SessionPaths, ensure_session
 from dataagent.core.backends import CompositeBackend, LocalShellBackend
 
 
-def build_filesystem_backend(runtime: Runtime, session: SessionPaths) -> CompositeBackend:
+def build_filesystem_backend(runtime: PreparedRuntime, session: SessionPaths) -> CompositeBackend:
     """Use native operations, keeping the session cwd and artifact location explicit."""
     ensure_session(runtime.paths.home, session)
     backend = LocalShellBackend(

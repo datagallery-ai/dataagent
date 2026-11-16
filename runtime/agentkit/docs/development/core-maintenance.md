@@ -26,5 +26,3 @@
 2. 运行 `pytest runtime/agentkit/tests -m 'not live'`。优先查看 Hook 顺序、编译契约、文件系统和子代理测试。
 3. 摘要阈值、卸载路径或 Checkpoint 状态键有变化时，同步更新 [上下文](../architecture/context-management.md) 和 [发布](release.md)。
 4. `import dataagent` 保持轻量：导入 core 时不访问网络，也不创建 Home。
-
-`builtin-plugins/attribution-analysis` 只有说明，没有 `.plugin.json`，不能作为插件启用。它不属于 core。

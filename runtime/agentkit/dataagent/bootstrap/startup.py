@@ -1,4 +1,4 @@
-"""The single startup entry shared by hosts and the SDK: LaunchOptions in, Runtime out.
+"""The single startup entry shared by hosts and the SDK: LaunchOptions in, PreparedRuntime out.
 
 Order is fixed: Home → (optional) Home initialization → effective environment → configuration →
 read-only inputs → extension locations. Nothing here
@@ -34,12 +34,12 @@ from dataagent.bootstrap.paths import (
     session_root,
     validate_workspace_binding,
 )
-from dataagent.bootstrap.runtime import Runtime, StartupReport
+from dataagent.bootstrap.runtime import PreparedRuntime, StartupReport
 from dataagent.plugin_config import contained_path, resolve_plugins
 from dataagent.settings import ServerSettings
 
 
-def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
+def prepare_runtime(options: LaunchOptions | None = None) -> PreparedRuntime:
     """Prepare effective configuration and declarations without executing plugin Python code."""
     options = options or LaunchOptions()
     # Step1. Resolve launch inputs; Home initialization is the only optional write here.
@@ -110,7 +110,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
         extensions, mcp_servers=load_mcp_config(home, mcp_roots, environment.values, dotenv=dotenv)
     )
 
-    # Step4. Keep applied configuration sources visible in the returned Runtime.
+    # Step4. Keep applied configuration sources visible in the returned PreparedRuntime.
     applied = {layer.scope for layer in layers}
     configs = [
         ConfigSource("user", home / "config.json", "user" in applied),
@@ -133,7 +133,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
             if name in environment.values
         }
     )
-    return Runtime(
+    return PreparedRuntime(
         settings=settings,
         paths=paths,
         report=report,
@@ -143,7 +143,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> Runtime:
     )
 
 
-def refresh_extensions(runtime: Runtime) -> Runtime:
+def refresh_extensions(runtime: PreparedRuntime) -> PreparedRuntime:
     """Reread extension declarations; retain the host's model, paths and launch policy.
 
     Pure preparation only. Hosts validate/compile the candidate before publishing it.
@@ -206,13 +206,13 @@ def _resume_workspaces(
     binding = find_session_binding(session_root(home, user_id, thread_id))
     if binding is None:
         raise ValueError(
-            f"Session {thread_id} is not in profile {user_id}. "
-            "Choose an existing session for this profile or start a new one."
+            f"Session {thread_id} does not belong to user {user_id}. "
+            "Choose one of this user's sessions or start a new one."
         )
     if binding.user_id != user_id or binding.thread_id != thread_id:
         raise ValueError(
-            f"Session {thread_id} is not in profile {user_id}. "
-            "Choose an existing session for this profile or start a new one."
+            f"Session {thread_id} does not belong to user {user_id}. "
+            "Choose one of this user's sessions or start a new one."
         )
     validate_workspace_binding(binding, launched if explicit else None)
     return binding.workspaces
@@ -254,10 +254,10 @@ def _configure_plugins(paths, layers, settings, environment, dotenv):
     selected = resolve_plugins(settings.plugins, candidates.plugin_roots)
     defaults = []
     for root, spec in selected:
-        if spec.config is not None:
+        if spec.defaults_file is not None:
             layer = _load_layer(
                 "plugin",
-                contained_path(root, spec.config),
+                contained_path(root, spec.defaults_file),
                 env=environment,
                 home=paths.home,
                 dotenv=dotenv,

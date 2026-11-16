@@ -18,7 +18,7 @@ from test_traces import assert_collector_empty, attributes, root, spans, validat
 from dataagent import create_agent
 from dataagent.agent import create_deep_agent, load_extensions
 from dataagent.extensions.tracing import LocalLangChainTracer
-from dataagent.models import ModelContext
+from dataagent.models import AgentContext
 
 
 @pytest.mark.parametrize("path", ["reports", "./reports", "../reports", "~other/reports"])
@@ -36,7 +36,7 @@ async def test_session_graphs_concurrent_files_shell_artifacts_trace_and_callbac
     seen_contexts = []
 
     @tool
-    def evidence(runtime: ToolRuntime[ModelContext]) -> str:
+    def evidence(runtime: ToolRuntime[AgentContext]) -> str:
         """Produce enough evidence to trigger native tool result offloading."""
         seen_contexts.append(runtime.context)
         return runtime.context.session.root.name * 25000
@@ -223,7 +223,7 @@ async def test_shared_nl2sql_and_run_hooks_use_current_task(runtime, tmp_path, e
 
     db, schema = _sqlite_fixture(tmp_path)
     params = _plugin_params(db, schema)
-    params.update(model="sql", hooks={"before_run": [{"entrypoint": "hook.py:handle"}]})
+    params.update(model="sql", run_hooks={"before_run": [{"entrypoint": "hook.py:handle"}]})
     (tmp_path / "hook.py").write_text(
         'def handle(state, runtime, *, params):\n'
         '    path = runtime.context.session.outputs\n'

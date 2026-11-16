@@ -29,7 +29,7 @@ def build_agent_card(
     host: str,
     port: int,
     name: str = "DataAgent",
-    description: str = "AgentKit data agent",
+    description: str = "DataAgent",
 ) -> AgentCard:
     """Describe this process as one A2A agent with a single JSON-RPC binding.
 

@@ -75,7 +75,7 @@ Web 工作台适合可视化复盘，TUI 适合 SSH 和终端工作流，API / A
 
 <div class="df-card" markdown>
 ### 接入 API
-调用控制面的 `POST /dataagent/stream` 和会话接口。
+调用控制面的 `POST /api/v1/runs` 和会话接口。
 
 [查看 API 参考](reference/rest-api.md){ .df-card-action }
 </div>

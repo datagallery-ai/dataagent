@@ -11,7 +11,10 @@ import { normalizeRuntimeUrl, resolveTuiLogPath, connectTui, sessionTransport } 
 import { restoreMessages, SessionClient } from "./protocol/session-client.js";
 import { createInitialLiveRun, reduceLiveRunEvent } from "./state/live-run-state.js";
 
-function startedBackend(runtimeUrl = "http://127.0.0.1:8790/dataagent/stream") {
+/** Success envelope used by every /api/v1 JSON route. */
+const ok = (data: unknown) => Response.json({ success: true, data });
+
+function startedBackend(runtimeUrl = "http://127.0.0.1:8790/api/v1/runs") {
   const controller = new AbortController();
   return {
     runtimeUrl,
@@ -181,7 +184,7 @@ it("a backend started by the TUI is reached through loopback when ready announce
     env: { DATAAGENT_HOME: directory },
     startBackend: async () => {
       started += 1;
-      return startedBackend("http://0.0.0.0:8790/dataagent/stream");
+      return startedBackend("http://0.0.0.0:8790/api/v1/runs");
     },
     fetchImpl: async (url) => {
       const href = String(url);
@@ -189,8 +192,8 @@ it("a backend started by the TUI is reached through loopback when ready announce
       assert.equal(href.includes("0.0.0.0"), false, href);
       if (href.endsWith("/healthz") && started === 0) throw new Error("connect ECONNREFUSED");
       if (href.endsWith("/healthz")) return Response.json(readyHealth);
-      if (href === "http://127.0.0.1:8790/sessions?limit=1") return Response.json({ sessions: [] });
-      if (href === "http://127.0.0.1:8790/dataagent/stream") {
+      if (href === "http://127.0.0.1:8790/api/v1/sessions?limit=1") return ok({ sessions: [] });
+      if (href === "http://127.0.0.1:8790/api/v1/runs") {
         return eventStream([
           { type: "RUN_STARTED", threadId: "thread", runId: "run" },
           { type: "RUN_FINISHED", threadId: "thread", runId: "run" },
@@ -216,8 +219,8 @@ it("a backend started by the TUI is reached through loopback when ready announce
   assert.deepEqual(requested, [
     "http://127.0.0.1:8790/healthz",
     "http://127.0.0.1:8790/healthz",
-    "http://127.0.0.1:8790/sessions?limit=1",
-    "http://127.0.0.1:8790/dataagent/stream",
+    "http://127.0.0.1:8790/api/v1/sessions?limit=1",
+    "http://127.0.0.1:8790/api/v1/runs",
   ]);
 });
 
@@ -229,13 +232,13 @@ it("a backend started with --config is reached through loopback when ready annou
   const code = await runTui({
     argv: ["--config", configPath],
     env: { DATAAGENT_HOME: directory },
-    startBackend: async () => startedBackend("http://0.0.0.0:8877/dataagent/stream"),
+    startBackend: async () => startedBackend("http://0.0.0.0:8877/api/v1/runs"),
     fetchImpl: async (url) => {
       const href = String(url);
       requested.push(href);
       assert.equal(href.includes("0.0.0.0"), false, href);
       if (href.endsWith("/healthz")) return Response.json(readyHealth);
-      if (href === "http://127.0.0.1:8877/sessions?limit=1") return Response.json({ sessions: [] });
+      if (href === "http://127.0.0.1:8877/api/v1/sessions?limit=1") return ok({ sessions: [] });
       throw new Error(`unexpected ${href}`);
     },
     renderApp: async (options) => {
@@ -247,7 +250,7 @@ it("a backend started with --config is reached through loopback when ready annou
   assert.equal(code, 0);
   assert.deepEqual(requested, [
     "http://127.0.0.1:8877/healthz",
-    "http://127.0.0.1:8877/sessions?limit=1",
+    "http://127.0.0.1:8877/api/v1/sessions?limit=1",
   ]);
 });
 
@@ -265,7 +268,7 @@ it("an unexpanded $env host still starts the backend when nothing is listening",
     env: { DATAAGENT_HOME: directory, SERVER_HOST: "127.0.0.1" },
     startBackend: async () => {
       started += 1;
-      return startedBackend("http://127.0.0.1:8790/dataagent/stream");
+      return startedBackend("http://127.0.0.1:8790/api/v1/runs");
     },
     fetchImpl: async (url) => {
       const href = String(url);
@@ -301,7 +304,7 @@ it("a backend started by the TUI is reached through IPv6 loopback when ready ann
     env: { DATAAGENT_HOME: directory },
     startBackend: async () => {
       started += 1;
-      return startedBackend("http://[::]:8790/dataagent/stream");
+      return startedBackend("http://[::]:8790/api/v1/runs");
     },
     fetchImpl: async (url) => {
       const href = String(url);
@@ -309,8 +312,8 @@ it("a backend started by the TUI is reached through IPv6 loopback when ready ann
       assert.equal(href.includes("[::]:"), false, href);
       if (href.endsWith("/healthz") && started === 0) throw new Error("connect ECONNREFUSED");
       if (href.endsWith("/healthz")) return Response.json(readyHealth);
-      if (href === "http://[::1]:8790/sessions?limit=1") return Response.json({ sessions: [] });
-      if (href === "http://[::1]:8790/dataagent/stream") {
+      if (href === "http://[::1]:8790/api/v1/sessions?limit=1") return ok({ sessions: [] });
+      if (href === "http://[::1]:8790/api/v1/runs") {
         return eventStream([
           { type: "RUN_STARTED", threadId: "thread", runId: "run" },
           { type: "RUN_FINISHED", threadId: "thread", runId: "run" },
@@ -336,8 +339,8 @@ it("a backend started by the TUI is reached through IPv6 loopback when ready ann
   assert.deepEqual(requested, [
     "http://[::1]:8790/healthz",
     "http://[::1]:8790/healthz",
-    "http://[::1]:8790/sessions?limit=1",
-    "http://[::1]:8790/dataagent/stream",
+    "http://[::1]:8790/api/v1/sessions?limit=1",
+    "http://[::1]:8790/api/v1/runs",
   ]);
 });
 
@@ -359,16 +362,16 @@ it("connects a wildcard bind address through loopback and accepts another IP", a
   }));
   const env = { DATAAGENT_HOME: directory };
   assert.equal(
-    normalizeRuntimeUrl("http://0.0.0.0:8877/dataagent/stream", env),
-    "http://127.0.0.1:8877/dataagent/stream",
+    normalizeRuntimeUrl("http://0.0.0.0:8877/api/v1/runs", env),
+    "http://127.0.0.1:8877/api/v1/runs",
   );
   assert.equal(
-    normalizeRuntimeUrl("http://[::]:8790/dataagent/stream", env),
-    "http://[::1]:8790/dataagent/stream",
+    normalizeRuntimeUrl("http://[::]:8790/api/v1/runs", env),
+    "http://[::1]:8790/api/v1/runs",
   );
   assert.equal(
-    normalizeRuntimeUrl("http://10.0.0.8:8802/dataagent/stream", env),
-    "http://10.0.0.8:8802/dataagent/stream",
+    normalizeRuntimeUrl("http://10.0.0.8:8802/api/v1/runs", env),
+    "http://10.0.0.8:8802/api/v1/runs",
   );
 });
 
@@ -383,7 +386,7 @@ it("a backend started with --config shares one loopback client URL and stops wit
     argv: ["--config", configPath],
     env: { DATAAGENT_HOME: directory },
     startBackend: async () => {
-      const backend = startedBackend("http://0.0.0.0:8877/dataagent/stream");
+      const backend = startedBackend("http://0.0.0.0:8877/api/v1/runs");
       return { ...backend, stop: async () => { stopped = true; } };
     },
     fetchImpl: async (url) => {
@@ -391,8 +394,8 @@ it("a backend started with --config shares one loopback client URL and stops wit
       requested.push(href);
       assert.equal(href.includes("0.0.0.0"), false, href);
       if (href.endsWith("/healthz")) return Response.json(readyHealth);
-      if (href === "http://127.0.0.1:8877/sessions?limit=1") return Response.json({ sessions: [] });
-      if (href === "http://127.0.0.1:8877/dataagent/stream") {
+      if (href === "http://127.0.0.1:8877/api/v1/sessions?limit=1") return ok({ sessions: [] });
+      if (href === "http://127.0.0.1:8877/api/v1/runs") {
         return eventStream([
           { type: "RUN_STARTED", threadId: "thread", runId: "run" },
           { type: "RUN_FINISHED", threadId: "thread", runId: "run" },
@@ -419,8 +422,8 @@ it("a backend started with --config shares one loopback client URL and stops wit
   assert.equal(stopped, true);
   assert.deepEqual(requested, [
     "http://127.0.0.1:8877/healthz",
-    "http://127.0.0.1:8877/sessions?limit=1",
-    "http://127.0.0.1:8877/dataagent/stream",
+    "http://127.0.0.1:8877/api/v1/sessions?limit=1",
+    "http://127.0.0.1:8877/api/v1/runs",
   ]);
 });
 
@@ -431,12 +434,12 @@ it("accepts an explicit HTTP port 80 and an omitted port", async () => {
   }));
   const env = { DATAAGENT_HOME: directory };
   assert.equal(
-    normalizeRuntimeUrl("http://127.0.0.1:80/dataagent/stream", env),
-    "http://127.0.0.1:80/dataagent/stream",
+    normalizeRuntimeUrl("http://127.0.0.1:80/api/v1/runs", env),
+    "http://127.0.0.1:80/api/v1/runs",
   );
   assert.equal(
-    normalizeRuntimeUrl("http://127.0.0.1/dataagent/stream", env),
-    "http://127.0.0.1:80/dataagent/stream",
+    normalizeRuntimeUrl("http://127.0.0.1/api/v1/runs", env),
+    "http://127.0.0.1:80/api/v1/runs",
   );
 });
 
@@ -447,12 +450,12 @@ it("attaches to a configured IPv6 listen address", async () => {
   }));
   const env = { DATAAGENT_HOME: directory };
   assert.equal(
-    normalizeRuntimeUrl("http://[::1]:8790/dataagent/stream", env),
-    "http://[::1]:8790/dataagent/stream",
+    normalizeRuntimeUrl("http://[::1]:8790/api/v1/runs", env),
+    "http://[::1]:8790/api/v1/runs",
   );
   let requested = "";
   const code = await runTui({
-    argv: ["--runtime-url", "http://[::1]:8790/dataagent/stream"],
+    argv: ["--runtime-url", "http://[::1]:8790/api/v1/runs"],
     env,
     startBackend: async () => { throw new Error("must not start"); },
     fetchImpl: async (url) => {
@@ -483,7 +486,7 @@ it("an origin URL attaches without starting a backend", async () => {
 it("an explicit stream URL attaches without starting a backend", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-attach-"));
   const code = await runTui({
-    argv: ["--runtime-url", "http://127.0.0.1:8790/dataagent/stream"],
+    argv: ["--runtime-url", "http://127.0.0.1:8790/api/v1/runs"],
     fetchImpl: async () => Response.json({
       protocol: "dataagent", ready: true, instanceId: "test", model: "GLM-5.2",
       home: directory, stateDir: join(directory, ".dataagent/state"), timeoutSeconds: 180,
@@ -500,7 +503,7 @@ it("Startup bypasses auth and legacy config, retaining actual model/Home", async
   const directory = await mkdtemp(join(tmpdir(), "dataagent-tui-"));
   const calls: string[] = [];
   const code = await runTui({
-    argv: ["--runtime-url", "http://127.0.0.1:8790/dataagent/stream", "--resume", "saved"],
+    argv: ["--runtime-url", "http://127.0.0.1:8790/api/v1/runs", "--resume", "saved"],
     fetchImpl: async (url, init) => {
       calls.push(String(url));
       assert.equal(new Headers(init?.headers).get("authorization"), null);
@@ -525,7 +528,7 @@ it("Startup bypasses auth and legacy config, retaining actual model/Home", async
 });
 
 it("Output paths are session-relative, not fabricated virtual mounts", async () => {
-  const sessions = new SessionClient("http://127.0.0.1:8790", async () => Response.json({
+  const sessions = new SessionClient("http://127.0.0.1:8790", async () => ok({
     files: [{ path: "reports/销售.md", size: 42, modifiedAt: "2026-09-23T00:00:00Z" }],
   }));
   const [file] = await sessions.listOutputs("test");
@@ -535,10 +538,26 @@ it("Output paths are session-relative, not fabricated virtual mounts", async () 
   });
 });
 
+it("A session that has not run yet lists no outputs", async () => {
+  const sessions = new SessionClient("http://127.0.0.1:8790", async () => Response.json(
+    { success: false, error: { code: "RESOURCE_NOT_FOUND", message: "Session not found" } },
+    { status: 404 },
+  ));
+  assert.deepEqual(await sessions.listOutputs("new"), []);
+});
+
+it("A truncated output preview carries a visible notice", async () => {
+  const sessions = new SessionClient("http://127.0.0.1:8790", async () => ok({
+    type: "file", path: "large.md", content: "head", truncated: true,
+  }));
+  const preview = await sessions.getOutputPreview("one", "large.md") as { content: string };
+  assert.match(preview.content, /^head\n\n\[Preview truncated at 64 KiB/);
+});
+
 it("Health check accepts without filesystem paths", async () => {
   let rendered = false;
   const code = await connectTui({
-    runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
+    runtimeUrl: "http://127.0.0.1:8790/api/v1/runs",
     fetchImpl: async () => Response.json({
       protocol: "dataagent", ready: true, instanceId: "test", model: "test",
       timeoutSeconds: 180,
@@ -588,7 +607,7 @@ it("log path is Home runtime/logs/tui.log and ignores a separate log-path variab
 
 it("A relative stateDir without rendering", async () => {
   await assert.rejects(connectTui({
-    runtimeUrl: "http://127.0.0.1:8790/dataagent/stream",
+    runtimeUrl: "http://127.0.0.1:8790/api/v1/runs",
     fetchImpl: async () => Response.json({
       protocol: "dataagent", ready: true, instanceId: "test", model: "test",
       home: "/workspace", stateDir: "relative/state", timeoutSeconds: 180,
@@ -625,13 +644,13 @@ it("Missing path values before starting", async () => {
 
 it("Requests cannot escape the configured origin", async () => {
   let calls = 0;
-  const transport = sessionTransport("http://127.0.0.1:8790/dataagent/stream", async () => {
+  const transport = sessionTransport("http://127.0.0.1:8790/api/v1/runs", async () => {
     calls++; return Response.json({});
   });
   await assert.rejects(transport("https://example.com/healthz"), /another origin/);
   assert.equal(calls, 0);
   assert.throws(
-    () => sessionTransport("http://example.com/dataagent/stream", transport, { DATAAGENT_HOME: "" }),
+    () => sessionTransport("http://example.com/api/v1/runs", transport, { DATAAGENT_HOME: "/nonexistent-dataagent-home" }),
     /configured listen URL/,
   );
 });

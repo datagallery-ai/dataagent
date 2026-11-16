@@ -21,7 +21,7 @@ export function getApiProxyTarget(): string {
 }
 
 export function isStreamingProxyPath(pathname: string): boolean {
-  return pathname === "/dataagent/stream";
+  return pathname === "/api/v1/runs";
 }
 
 export function isStreamingContentType(contentType: string | null): boolean {

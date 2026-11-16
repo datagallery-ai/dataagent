@@ -436,7 +436,7 @@ async def test_missing_integration_service_does_not_report_trial_passed(tmp_path
 
 async def test_tool_passes_real_model_context_unchanged(tmp_path, monkeypatch):
     from dataagent import LaunchOptions, prepare_runtime
-    from dataagent.models import ModelContext
+    from dataagent.models import AgentContext
 
     config_path = tmp_path / "config.json"
     config_path.write_text(
@@ -459,12 +459,12 @@ async def test_tool_passes_real_model_context_unchanged(tmp_path, monkeypatch):
         )
     )
     host = prepare_runtime(LaunchOptions(cwd=tmp_path, config=config_path))
-    context = ModelContext(host, session=host.paths.for_session("native-dataops"))
+    context = AgentContext(host, session=host.paths.for_session("native-dataops"))
     function, module = load("tools/dataops.py:dataops_probe_table")
     seen = []
 
-    async def probe(table, columns, *, context: ModelContext, **kwargs):
-        assert isinstance(context, ModelContext)
+    async def probe(table, columns, *, context: AgentContext, **kwargs):
+        assert isinstance(context, AgentContext)
         seen.append(context)
         assert module.dataops_options(context)["exec_user"] == "alice"
         return {"ok": True}

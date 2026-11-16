@@ -56,7 +56,7 @@ from .data.traffic_insight_table_recall import (
 )
 
 if TYPE_CHECKING:
-    from dataagent.semantic_client import SemanticServiceClient
+    from dataagent import SemanticServiceClient
 
 
 def _scenario_error(message: str, detail: str = "") -> DataAgentError:

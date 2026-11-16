@@ -79,7 +79,7 @@ async def models(runtime):
     created = []
 
     def create(url, max_retries=2):
-        selected = runtime.settings.dataagent.model.default
+        selected = runtime.settings.dataagent.model
         settings = runtime.settings.model_copy(update={"models": {
             **runtime.settings.models,
             selected: runtime.settings.models[selected].model_copy(update={
@@ -123,7 +123,7 @@ def test_invalid_retry_config_is_rejected_before_model_creation(tmp_path, value)
 async def test_native_transient_request_retry_then_success(runtime, models, failure):
     with provider(failure, "recovered") as (url, requests):
         async with client_for(runtime, models(url)) as (client, _):
-            events = sse(await client.post("/dataagent/stream", json=query()))
+            events = sse(await client.post("/api/v1/runs", json=query()))
     assert terminal(events) == ["RUN_FINISHED"]
     assert [retry for _, retry in requests] == ["0", "1"]
     assert requests[0][0] == requests[1][0]
@@ -133,7 +133,7 @@ async def test_native_transient_request_retry_then_success(runtime, models, fail
 async def test_exhaustion_disabled_retries_and_nonretryable_errors(runtime, models, status, retries, attempts):
     with provider(status) as (url, requests):
         async with client_for(runtime, models(url, retries)) as (client, _):
-            events = sse(await client.post("/dataagent/stream", json=query()))
+            events = sse(await client.post("/api/v1/runs", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
     assert len(requests) == attempts
 
@@ -147,7 +147,7 @@ async def test_retry_in_subagent_does_not_replay_tool_or_agent(runtime, models, 
         503, "Child finished.", "Root finished.",
     ) as (url, requests):
         async with client_for(runtime, models(url)) as (client, _):
-            events = sse(await client.post("/dataagent/stream", json=query()))
+            events = sse(await client.post("/api/v1/runs", json=query()))
     assert terminal(events) == ["RUN_FINISHED"]
     assert [retry for _, retry in requests] == ["0", "0", "0", "1", "0"]
     assert requests[2][0] == requests[3][0]
@@ -159,7 +159,7 @@ async def test_retry_in_subagent_does_not_replay_tool_or_agent(runtime, models, 
 async def test_partial_stream_is_not_retried_or_duplicated(runtime, models):
     with provider("partial") as (url, requests):
         async with client_for(runtime, models(url)) as (client, _):
-            events = sse(await client.post("/dataagent/stream", json=query()))
+            events = sse(await client.post("/api/v1/runs", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
     assert len(requests) == 1
     assert "".join(e["delta"] for e in events if e["type"] == "TEXT_MESSAGE_CONTENT") == "partial"
@@ -176,7 +176,7 @@ async def test_whole_run_timeout_includes_native_retry_backoff(runtime, models):
     }))
     with provider(503, retry_after="30") as (url, requests):
         async with client_for(runtime, models(url)) as (client, _):
-            events = sse(await client.post("/dataagent/stream", json=query(), timeout=15))
+            events = sse(await client.post("/api/v1/runs", json=query(), timeout=15))
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["code"] == "TIMEOUT"
     assert len(requests) == 1

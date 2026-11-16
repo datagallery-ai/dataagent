@@ -34,11 +34,11 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
 
 `A2A-Version: 1.0` 必带。不带这个头时，协议把请求看成 0.3，`SendMessage` 会被拒绝。
 
-`contextId` 必须是最长 128 的路径安全 ID（字母、数字、下划线和连字符）。它同时是 LangGraph 的 `thread_id` 和会话目录名。省略时由协议生成 UUID。下一条消息从会话索引里记下的检查点继续，和 `/dataagent/stream` 是同一条。报错或取消也会把图已经到达的检查点写进这个索引。同一 context 上的调用串行执行。
+`contextId` 必须是最长 128 的路径安全 ID（字母、数字、下划线和连字符）。它同时是 LangGraph 的 `thread_id` 和会话目录名。省略时由协议生成 UUID。下一条消息从会话索引里记下的检查点继续，和 `/api/v1/runs` 是同一条。报错或取消也会把图已经到达的检查点写进这个索引。同一 context 上的调用串行执行。
 
 只读取文本 part。空文本或非法 `contextId` 使任务进入 `TASK_STATE_FAILED`，不会调用模型。成功时最终回答在 `result.task.artifacts`，状态是 `TASK_STATE_COMPLETED`。
 
-这条会话记在进程自己的 profile（`default` 或 `--user`）的会话索引里。登记发生在读取 checkpoint 之前。`thread_id` 全局唯一：该 id 已经属于另一个 profile 时，任务失败，模型不会被调用。
+这条会话记在进程用户（`default` 或 `--user`）的会话索引里。登记发生在读取 checkpoint 之前。`thread_id` 全局唯一：该 id 已经属于另一个 profile 时，任务失败，模型不会被调用。
 
 设置环境变量 `DATAAGENT_A2A_AUTH_TOKEN`（进程环境或 `.env`）后，`dataagent serve` 和 `dataagent serve-a2a` 都要求 JSON-RPC 带 `Authorization: Bearer <token>`；Agent Card 仍可匿名读取。`serve-a2a --auth-token` 优先于环境变量。缺少或错误时返回 401，正文是错误信封，错误码 `UNAUTHORIZED`。对外暴露 A2A 时一定要设置令牌。
 
@@ -49,7 +49,7 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
 ```json
 {
   "a2a": {
-    "agents": [
+    "remote_agents": [
       {
         "id": "researcher",
         "url": "http://127.0.0.1:9999",

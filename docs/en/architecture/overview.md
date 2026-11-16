@@ -6,7 +6,7 @@ The product is one local control plane and two presentations. Web and TUI both t
 
 ```text
 Browser apps/web
-  -> Next same-origin proxy for /dataagent/stream and /api/v1/*
+  -> Next same-origin proxy for /api/v1/runs and /api/v1/*
   -> dataagent serve (config.json server.host:server.port, default 127.0.0.1:8790)
   <- apps/tui calls that same process directly
 ```
@@ -16,7 +16,7 @@ Browser apps/web
 | Web | `npm run start` or `npm run start:web` | `http://127.0.0.1:3000/data-tasks` |
 | TUI | `npm run start:tui` | The terminal. The TUI starts the control plane when nothing is listening. |
 
-The Python SDK can skip HTTP and prepare the same runtime in process. The conversation HTTP entry is `POST /dataagent/stream`.
+The Python SDK can skip HTTP and prepare the same runtime in process. The conversation HTTP entry is `POST /api/v1/runs`.
 
 ## Modules
 

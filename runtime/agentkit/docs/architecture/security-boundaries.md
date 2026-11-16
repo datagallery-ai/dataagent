@@ -12,11 +12,11 @@ HTTP API 不校验访问令牌。`/healthz` 在引擎就绪时返回 Home 路径
 
 ## 凭据
 
-把密钥放在环境变量或配置中的 `$env{...}`。模型密钥和语义服务密码以 `SecretStr` 保存。日志和错误消息会替换 Runtime 已知的密钥，并把消息截到 1500 字符。
+把密钥放在环境变量或配置中的 `$env{...}`。模型密钥和语义服务密码以 `SecretStr` 保存。日志和错误消息会替换 PreparedRuntime 已知的密钥，并把消息截到 1500 字符。
 
 Trace 会遮盖常见的 API key 和 Bearer 形态。Trace 文件里仍有系统提示、对话和工具结果。语义客户端的 Basic 用户名、密码及其 Base64 形式也参与替换。
 
-模型客户端和语义客户端放在 `ModelContext` 中，不写入消息或 Checkpoint。
+模型客户端和语义客户端放在 `AgentContext` 中，不写入消息或 Checkpoint。
 
 ## 文件和 shell
 

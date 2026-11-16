@@ -1,7 +1,7 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "common",
-  "system_prompt": "prompts/agent.md",
+  "system_prompt_file": "prompts/agent.md",
   "tools": {
     "summarize_numbers": {
       "entrypoint": "tools/statistics.py:summarize_numbers"

@@ -1,21 +1,14 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
+import { resolveDataagentHome } from "./log-path.js";
 import { terminalText } from "./utils/terminal-text.js";
 
 const DEFAULT_SERVER_HOST = "127.0.0.1";
 const DEFAULT_SERVER_PORT = "8790";
-
-function homeDir(env: NodeJS.ProcessEnv): string | null {
-  if (Object.prototype.hasOwnProperty.call(env, "DATAAGENT_HOME")) {
-    return env.DATAAGENT_HOME?.trim() || null;
-  }
-  return join(homedir(), ".dataagent");
-}
 
 function readServer(file: string | null | undefined): { host?: unknown; port?: unknown } {
   if (!file || !existsSync(file)) return {};
@@ -44,8 +37,7 @@ function pickPort(value: unknown, fallback: string): string {
 
 /** Listen address from Home config.json. */
 export function configuredListen(env: NodeJS.ProcessEnv = process.env): { host: string; port: string } {
-  const home = homeDir(env);
-  const base = readServer(home ? join(home, "config.json") : null);
+  const base = readServer(join(resolveDataagentHome(env), "config.json"));
   return {
     host: pickHost(base.host, DEFAULT_SERVER_HOST),
     port: pickPort(base.port, DEFAULT_SERVER_PORT),
@@ -68,7 +60,7 @@ export function readHttpListen(value: string): { host: string; port: string } | 
   }
   const path = url.pathname === "/" ? "" : url.pathname.replace(/\/+$/u, "");
   if (url.protocol !== "http:" || url.username || url.password || url.search || url.hash) return null;
-  if (path !== "" && path !== "/dataagent/stream") return null;
+  if (path !== "" && path !== "/api/v1/runs") return null;
   return { host: bareHost(url.hostname), port: url.port || "80" };
 }
 

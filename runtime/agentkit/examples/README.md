@@ -30,7 +30,7 @@ Deep Agents 原生 `SKILL.md` 的 YAML frontmatter。`session.json` 已是 JSON�
 
 从仓库根目录运行：
 
-`npm run start:tui` 连接 `/dataagent/stream`（默认 `http://127.0.0.1:8790`，地址来自 `config.json` 的 `server.host` 和 `server.port`）。示例配置用 `--config` 传给它拉起的后端。
+`npm run start:tui` 连接 `/api/v1/runs`（默认 `http://127.0.0.1:8790`，地址来自 `config.json` 的 `server.host` 和 `server.port`）。示例配置用 `--config` 传给它拉起的后端。
 
 在控制面的 `DATAAGENT_HOME/.env` 设置 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY`。
 复制完整示例到其他目录时，需同时复制 `hooks/`，或修改/移除两个示例 Hook。
@@ -61,8 +61,8 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 
 | 字段 | 默认值 / 含义 |
 | --- | --- |
-| `schema_version` | `3` |
-| `dataagent.model.default` | `"primary"`；引用 `models` 的配置 ID，不是服务端模型名 |
+| `schema_version` | `4` |
+| `dataagent.model` | `"primary"`；引用 `models` 的配置 ID，不是服务端模型名 |
 | `dataagent.limits.timeout_seconds` | `180`；正数，REST 整轮流式时限，同时作为模型请求超时；SDK 调用方自行控制整轮时限 |
 | `dataagent.limits.model_calls_per_agent` | `128`；每个 Agent 每次调用的模型循环上限，非整棵子 Agent 树的预算；不覆盖摘要器所有内部调用 |
 | `dataagent.limits.tool_calls_per_agent` | `128`；每个 Agent 每次调用的工具次数上限；主/子 Agent 独立计数，新一轮重置；超限抛错 |
@@ -79,7 +79,7 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 | `server.host` | `"127.0.0.1"`；当前仅本地服务，不支持远程多用户鉴权 |
 | `server.port` | `8790`；1–65535，被占用则报错，不复用未知服务 |
 
-多个模型可放在 `models` 中，修改 `dataagent.model.default` 后重启切换；没有自动 fallback 或动态切换接口。
+多个模型可放在 `models` 中，修改 `dataagent.model` 后重启切换；没有自动 fallback 或动态切换接口。
 启动时只展开默认模型的环境引用；工具通过 `runtime.context.get_model("模型ID")` 首次获取其他模型时，
 再使用启动时捕获的环境值解析该模型。未使用模型的变量可以暂不定义，实际使用时缺失则报错。
 工具的完整示例见 [llm-utils](plugins/llm-utils/README.md)；该机制不增加 `/model` 命令。

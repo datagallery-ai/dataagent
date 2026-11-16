@@ -18,7 +18,8 @@ os.environ.setdefault("LANGCHAIN_REVISION_ID", "local")
 from dataagent import (
     ConfigurationLoadError,
     LaunchOptions,
-    Runtime,
+    PreparedRuntime,
+    history_sql,
     prepare_runtime,
     safe_error,
 )
@@ -40,7 +41,7 @@ def http_origin(host: str, port: int) -> str:
 
 def runtime_url(host: str, port: int) -> str:
     """Ready-message URL. The client rewrites wildcard binds; this only keeps the URL legal."""
-    return f"{http_origin(host, port)}/dataagent/stream"
+    return f"{http_origin(host, port)}/api/v1/runs"
 
 
 def check_port(host: str, port: int):
@@ -55,7 +56,7 @@ def check_port(host: str, port: int):
             ) from None
 
 
-def configure_logging(runtime: Runtime | None):
+def configure_logging(runtime: PreparedRuntime | None):
     handlers = []
     plain = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
     if runtime is None:
@@ -97,7 +98,7 @@ def _parser() -> argparse.ArgumentParser:
         "--config",
         help="Use this file instead of Home config.json",
     )
-    api.add_argument("--user", default="default", help="Local profile id (default: default)")
+    api.add_argument("--user", default="default", help="Local user ID (default: default)")
     api.add_argument(
         "--workspace", action="append", default=None,
         help="Read-only input workspace; repeat for more than one",
@@ -119,7 +120,7 @@ def _parser() -> argparse.ArgumentParser:
         "--config",
         help="Use this file instead of Home config.json",
     )
-    a2a.add_argument("--user", default="default", help="Local profile id (default: default)")
+    a2a.add_argument("--user", default="default", help="Local user ID (default: default)")
     a2a.add_argument(
         "--workspace", action="append", default=None,
         help="Read-only input workspace; repeat for more than one",
@@ -133,6 +134,8 @@ def _parser() -> argparse.ArgumentParser:
         "--auth-token", default=None,
         help="Require Authorization: Bearer <token> (default: DATAAGENT_A2A_AUTH_TOKEN)",
     )
+    history = commands.add_parser("history-sql", help="Prepare the history SQL corpus")
+    history_sql.add_arguments(history)
     return parser
 
 
@@ -159,7 +162,7 @@ def _instance_id() -> str:
 
 
 def _listen(
-    runtime: Runtime | None, config: str | None = None, env_file: str | None = None
+    runtime: PreparedRuntime | None, config: str | None = None, env_file: str | None = None
 ) -> tuple[str, int]:
     """Bind only config.json server.host and server.port, also in a degraded start."""
     if runtime is not None:
@@ -180,7 +183,7 @@ def reload_app():
     return create_app(runtime, instance_id=_instance_id())
 
 
-def serve(runtime: Runtime | None, host: str, port: int, *, stdio_ready: bool = False) -> int:
+def serve(runtime: PreparedRuntime | None, host: str, port: int, *, stdio_ready: bool = False) -> int:
     import uvicorn
 
     from serve.app import create_app
@@ -225,7 +228,7 @@ def serve(runtime: Runtime | None, host: str, port: int, *, stdio_ready: bool = 
     return 0 if server.started else 1
 
 
-def serve_a2a(runtime: Runtime, args) -> int:
+def serve_a2a(runtime: PreparedRuntime, args) -> int:
     """Expose this runtime over A2A. Holds the same workspace lock as ``serve``."""
     from a2a_server import run_a2a_server
     from a2a_server.agent_card import JSONRPC_PATH
@@ -271,6 +274,8 @@ def _run_reload(argv, host: str, port: int) -> int:
 
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "history-sql":
+        return history_sql.run(args)
     runtime = None
     try:
         runtime = _prepare(args)

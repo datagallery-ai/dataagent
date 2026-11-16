@@ -58,7 +58,7 @@ def test_real_deepseek_reads_semantic_context_after_plugin_refresh(tmp_path):
         "params": {"query": "probe-one"},
     }
     manifest = plugin / ".plugin.json"
-    manifest.write_text(json.dumps({"schema_version": 2, "id": plugin.name, "hooks": [hook]}))
+    manifest.write_text(json.dumps({"schema_version": 3, "id": plugin.name, "hooks": [hook]}))
     (plugin / "hook.py").write_text(
         "import asyncio\n"
         "from langchain_core.messages import SystemMessage\n"
@@ -81,7 +81,7 @@ def test_real_deepseek_reads_semantic_context_after_plugin_refresh(tmp_path):
                 },
                 "dataagent": {"limits": {"timeout_seconds": 120, "model_calls_per_agent": 3}},
                 "plugins": {"enabled": [plugin.name], "paths": [str(plugin)]},
-                "semantic": {"base_url": f"http://127.0.0.1:{server.server_port}", "timeout": 5},
+                "semantic": {"base_url": f"http://127.0.0.1:{server.server_port}", "timeout_seconds": 5},
             }
         )
     )
@@ -98,7 +98,7 @@ def test_real_deepseek_reads_semantic_context_after_plugin_refresh(tmp_path):
                 if index:
                     hook.get("params").update(query="probe-two")
                     manifest.write_text(
-                        json.dumps({"schema_version": 2, "id": plugin.name, "hooks": [hook]})
+                        json.dumps({"schema_version": 3, "id": plugin.name, "hooks": [hook]})
                     )
                 body = {
                     "threadId": f"semantic-{index}",
@@ -115,7 +115,7 @@ def test_real_deepseek_reads_semantic_context_after_plugin_refresh(tmp_path):
                     "context": [],
                     "forwardedProps": {},
                 }
-                response = http.post("/dataagent/stream", json=body)
+                response = http.post("/api/v1/runs", json=body)
                 assert response.status_code == 200
                 events = [
                     json.loads(line.removeprefix("data: "))
@@ -209,7 +209,7 @@ def test_real_deepseek_reads_deployed_semantic_types_without_plugins(tmp_path):
                     ],
                 },
                 "plugins": {"enabled": [], "paths": []},
-                "semantic": {"base_url": base_url, "timeout": 15},
+                "semantic": {"base_url": base_url, "timeout_seconds": 15},
             },
             indent=2,
         ),
@@ -237,7 +237,7 @@ def test_real_deepseek_reads_deployed_semantic_types_without_plugins(tmp_path):
     with TestClient(app) as http:
         client = app.state.agents.semantic_client
         assert client is not None
-        response = http.post("/dataagent/stream", json=body)
+        response = http.post("/api/v1/runs", json=body)
         assert response.status_code == 200
         events = [
             json.loads(line.removeprefix("data: "))
@@ -294,7 +294,7 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
         from uuid import uuid4
 
         from langchain.tools import ToolRuntime
-        from dataagent import ModelContext
+        from dataagent import AgentContext
 
 
         def _record(context, scope, **extra):
@@ -320,7 +320,7 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
             _record(request.runtime.context, "after_tool")
 
 
-        def inspect_types(runtime: ToolRuntime[ModelContext]) -> str:
+        def inspect_types(runtime: ToolRuntime[AgentContext]) -> str:
             """Read live semantic type counts and return a JSON verification record."""
             payload = runtime.context.semantic_client.get("types/typedefs")
             summary = {
@@ -347,7 +347,7 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
             {
                 "name": "semantic-inspector",
                 "description": "Read semantic type counts using the live backend.",
-                "system_prompt": "child.md",
+                "system_prompt_file": "child.md",
                 "tools": ["semantic-consumer__inspect_types"],
                 "hooks": [
                     {
@@ -364,9 +364,9 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
     (plugin / ".plugin.json").write_text(
         json.dumps(
             {
-                "schema_version": 2,
+                "schema_version": 3,
                 "id": "semantic-consumer",
-                "system_prompt": "root.md",
+                "system_prompt_file": "root.md",
                 "tools": {"inspect_types": {"entrypoint": "probe.py:inspect_types"}},
                 "hooks": [
                     {
@@ -392,7 +392,7 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
                 },
                 "dataagent": {"limits": {"timeout_seconds": 120, "model_calls_per_agent": 5}},
                 "plugins": {"enabled": ["semantic-consumer"], "paths": [str(plugin)]},
-                "semantic": {"base_url": base_url, "timeout": 15},
+                "semantic": {"base_url": base_url, "timeout_seconds": 15},
             },
             indent=2,
         )
@@ -413,7 +413,7 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
         with TestClient(app) as http:
             client = app.state.agents.semantic_client
             response = http.post(
-                "/dataagent/stream",
+                "/api/v1/runs",
                 json={
                     "threadId": "semantic-child",
                     "runId": "semantic-child-run",

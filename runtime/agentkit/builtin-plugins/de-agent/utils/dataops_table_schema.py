@@ -36,7 +36,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 from utils.dataops_quality_check import (
     DEFAULT_EXCLUDE_FIELDS,
     parse_ddl_column_types,
@@ -149,7 +149,7 @@ def _normalize_type(raw: Any) -> str:
 def fetch_semantic_columns(
     table_name: str,
     *,
-    context: ModelContext,
+    context: AgentContext,
 ) -> tuple[list[str], dict[str, str]]:
     """通过 semantic-service 查表的列元数据。
 

@@ -102,7 +102,7 @@ class AgentKitExecutor(AgentExecutor):
                 new_text_artifact_update_event(
                     task_id=task_id,
                     context_id=context_id,
-                    name="agentkit_result",
+                    name="dataagent_result",
                     text=answer,
                     last_chunk=True,
                 )

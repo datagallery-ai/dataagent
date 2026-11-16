@@ -18,7 +18,7 @@ The control plane has no configuration REST API. The Web UI cannot change the mo
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "models": {
     "primary": {
       "provider": "openai",

@@ -22,6 +22,9 @@ import {
   webListenFromState
 } from "./cli.mjs";
 
+// Never read or write the developer's real Home from these tests.
+process.env.DATAAGENT_HOME = mkdtempSync(path.join(os.tmpdir(), "dataagent-deploy-test-home-"));
+
 function createAsk(answers) {
   const queue = [...answers];
   return async () => {
@@ -43,7 +46,7 @@ test("health probes use the configured web and api hosts", () => {
     });
     assert.equal(
       resolveTuiRuntimeUrl(env),
-      "http://127.0.0.1:8877/dataagent/stream"
+      "http://127.0.0.1:8877/api/v1/runs"
     );
     writeFileSync(path.join(home, "config.json"), JSON.stringify({
       server: { host: "::", port: 8877 }
@@ -54,7 +57,7 @@ test("health probes use the configured web and api hosts", () => {
     });
     assert.equal(
       resolveTuiRuntimeUrl(env),
-      "http://[::1]:8877/dataagent/stream"
+      "http://[::1]:8877/api/v1/runs"
     );
   } finally {
     rmSync(home, { recursive: true, force: true });
@@ -75,11 +78,11 @@ test("later commands use the API address recorded at start", () => {
     });
     assert.equal(
       resolveTuiRuntimeUrl(env, null, saved),
-      "http://127.0.0.1:8877/dataagent/stream"
+      "http://127.0.0.1:8877/api/v1/runs"
     );
     assert.equal(
       resolveTuiRuntimeUrl(env, null, { host: "10.0.0.8", port: "8802" }),
-      "http://10.0.0.8:8802/dataagent/stream"
+      "http://10.0.0.8:8802/api/v1/runs"
     );
     assert.deepEqual(
       apiListenFromState({
@@ -650,14 +653,14 @@ test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
   try {
     assert.equal(
       resolveTuiRuntimeUrl({ DATAAGENT_HOME: home }),
-      "http://127.0.0.1:8877/dataagent/stream"
+      "http://127.0.0.1:8877/api/v1/runs"
     );
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
   assert.equal(
-    resolveTuiRuntimeUrl({}, "http://example/dataagent/stream"),
-    "http://example/dataagent/stream"
+    resolveTuiRuntimeUrl({}, "http://example/api/v1/runs"),
+    "http://example/api/v1/runs"
   );
 });
 

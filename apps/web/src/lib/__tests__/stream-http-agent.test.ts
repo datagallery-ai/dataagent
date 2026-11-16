@@ -76,7 +76,7 @@ describe("StreamHttpAgent", () => {
     );
 
     expect(captured).toEqual({
-      url: "/dataagent/stream",
+      url: "/api/v1/runs",
       accept: "text/event-stream",
       body: {
         threadId: "thread-1",

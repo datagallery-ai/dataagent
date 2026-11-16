@@ -24,7 +24,7 @@ function isIpLiteral(host: string): boolean {
   return parts.length === 4 && parts.every((part) => /^\d{1,3}$/.test(part) && Number(part) <= 255);
 }
 
-/** Accept `http://<server.host>:<server.port>` or the same origin plus `/dataagent/stream`. */
+/** Accept `http://<server.host>:<server.port>` or the same origin plus `/api/v1/runs`. */
 export function normalizeRuntimeUrl(value: string, env: NodeJS.ProcessEnv = process.env): string {
   const listen = configuredListen(env);
   const expected = formatListenBase(listen.host, listen.port);
@@ -41,7 +41,7 @@ export function normalizeRuntimeUrl(value: string, env: NodeJS.ProcessEnv = proc
   if (!allowed.has(host) && !isIpLiteral(host)) {
     throw new Error(`The TUI requires the configured listen URL: ${expected}`);
   }
-  return `${formatListenBase(host, target.port)}/dataagent/stream`;
+  return `${formatListenBase(host, target.port)}/api/v1/runs`;
 }
 
 /** Keep requests on the configured backend and reject redirects. */

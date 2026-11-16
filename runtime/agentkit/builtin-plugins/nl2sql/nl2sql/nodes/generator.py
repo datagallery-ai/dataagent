@@ -16,7 +16,7 @@ from typing import Any
 from langchain_core.messages import HumanMessage, SystemMessage
 from loguru import logger
 
-from dataagent.model_stream import collect_model_stream
+from dataagent import collect_model_stream
 from nl2sql.constants import (
     DEFAULT_NL2SQL_NUM_SAMPLES,
     DEFAULT_NL2SQL_NUM_WORKERS,

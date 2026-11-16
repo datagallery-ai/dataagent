@@ -4,13 +4,14 @@ import asyncio
 
 from langchain.tools import ToolRuntime
 from langchain_core.tools import ToolException, tool
-from pydantic import Field, field_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from dataagent.declarations import StrictModel
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 
 
-class OntologyConfig(StrictModel):
+class OntologyConfig(BaseModel):
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
     database: str = Field(min_length=1)
 
     @field_validator("database")
@@ -22,7 +23,7 @@ class OntologyConfig(StrictModel):
 
 
 @tool
-async def get_ontology_description_tool(runtime: ToolRuntime[ModelContext]) -> dict:
+async def get_ontology_description_tool(runtime: ToolRuntime[AgentContext]) -> dict:
     """Get the configured database's tables, columns and join relationships."""
     database = OntologyConfig.model_validate(runtime.context.get_plugin_config("data-qa")).database
     client = runtime.context.semantic_client

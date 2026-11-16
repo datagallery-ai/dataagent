@@ -468,7 +468,8 @@ async def test_compiled_entry_runs_nl2sql_and_writes_the_session_file(tmp_path, 
 
 @pytest.mark.parametrize("entry", [True, False])
 @pytest.mark.parametrize("transport", ["sdk", "http"])
-async def test_compiled_nl2sql_propagates_loop_detection(tmp_path, entry, transport):
+@pytest.mark.parametrize("stage", ["generator", "validator", "selector"])
+async def test_compiled_nl2sql_propagates_loop_detection(tmp_path, monkeypatch, entry, transport, stage):
     """NL2SQL wraps node errors into a reply; a detected loop must still stop the run."""
     from test_api import client_for, query, sse, terminal
 
@@ -484,23 +485,98 @@ async def test_compiled_nl2sql_propagates_loop_detection(tmp_path, entry, transp
         "plugins": {"enabled": ["nl2sql"], "config": {"nl2sql": _plugin_params(db_path, schema_path)}},
     }))
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=config))
+    statements = []
+    connect = sqlite3.connect
+
+    def traced_connect(*args, **kwargs):
+        connection = connect(*args, **kwargs)
+        connection.set_trace_callback(statements.append)
+        return connection
+
+    monkeypatch.setattr(sqlite3, "connect", traced_connect)
     repeated = AIMessage(content="We need to analyze the same question again. " * 60)
-    responses = [repeated]
+    stage_index = ["generator", "validator", "selector"].index(stage)
+    responses = [*_PLUGIN_RESPONSES[:stage_index], repeated]
     if not entry:
         responses.insert(0, call("task", {
             "subagent_type": "nl2sql", "description": "每个部门的员工人数",
         }))
-    model = ScriptedModel(responses=[*responses, AIMessage(content="must not continue")])
+    # Valid replies after the loop expose retries and downstream SQL/CSV side effects.
+    model = ScriptedModel(responses=[
+        *responses, *_PLUGIN_RESPONSES[stage_index:], AIMessage(content="must not continue"),
+    ])
     if transport == "sdk":
         async with create_agent(runtime, model=model) as agent:
             with pytest.raises(LoopDetectedError):
                 await agent.ainvoke({"messages": [HumanMessage(content="每个部门的员工人数")]})
     else:
         async with client_for(runtime, model) as (client, _):
-            events = sse(await client.post("/dataagent/stream", json=query("每个部门的员工人数")))
+            events = sse(await client.post("/api/v1/runs", json=query("每个部门的员工人数")))
         assert terminal(events) == ["RUN_ERROR"]
         assert events[-1]["code"] == "LOOP_DETECTED"
     assert len(model.requests) == len(responses)
+    assert statements.count(EXPECTED_SQL) == (1 if stage == "selector" else 0)
+    assert not list(runtime.paths.output_root.rglob("*.csv"))
+
+
+@pytest.fixture(params=["node", "scenario"])
+def json_model_call(request, tmp_path):
+    """Exercise both JSON entrypoints with their real model and prompt plumbing."""
+    if request.param == "node":
+        from nl2sql.config_manager import NL2SQLConfig
+        from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
+
+        node = BaseNL2SQLNode("selector", NL2SQLConfig({
+            "model": "primary", "database": {"dialect": "sqlite"},
+        }))
+
+        async def invoke(model):
+            node.bind_model(model)
+            return await node.execute_with_llm_json({
+                "schema": "", "question": "test", "sql_rules": "", "res": "[]",
+            })
+    else:
+        from scenarios.udn.common.llm import execute_with_llm_json
+
+        (tmp_path / "system.md").write_text("Return JSON.")
+        (tmp_path / "user.md").write_text("{{ question }}")
+
+        async def invoke(model):
+            return await execute_with_llm_json(model, tmp_path, "", {"question": "test"})
+    return invoke
+
+
+async def test_json_model_calls_do_not_retry_loop_errors(json_model_call):
+    from dataagent import LoopDetectedError
+    from dataagent.extensions.loop_detection import LoopDetectionCallback
+
+    model = ScriptedModel(
+        responses=[
+            AIMessage(content="We need to analyze the same question again. " * 60),
+            AIMessage(content='```json\n{"ok": true}\n```'),
+        ],
+        callbacks=[LoopDetectionCallback()],
+    )
+    with pytest.raises(LoopDetectedError):
+        await json_model_call(model)
+    assert len(model.requests) == 1
+
+
+@pytest.mark.parametrize("recovers", [False, True])
+async def test_json_model_calls_keep_format_retries(json_model_call, recovers):
+    from dataagent import DataAgentError
+
+    model = ScriptedModel(responses=[
+        AIMessage(content="No JSON fence"),
+        AIMessage(content="```json\n{broken\n```"),
+        AIMessage(content='```json\n{"ok": true}\n```' if recovers else "```json\n{broken\n```"),
+    ])
+    if recovers:
+        assert await json_model_call(model) == {"ok": True}
+    else:
+        with pytest.raises(DataAgentError, match="JSON parsing failed after 3 attempts"):
+            await json_model_call(model)
+    assert len(model.requests) == 3
 
 
 def test_connection_config_strips_reserved_database_keys():

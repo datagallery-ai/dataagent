@@ -17,7 +17,7 @@ from dataagent import LaunchOptions, create_agent, prepare_runtime
 from dataagent.declarations import SubAgentSpec
 from dataagent.errors import DataAgentError
 from dataagent.extensions.loading import PythonLoader
-from dataagent.history_sql import __main__ as cli
+from dataagent.history_sql import cli
 from dataagent.history_sql.config import corpus_path
 from dataagent.history_sql.downloader import (
     CorpusDownloadError,
@@ -26,6 +26,7 @@ from dataagent.history_sql.downloader import (
     write_corpus,
 )
 from dataagent.semantic_client import SemanticServiceClient
+from serve.__main__ import main as dataagent_main
 
 PLUGIN = Path(__file__).resolve().parents[1] / "builtin-plugins/de-agent"
 
@@ -237,7 +238,7 @@ def test_cli_disabled_skips_client_and_corpus_creation(tmp_path, monkeypatch, ca
     monkeypatch.setattr(cli, "prepare_runtime", lambda _: rt)
     factory = Mock(side_effect=AssertionError("must not create client"))
     monkeypatch.setattr(cli.SemanticServiceClient, "from_settings", factory)
-    assert cli.main(["--if-enabled"]) == 0
+    assert dataagent_main(["history-sql", "--if-enabled"]) == 0
     assert json.loads(capsys.readouterr().out)["status"] == "disabled"
     factory.assert_not_called()
     assert not (tmp_path / "history_sql").exists()
@@ -260,7 +261,7 @@ def test_cli_downloads_native_config_and_explicit_output_wins(tmp_path, monkeypa
         }))
     ) as client:
         monkeypatch.setattr(cli.SemanticServiceClient, "from_settings", lambda _: client)
-        assert cli.main(["--if-enabled", "--output-dir", str(destination), "--no-lock"]) == 0
+        assert dataagent_main(["history-sql", "--if-enabled", "--output-dir", str(destination), "--no-lock"]) == 0
     report = json.loads(capsys.readouterr().out)
     assert report["written"] == 1 and report["status"] == "ready"
     assert (destination / "DEMO.sql").read_text() == "SELECT 1\n"

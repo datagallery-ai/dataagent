@@ -167,7 +167,7 @@ def test_home_initialization_is_exclusive_and_non_overwriting(tmp_path):
     assert (home / ".env").read_text() == "USER_CONTENT=keep\n"
     (home / "config.json").unlink()
     initialize_home(home)
-    assert json.loads((home / "config.json").read_text())["schema_version"] == 3
+    assert json.loads((home / "config.json").read_text())["schema_version"] == 4
 
 
 def test_home_resolution_and_initialization_stay_separate(tmp_path):

@@ -10,7 +10,7 @@ flowchart LR
   D --> E[决定只读输入]
   E --> F[定位扩展]
   F --> G[读取 MCP 声明]
-  G --> H[Runtime]
+  G --> H[PreparedRuntime]
 ```
 
 ## Home
@@ -45,12 +45,12 @@ CLI 的 workspace 列表优先。否则看 `DATAAGENT_WORKSPACE`。否则用配�
 - Home `skills/` 作为来源 `User`
 - 每一层配置里的 Hook，并记下该层目录
 
-它不导入 Python。MCP 连接在下一步从 Home 和已启用插件根读取，环境引用在这时展开。连接值放进 Runtime，不在准备阶段拨号。
+它不导入 Python。MCP 连接在下一步从 Home 和已启用插件根读取，环境引用在这时展开。连接值放进 PreparedRuntime，不在准备阶段拨号。
 
 `StartupReport` 记录哪些配置文件被应用、插件来源和显式 env 文件路径。它不保存配置正文。
 
 ## 刷新
 
-`refresh_extensions` 按 Runtime 里记下的 Home、显式配置和 env 文件再走一遍扩展相关步骤。它替换 `plugins`、`dataagent.hooks`、扩展位置和 MCP。模型、限额、`dataagent.entry`、`server`、语义设置和路径对象保持原样。
+`refresh_extensions` 按 PreparedRuntime 里记下的 Home、显式配置和 env 文件再走一遍扩展相关步骤。它替换 `plugins`、`dataagent.hooks`、扩展位置和 MCP。模型、限额、`dataagent.entry`、`server`、语义设置和路径对象保持原样。
 
-宿主负责在发布新 Runtime 之前完成编译。见 [扩展生命周期](extension-lifecycle.md)。
+宿主负责在发布新 PreparedRuntime 之前完成编译。见 [扩展生命周期](extension-lifecycle.md)。

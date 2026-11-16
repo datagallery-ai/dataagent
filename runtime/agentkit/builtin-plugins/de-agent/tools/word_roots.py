@@ -4,12 +4,12 @@ from langchain.tools import ToolRuntime
 from utils.word_root_validator import WordRootContext
 from utils.word_root_validator import validate_word_roots as _validate_word_roots
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 
 
 async def validate_word_roots(
     items: list[dict[str, str | None]],
-    runtime: ToolRuntime[ModelContext],
+    runtime: ToolRuntime[AgentContext],
     k: int = 5,
     llm_batch_size: int = 5,
 ) -> dict:

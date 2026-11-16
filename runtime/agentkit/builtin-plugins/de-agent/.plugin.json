@@ -1,11 +1,11 @@
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "de-agent",
   "requires": [
     "nl2sql"
   ],
-  "config": "config.json",
-  "system_prompt": "prompts/agent.md",
+  "defaults_file": "config.json",
+  "system_prompt_file": "prompts/agent.md",
   "skills": [
     "skills"
   ],

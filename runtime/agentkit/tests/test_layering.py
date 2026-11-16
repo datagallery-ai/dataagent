@@ -1,7 +1,8 @@
 """Static checks that the package layout keeps its dependency direction.
 
-declarations / strict_json / diagnostics   leaves, import nothing from dataagent
+declarations / strict_json / diagnostics / errors   leaves, import nothing from dataagent
 settings                                  -> declarations
+bootstrap/paths                           -> leaves only
 bootstrap                                 -> foundation only; never LangChain
 extensions                                -> foundation (+ semantic_client for compile/subagents);
                                             filesystem/mcp host adapters -> bootstrap paths
@@ -18,7 +19,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "dataagent"
-LEAVES = {"dataagent.declarations", "dataagent.strict_json", "dataagent.diagnostics"}
+LEAVES = {"dataagent.declarations", "dataagent.strict_json", "dataagent.diagnostics", "dataagent.errors"}
 FOUNDATION = LEAVES | {"dataagent.settings", "dataagent.plugin_config"}
 MODEL_TOOLING = ("langchain", "langgraph", "deepagents", "ag_ui", "mcp")
 EXTENSION_DEPENDENCIES = {
@@ -37,7 +38,7 @@ EXTENSION_DEPENDENCIES = {
     "__init__": {"compiler", "loading"},
 }
 EXTENSION_CORE_DEPENDENCIES = {
-    "loop_detection": set(),
+    "loop_detection": {"errors"},
     "tracing": {"diagnostics"},
     "trace_exporter": set(),
     "mcp": {"bootstrap", "diagnostics"},
@@ -79,7 +80,7 @@ def imports(path: Path, *, root: Path = ROOT) -> list[str]:
             for alias in node.names:
                 candidate = f"{module}.{alias.name}"
                 location = root.joinpath(*candidate.split("."))
-                # On case-insensitive filesystems Runtime must not match runtime.py.
+                # On case-insensitive filesystems PreparedRuntime must not match runtime.py.
                 is_module = location.with_suffix(".py").is_file() and location.name + ".py" in {
                     child.name for child in location.parent.iterdir()
                 }
@@ -118,7 +119,8 @@ def test_bootstrap_depends_only_on_foundation_and_never_on_model_tooling():
 
 
 def test_bootstrap_types_live_with_their_concern_without_reverse_dependencies():
-    assert core_imports(CORE / "bootstrap/paths.py") == set()
+    # paths is the bottom of bootstrap: leaf modules only, never settings or config files.
+    assert core_imports(CORE / "bootstrap/paths.py") <= LEAVES
     assert core_imports(CORE / "bootstrap/options.py") == set()
     assert core_imports(CORE / "bootstrap/discovery.py") <= FOUNDATION | {
         "dataagent.bootstrap.paths",
@@ -138,9 +140,9 @@ def test_bootstrap_types_live_with_their_concern_without_reverse_dependencies():
 def test_bootstrap_class_ownership_is_explicit():
     expected = {
         "options": {"LaunchOptions"},
-        "runtime": {"Runtime", "StartupReport"},
+        "runtime": {"PreparedRuntime", "StartupReport"},
         "discovery": {"ExtensionLocations", "HookBinding", "RunHookBinding"},
-        "config_files": {"ConfigSource", "ConfigurationLoadError", "Layer"},
+        "config_files": {"ConfigSource", "ConfigurationLoadError", "Layer", "MissingEnvironmentError"},
     }
     for module, names in expected.items():
         tree = ast.parse((CORE / f"bootstrap/{module}.py").read_text())
@@ -178,7 +180,7 @@ def test_rest_host_uses_only_the_public_and_host_interfaces():
         for module in imports(path):
             assert not module.startswith(("yaml", "dotenv")), (path, module)
             if module.startswith("dataagent"):
-                assert module in {"dataagent", "dataagent.host"}, (path, module)
+                assert module in {"dataagent", "dataagent.host", "dataagent.history_sql"}, (path, module)
         for node in ast.walk(ast.parse(source)):
             if isinstance(node, ast.Constant) and isinstance(node.value, str):
                 assert ".dataagent" not in node.value, path
@@ -259,7 +261,7 @@ def test_import_resolver_distinguishes_class_from_lowercase_module(tmp_path):
     package.mkdir(parents=True)
     (package / "runtime.py").touch()
     source = tmp_path / "consumer.py"
-    source.write_text("from dataagent.bootstrap import Runtime")
+    source.write_text("from dataagent.bootstrap import PreparedRuntime")
     assert imports(source, root=tmp_path) == ["dataagent.bootstrap"]
 
 
@@ -324,12 +326,23 @@ def test_public_sdk_exports_only_the_high_level_path():
 
     assert set(dataagent.__all__) == {
         "Agent", "ConfigurationLoadError", "DataAgentError", "LaunchOptions",
-        "LoopDetectedError", "ModelContext", "Runtime", "SemanticServiceClient",
-        "create_agent", "load_mcp_tools", "prepare_runtime", "safe_error",
+        "LoopDetectedError", "AgentContext", "PreparedRuntime", "SemanticServiceClient",
+        "SubagentServices", "collect_model_stream", "create_agent", "load_mcp_tools", "prepare_runtime",
+        "safe_error",
     }
     assert set(dataagent.host.__all__) == {
-        "ERROR_CODES", "error_code", "extension_revision", "refresh_extensions", "server_listen",
+        "ERROR_CODES", "OPAQUE_ID_PATTERN", "error_code", "extension_revision", "refresh_extensions",
+        "server_listen",
     }
     assert dataagent.lowlevel.__all__ == ["build_graph"]
     for name in ("build_graph", "load_extensions", "refresh_extensions", "error_code"):
         assert not hasattr(dataagent, name), name
+
+
+def test_builtin_plugins_and_examples_use_only_public_modules():
+    allowed = {"dataagent", "dataagent.history_sql"}
+    for base in (ROOT / "builtin-plugins", ROOT / "examples"):
+        for path in base.rglob("*.py"):
+            for module in imports(path, root=path.parent):
+                if module == "dataagent" or module.startswith("dataagent."):
+                    assert module in allowed, (path, module)

@@ -143,7 +143,7 @@ nl2sql/                      插件根
     "base_url": "http://semantic-service",
     "username": "…",
     "password": "…",
-    "timeout": 30.0
+    "timeout_seconds": 30.0
   },
   "plugins": {
     "enabled": ["nl2sql"],

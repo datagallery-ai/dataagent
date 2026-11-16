@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 from langgraph.runtime import Runtime as GraphRuntime
 from pydantic import ValidationError
 
-from dataagent import ModelContext, create_agent
+from dataagent import AgentContext, create_agent
 from dataagent.bootstrap import LaunchOptions, prepare_runtime, refresh_extensions
 from dataagent.bootstrap.config_files import load_layers, merge
 from dataagent.declarations import HookSpec, PluginSpec
@@ -42,7 +42,7 @@ def test_explicit_config_replaces_home_and_resolves_its_own_tls_paths(tmp_path):
                 "semantic": {
                     "base_url": "http://home.test",
                     "username": "home-reader",
-                    "timeout": 12,
+                    "timeout_seconds": 12,
                     "tls": {"verify_server": True, "ca_file": "ca.pem", "client_cert": "cert.pem"},
                 },
             }
@@ -76,7 +76,7 @@ def test_explicit_config_replaces_home_and_resolves_its_own_tls_paths(tmp_path):
     settings = merge(load_layers(home, {"SEMANTIC_PASSWORD": "private-password"}, override))
     semantic = settings.semantic
     assert semantic.base_url == "http://semantic.test"
-    assert semantic.timeout == 30
+    assert semantic.timeout_seconds == 30
     assert semantic.password.get_secret_value() == "private-password"
     assert semantic.tls.ca_file == explicit / "ca.pem"
     assert semantic.tls.client_cert == explicit / "cert.pem"
@@ -109,8 +109,8 @@ def test_null_semantic_can_disable_or_be_overridden(tmp_path):
         {"base_url": "   "},
         {"base_url": "http://semantic.test", "username": "reader"},
         {"base_url": "http://semantic.test", "password": "private-password"},
-        {"base_url": "http://semantic.test", "timeout": 0},
-        {"base_url": "http://semantic.test", "timeout": float("inf")},
+        {"base_url": "http://semantic.test", "timeout_seconds": 0},
+        {"base_url": "http://semantic.test", "timeout_seconds": float("inf")},
         {"base_url": "http://semantic.test", "tls": {"client_cert": "cert.pem"}},
     ],
 )
@@ -147,7 +147,7 @@ def test_state_hooks_receive_shared_client_and_copied_params(event, runtime):
     state = {}
     spec = HookSpec(event=event, entrypoint="hook.py:handle", params={"values": []})
     with SemanticServiceClient("semantic.test") as client:
-        context = ModelContext(runtime, semantic_client=client)
+        context = AgentContext(runtime, semantic_client=client)
         native_runtime = GraphRuntime(context=context)
 
         def handler(actual_state, actual_runtime, *, params):
@@ -167,7 +167,7 @@ def test_state_hooks_receive_shared_client_and_copied_params(event, runtime):
 async def test_tool_hooks_use_native_context_in_sync_and_async_paths(event, runtime):
     """Read shared clients through the existing tool request without signature changes."""
     with SemanticServiceClient("semantic.test") as client:
-        context = ModelContext(runtime, semantic_client=client)
+        context = AgentContext(runtime, semantic_client=client)
         request = SimpleNamespace(
             tool_call={"name": "query"}, runtime=GraphRuntime(context=context)
         )
@@ -205,7 +205,7 @@ def test_subagent_hooks_use_native_context(tmp_path, runtime):
             {
                 "name": "child",
                 "description": "inspect",
-                "system_prompt": "prompt.md",
+                "system_prompt_file": "prompt.md",
                 "hooks": [hook],
             }
         )
@@ -216,7 +216,7 @@ def test_subagent_hooks_use_native_context(tmp_path, runtime):
         (root_hook,) = compiled.get("middleware")
         (child,) = compiled.get("subagents")
         (child_hook,) = child.get("middleware")
-        native_runtime = GraphRuntime(context=ModelContext(runtime, semantic_client=client))
+        native_runtime = GraphRuntime(context=AgentContext(runtime, semantic_client=client))
         expected = {"marker": client.base_url}
         assert root_hook.before_model({}, native_runtime) == expected
         assert child_hook.before_model({}, native_runtime) == expected
@@ -225,7 +225,7 @@ def test_subagent_hooks_use_native_context(tmp_path, runtime):
 def test_context_keeps_client_private_and_redacts_borrowed_credentials(runtime):
     """Keep live resources out of serialization while retaining diagnostic redaction."""
     with SemanticServiceClient("semantic.test", auth=("reader", "private-password")) as client:
-        context = ModelContext(runtime, semantic_client=client)
+        context = AgentContext(runtime, semantic_client=client)
         assert context.semantic_client is client
         assert context.model_dump() == {}
         assert context.model_json_schema().get("properties") == {}

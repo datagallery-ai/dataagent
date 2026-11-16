@@ -211,9 +211,9 @@ def _bind_run_hooks(layers: tuple[Layer, ...]) -> Mapping[str, tuple[RunHookBind
     for layer in layers:
         base = layer.base_dir or layer.path.parent.resolve()
         for plugin_id, params in layer.data.get("plugins", {}).get("config", {}).items():
-            groups = params.get("hooks", {})
+            groups = params.get("run_hooks", {})
             if not isinstance(groups, Mapping):
-                raise ValueError(f"{layer.path}: {plugin_id}.hooks must group before_run/after_run")
+                raise ValueError(f"{layer.path}: {plugin_id}.run_hooks must group before_run/after_run")
             for event, entries in groups.items():
                 if event not in {"before_run", "after_run"} or not isinstance(
                     entries, (tuple, list)

@@ -10,20 +10,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""DataTaskIR configuration and private state in the native ModelContext."""
+"""DataTaskIR configuration and private state in the native AgentContext."""
 
 from typing import Any
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 
 
-def ir_options(context: ModelContext) -> dict:
+def ir_options(context: AgentContext) -> dict:
     return context.get_plugin_config("de-agent").get("data_task_ir", {})
 
 
-def ir_enabled(context: ModelContext) -> bool:
+def ir_enabled(context: AgentContext) -> bool:
     return ir_options(context).get("enabled", False) is True
 
 
-def ir_state(context: ModelContext) -> dict[str, Any]:
+def ir_state(context: AgentContext) -> dict[str, Any]:
     return context.get_plugin_state("de-agent").setdefault("data_task_ir", {})

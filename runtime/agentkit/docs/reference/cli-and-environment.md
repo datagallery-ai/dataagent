@@ -22,9 +22,9 @@ uv run --project runtime/agentkit dataagent serve \
 | `--session` | 无 | 采用该会话创建时记录的输入绑定，作为进程默认值。它不恢复对话；客户端用同一 `threadId` 续接对话 |
 | `--env-file` | 无 | 只用这份环境文件，代替 Home `.env`。文件必须存在 |
 
-没有 `--host`。`npm run start`、网页转发和无参数 TUI 在启动时读所选配置的 `server.host` 与 `server.port`：传了 `--config` 用那份文件，否则用 Home `config.json`。默认 `127.0.0.1:8790`。TUI 无参数时，这个地址上没有控制面就拉起，已经在跑就连上。`npm run start -- --config <path>` 和 `./deploy.sh start --config <path>` 把同一路径交给 `dataagent serve`。`./deploy.sh` 把当时解析出的 API 主机名和端口写入部署状态。之后的 `tui`、`status`、`doctor` 使用这份地址。
+没有 `--host`。`npm run start`、网页转发和无参数 TUI 在启动时读所选配置的 `server.host` 与 `server.port`：传了 `--config` 用那份文件，否则用 Home `config.json`。默认 `127.0.0.1:8790`。TUI 无参数时，这个地址上没有控制面就拉起，已经在跑就连上。`npm run start -- --config <path>` 和 `./deploy.sh start --config <path>` 把同一路径交给 `dataagent serve`。`npm run start` 只接受 `--config`、`--web-host`、`--web-port`、`--api`、`--web`，其他参数（例如 `--env-file`、`--user`）报错退出。需要这些选项时直接运行 `uv run dataagent serve`。`./deploy.sh` 把当时解析出的 API 主机名和端口写入部署状态。之后的 `tui`、`status`、`doctor` 使用这份地址。
 
-选中的配置文件不存在、不是普通文件，或内容不是合法 JSON 时，`dataagent serve` 与 `dataagent serve-a2a` 以退出码 1 结束。标准错误有一行 `DataAgent:`。进程不监听端口。配置文件已经读入、模型环境变量尚未提供时，进程仍会监听配置里的 `server.host` 和 `server.port`：`/healthz` 为 200，`conversation.ready` 为 false，`/ready` 为 503。其他配置段缺少环境变量时，进程以退出码 1 结束。
+选中的配置文件不存在、不是普通文件，或内容不是合法 JSON 时，`dataagent serve` 与 `dataagent serve-a2a` 以退出码 1 结束。标准错误有一行 `DataAgent:`。进程不监听端口。配置文件已经读入、但任一配置段引用的环境变量（`$env{NAME}`）没有值时，进程仍会监听配置里的 `server.host` 和 `server.port`：`/healthz` 为 200，`conversation.ready` 为 false，`/ready` 为 503。标准错误写明缺哪个变量。补上变量后重启即可。
 
 开发和内部参数不属于对外接口，可能改变：
 
@@ -59,30 +59,31 @@ JSON-RPC 固定在 `/a2a/jsonrpc`，请求头必须是 `A2A-Version: 1.0`。`--c
 
 SDK 的 `LaunchOptions` 另有 `cwd` 和 `init_home`。可重复的 `--workspace` 对应 `LaunchOptions.workspaces`。CLI 启动使用 `init_home=True`，SDK 默认 `init_home=False`。
 
-## `python -m dataagent.history_sql`
+## `dataagent history-sql`
 
 从语义服务下载历史 SQL，生成 de-agent `history_sql` 使用的语料快照。需要配置 `semantic`。
 
 ```bash
-uv run --project runtime/agentkit python -m dataagent.history_sql --config path/to/config.json
+uv run --project runtime/agentkit dataagent history-sql --config path/to/config.json
 ```
 
 | 参数 | 默认 | 作用 |
 | --- | --- | --- |
-| `--config` | 无 | 同 `serve`。不接受 `--env-file` 和 `--user`，读 Home `.env` |
+| `--config` | 无 | 同 `serve` |
+| `--env-file` | 无 | 同 `serve` |
 | `--output-dir` | 见下文 | 语料目录，必须是绝对路径 |
 | `--compare-dir` | 无 | 和这个目录里的已有语料比较，结果写进输出的 `comparison` |
 | `--page-size` | `200` | 每页条数 |
 | `--if-enabled` | 关 | `plugins.config.de-agent.history_sql.enabled` 为 false 时直接退出 0 |
 | `--no-lock` | 关 | 不把写好的快照改为只读 |
 
-语料目录按这个顺序取第一个有值的：`--output-dir`、环境变量 `DATAAGENT_HISTORY_SQL_CORPUS`、`history_sql.corpus_path`、`<home>/history_sql`。
+语料目录按这个顺序取第一个有值的：`--output-dir`、环境变量 `DATAAGENT_HISTORY_SQL_CORPUS`、`history_sql.corpus_path`、`<home>/history_sql`。顺序符合 R7（CLI > 环境变量 > 配置 > 默认）。
 
 成功时在标准输出打印一份 JSON 报告，退出码 0。配置错误退出码 2，下载失败退出码 1。
 
 ## TUI
 
-没有参数时拉起本机后端并连接 `/dataagent/stream`。
+没有参数时拉起本机后端并连接 `/api/v1/runs`。
 
 | 参数 | 作用 |
 | --- | --- |
@@ -95,7 +96,7 @@ uv run --project runtime/agentkit python -m dataagent.history_sql --config path/
 
 | 变量 | 谁读取 | 作用 |
 | --- | --- | --- |
-| `DATAAGENT_HOME` | 后端进程环境 | Home。默认 `~/.dataagent`。相对值相对启动 cwd。写在 env 文件里会被忽略并警告 |
+| `DATAAGENT_HOME` | 后端进程环境 | Home。未设置或为空（含只有空白）时用 `~/.dataagent`；`~` 会展开；相对值相对启动 cwd。后端、Web 启动脚本、部署脚本和 TUI 用同一规则。写在 env 文件里会被忽略并警告 |
 | `DATAAGENT_WORKSPACE` | 后端有效环境 | 单个只读输入。低于 CLI `--workspace`，高于配置 `workspaces` |
 | `NO_COLOR` | TUI 进程 | `1` 时关闭颜色 |
 | `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` | 配置里的 `$env{...}` | 模板和示例使用的三个名字。配置里写成别的 `$env{...}` 时，以那个引用为准 |

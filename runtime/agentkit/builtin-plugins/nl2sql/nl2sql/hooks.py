@@ -39,7 +39,7 @@ from nl2sql.config_manager import NL2SQLConfig
 from nl2sql.state import Result
 
 if TYPE_CHECKING:
-    from dataagent.semantic_client import SemanticServiceClient
+    from dataagent import SemanticServiceClient
 
 PERCEPTOR_SCHEMA_CONTEXT = "perceptor.schema_context"
 """Hook point: produce the schema context (default: schema linking or full schema)."""

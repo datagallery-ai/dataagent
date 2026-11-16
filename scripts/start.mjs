@@ -14,4 +14,9 @@
  */
 import { runStack } from "./stack-runner.mjs";
 
-await runStack({ args: process.argv.slice(2) });
+try {
+  await runStack({ args: process.argv.slice(2) });
+} catch (error) {
+  console.error(`[stack] ${error instanceof Error ? error.message : String(error)}`);
+  process.exit(1);
+}

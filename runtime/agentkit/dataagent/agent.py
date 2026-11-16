@@ -1,6 +1,6 @@
-"""Native graph assembly shared by SDK and hosts: `Runtime` in, one graph out.
+"""Native graph assembly shared by SDK and hosts: `PreparedRuntime` in, one graph out.
 
-The bridge between bootstrap's Runtime and extension compilation. Combines compiled
+The bridge between bootstrap's PreparedRuntime and extension compilation. Combines compiled
 extensions with native host policies and a session-scoped filesystem backend.
 No custom Agent runner. ``dataagent.entry`` mounts that compiled subagent instead.
 """
@@ -19,7 +19,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool, ToolException
 from langgraph.graph import END, START, MessagesState, StateGraph
 
-from dataagent.bootstrap import Runtime
+from dataagent.bootstrap import PreparedRuntime
 from dataagent.bootstrap.paths import SessionPaths, WorkspaceInput
 from dataagent.core.graph import _RECURSION_LIMIT, create_deep_agent
 from dataagent.core.middleware.filesystem.filesystem import FilesystemMiddleware
@@ -29,7 +29,7 @@ from dataagent.extensions.loop_detection import loop_callbacks, loop_middleware,
 from dataagent.extensions.skills import VersionedSkillsMiddleware
 from dataagent.extensions.subagents import load_declared_subagents
 from dataagent.extensions.tracing import LocalLangChainTracer
-from dataagent.models import ModelContext
+from dataagent.models import AgentContext
 from dataagent.prompts import render_agent_prompt, render_filesystem_prompt, render_subagent_prompt
 from dataagent.semantic_client import SemanticServiceClient
 from dataagent.settings import Limits, LoopDetectionSettings
@@ -79,7 +79,7 @@ def check_agent_configuration(
     """Reject what build_graph would reject, without creating sessions or running factories."""
     if runtime.settings.semantic is not None and semantic_client is None:
         raise ValueError(
-            "Semantic service is configured: use create_agent(), or supply a ModelContext "
+            "Semantic service is configured: use create_agent(), or supply a AgentContext "
             "with a host-owned semantic_client to build_graph() and native graph invocations"
         )
     _check_extension_inputs(runtime, mcp_tools, entry)
@@ -91,13 +91,13 @@ def check_agent_configuration(
 
 
 def load_extensions(
-    runtime: Runtime,
+    runtime: PreparedRuntime,
     *,
     mcp_tools: Sequence[BaseTool] | None = None,
     semantic_client: SemanticServiceClient | None = None,
     model_resolver: Callable[[str], BaseChatModel] | None = None,
     outputs_dir: Path | None = None,
-    context: ModelContext | None = None,
+    context: AgentContext | None = None,
 ) -> dict:
     """Compile Python extensions with already discovered native MCP tools.
 
@@ -111,7 +111,7 @@ def load_extensions(
     settings, extensions = runtime.settings, runtime.extensions
     _check_extension_inputs(runtime, mcp_tools)
     a2a_tools = ()
-    if settings.a2a.agents:
+    if settings.a2a.remote_agents:
         from a2a_server.client import load_a2a_tools
 
         a2a_tools = load_a2a_tools(runtime)
@@ -124,7 +124,7 @@ def load_extensions(
         plugin_params=dict(settings.plugins.config),
         model_resolver=model_resolver
         if model_resolver is not None
-        else ModelContext(runtime).get_model,
+        else AgentContext(runtime).get_model,
         semantic_client=semantic_client,
         outputs_dir=outputs_dir,
         context=context,
@@ -166,7 +166,7 @@ def build_entry_graph(runnable, *, entry, checkpointer, session, context, loop_d
     """
     if loop_detection.enabled:
         runnable = propagate_loops(runnable, entry)
-    graph = StateGraph(MessagesState, context_schema=ModelContext)
+    graph = StateGraph(MessagesState, context_schema=AgentContext)
     graph.add_node(entry, runnable)
     graph.add_edge(START, entry)
     graph.add_edge(entry, END)
@@ -207,7 +207,7 @@ def _build_compiled_entry(runtime, *, checkpointer, session, context, mcp_tools)
 
 
 def build_graph(
-    runtime: Runtime,
+    runtime: PreparedRuntime,
     *,
     checkpointer=None,
     model=None,
@@ -215,13 +215,13 @@ def build_graph(
     input_workspaces: tuple[WorkspaceInput, ...] | None = None,
     mcp_tools: Sequence[BaseTool] | None = None,
     extension_revision: str | None = None,
-    context: ModelContext | None = None,
+    context: AgentContext | None = None,
 ):
     """Return the native graph; raw callers pass context on invocation or use create_agent."""
     explicit_session = session or (context.session if context is not None else None)
     session = explicit_session or runtime.paths.for_session("sdk")
     context = (
-        context if context is not None else ModelContext(runtime, model=model, session=session)
+        context if context is not None else AgentContext(runtime, model=model, session=session)
     )
     if context.session != session:
         raise ValueError("Agent context and filesystem must refer to the same session")
@@ -230,7 +230,7 @@ def build_graph(
     if explicit_session is not None:
         expected = runtime.paths.for_session(session.root.name)
         if session.root != expected.root:
-            raise ValueError("session.root must match this profile's Home runtime path")
+            raise ValueError("session.root must match this user's Home runtime path")
         if session.traces != expected.traces:
             raise ValueError("session.traces must use the standard Home path")
     # Raw graph callers use the same registration entry as SDK/HTTP. Already-open
@@ -290,7 +290,7 @@ def build_graph(
             )
     kwargs.update(
         model=context.get_model(),
-        context_schema=ModelContext,
+        context_schema=AgentContext,
         backend=backend,
         checkpointer=checkpointer,
         system_prompt=render_agent_prompt(

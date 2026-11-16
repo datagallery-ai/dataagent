@@ -1,9 +1,7 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "dataagent": {
-    "model": {
-      "default": "primary"
-    },
+    "model": "primary",
     "limits": {
       "timeout_seconds": 180
     },
@@ -21,7 +19,7 @@
   },
   "semantic": {
     "base_url": "$env{SEMANTIC_BASE_URL}",
-    "timeout": 30.0
+    "timeout_seconds": 30.0
   },
   "plugins": {
     "enabled": ["nl2sql"],

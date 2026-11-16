@@ -15,7 +15,7 @@ from dataagent.bootstrap.startup import refresh_extensions
 from dataagent.declarations import HookSpec
 from dataagent.extensions.hooks import compile_hook
 from dataagent.extensions.run_hooks import RunHook
-from dataagent.models import ModelContext
+from dataagent.models import AgentContext
 
 
 def _plugin(home, name, *, requires=(), config=None):
@@ -23,7 +23,7 @@ def _plugin(home, name, *, requires=(), config=None):
     path.mkdir(parents=True, exist_ok=True)
     manifest = {"id": name, "requires": list(requires)}
     if config is not None:
-        manifest["config"] = "defaults.json"
+        manifest["defaults_file"] = "defaults.json"
         (path / "defaults.json").write_text(json.dumps({"plugins": {"config": config}}))
     (path / ".plugin.json").write_text(json.dumps(manifest))
     return path
@@ -60,7 +60,7 @@ def test_dependencies_merge_defaults_and_keep_hook_sources(tmp_path):
         requires=["b", "c"],
         config={
             "a": {
-                "hooks": {
+                "run_hooks": {
                     "before_run": [{"entrypoint": "hooks.py:apply"}],
                 }
             }
@@ -86,7 +86,7 @@ def test_dependency_errors_and_paths_are_checked(tmp_path):
     with pytest.raises(ValueError, match="a -> b -> a"):
         _runtime(tmp_path, ["a"])
     (a.parent / "outside.json").write_text("{}")
-    (a / ".plugin.json").write_text(json.dumps({"id": "a", "config": "../outside.json"}))
+    (a / ".plugin.json").write_text(json.dumps({"id": "a", "defaults_file": "../outside.json"}))
     with pytest.raises(ValueError, match="escapes"):
         _runtime(tmp_path, ["a"])
 
@@ -97,7 +97,7 @@ def test_refresh_rebuilds_defaults_and_tracks_external_hook_source(tmp_path):
     hook = tmp_path / "hook.py"
     hook.write_text("def handle(state, runtime, *, params):\n    return None\n")
     runtime = _runtime(
-        tmp_path, ["a"], {"a": {"hooks": {"before_run": [{"entrypoint": "hook.py:handle"}]}}}
+        tmp_path, ["a"], {"a": {"run_hooks": {"before_run": [{"entrypoint": "hook.py:handle"}]}}}
     )
     old = extension_revision(runtime)
     hook.write_text(hook.read_text() + "# changed\n")
@@ -113,8 +113,8 @@ def test_context_exposes_copied_config_and_bound_session(tmp_path):
     """Plugin writes to returned config cannot affect another invocation or session."""
     _plugin(tmp_path / "home", "a", config={"a": {"nested": {"value": 1}}})
     runtime = _runtime(tmp_path, ["a"])
-    a = ModelContext(runtime, session=runtime.paths.for_session("a"))
-    b = ModelContext(runtime, session=runtime.paths.for_session("b"))
+    a = AgentContext(runtime, session=runtime.paths.for_session("a"))
+    b = AgentContext(runtime, session=runtime.paths.for_session("b"))
     a.get_plugin_config("a").get("nested").update(value=9)
     assert b.get_plugin_config("a").get("nested").get("value") == 1
     assert a.session.outputs != b.session.outputs
@@ -241,3 +241,28 @@ def test_plugin_defaults_cannot_change_host_settings(tmp_path):
     (root / "defaults.json").write_text(json.dumps({"plugins": {"enabled": ["b"]}}))
     with pytest.raises(ValueError, match="only contribute plugins.config"):
         _runtime(tmp_path, ["a"])
+
+
+def test_run_hooks_without_a_compiled_subagent_fail_instead_of_being_ignored(tmp_path):
+    from conftest import ScriptedModel
+
+    from dataagent.lowlevel import build_graph
+
+    _plugin(tmp_path / "home", "a")
+    hook = tmp_path / "hook.py"
+    hook.write_text("def handle(value, runtime, *, params):\n    return None\n")
+    runtime = _runtime(
+        tmp_path, ["a"], {"a": {"run_hooks": {"before_run": [{"entrypoint": "hook.py:handle"}]}}}
+    )
+    with pytest.raises(ValueError, match=r"plugins\.config\.a\.run_hooks needs a compiled SubAgent"):
+        build_graph(runtime, model=ScriptedModel(responses=[]))
+
+
+def test_subagent_services_expose_only_factory_inputs():
+    from dataclasses import fields
+
+    from dataagent import SubagentServices
+
+    assert [field.name for field in fields(SubagentServices)] == [
+        "get_model", "semantic_client", "outputs_dir", "run_hooks",
+    ]

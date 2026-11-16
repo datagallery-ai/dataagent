@@ -54,7 +54,7 @@ function stream(events: object[], byteByByte = false) {
 describe("Direct AG-UI transport", () => {
   it("sends only the newest user message and handles split UTF-8 / CRLF", async () => {
     let payload: unknown;
-    const client = new AguiClient("http://127.0.0.1:8787/dataagent/stream", async (_url, init) => {
+    const client = new AguiClient("http://127.0.0.1:8787/api/v1/runs", async (_url, init) => {
       payload = JSON.parse(String(init?.body));
       return stream([started,
         { type: "TEXT_MESSAGE_START", messageId: "a", role: "assistant" },
@@ -70,7 +70,7 @@ describe("Direct AG-UI transport", () => {
 
   it("does not retry incomplete streams and preserves yielded text", async () => {
     let requests = 0;
-    const client = new AguiClient("http://127.0.0.1:8787/dataagent/stream", async () => {
+    const client = new AguiClient("http://127.0.0.1:8787/api/v1/runs", async () => {
       requests++;
       return stream([started, { type: "TEXT_MESSAGE_CONTENT", messageId: "a", delta: "partial" }]);
     });
@@ -83,7 +83,7 @@ describe("Direct AG-UI transport", () => {
   });
 
   it("delivers a real RUN_ERROR, without adding RUN_FINISHED", async () => {
-    const client = new AguiClient("http://127.0.0.1:8787/dataagent/stream", async () => stream([
+    const client = new AguiClient("http://127.0.0.1:8787/api/v1/runs", async () => stream([
       started, { type: "RUN_ERROR", code: "ProviderError", message: "Model unavailable" },
     ]));
     const events = [];
@@ -92,7 +92,7 @@ describe("Direct AG-UI transport", () => {
   });
 
   it("rejects duplicate terminal events before reporting success", async () => {
-    const client = new AguiClient("http://127.0.0.1:8787/dataagent/stream", async () => stream([started, finished, finished]));
+    const client = new AguiClient("http://127.0.0.1:8787/api/v1/runs", async () => stream([started, finished, finished]));
     const events: AgentEvent[] = [];
     await assert.rejects(async () => {
       for await (const event of client.runAgent(input)) events.push(event);

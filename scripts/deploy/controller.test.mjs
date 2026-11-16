@@ -134,13 +134,13 @@ test("optional tui command checks readiness and API then starts foreground clien
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: "http://127.0.0.1:9000/dataagent/stream"
+    runtimeUrl: "http://127.0.0.1:9000/api/v1/runs"
   });
   assert.deepEqual(calls, [
     "load-config",
     "ensure-tui-ready",
     "check-api-for-tui",
-    "start-tui:http://127.0.0.1:9000/dataagent/stream"
+    "start-tui:http://127.0.0.1:9000/api/v1/runs"
   ]);
 });
 

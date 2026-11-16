@@ -54,7 +54,7 @@ export function configApiIdentityHeaders(): Record<string, string> {
 }
 
 export function getAgentRuntimeUrl(): string {
-  return "/dataagent/stream";
+  return "/api/v1/runs";
 }
 
 function csrfHeader(method: string | undefined): Record<string, string> {
@@ -157,14 +157,6 @@ async function requestRaw(path: string, init?: RequestInit): Promise<Response> {
 function queryString(params: URLSearchParams): string {
   const query = params.toString();
   return query ? `?${query}` : "";
-}
-
-/** `GET /sessions` returns the session document itself, not the `/api/v1` envelope. */
-async function requestSessionDocument<T>(path: string): Promise<T> {
-  const response = await requestRaw(path, {
-    headers: { Accept: "application/json" },
-  });
-  return parseJsonResponse<T>(response);
 }
 
 type PublicSessionRow = {
@@ -287,8 +279,8 @@ export const configApi = {
   },
 
   getNativeSession(sessionId: string): Promise<NativeSessionDetail> {
-    return requestSessionDocument<NativeSessionDetail>(
-      `/sessions/${encodeURIComponent(sessionId)}`,
+    return requestEnvelope<NativeSessionDetail>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}`,
     );
   },
 
@@ -325,8 +317,8 @@ export const configApi = {
   async listSessions(options: { limit?: number; cursor?: string } = {}): Promise<SessionListResponseDto> {
     const params = new URLSearchParams();
     if (options.limit !== undefined) params.set("limit", String(options.limit));
-    const body = await requestSessionDocument<{ sessions: PublicSessionRow[] }>(
-      `/sessions${queryString(params)}`,
+    const body = await requestEnvelope<{ sessions: PublicSessionRow[] }>(
+      `/api/v1/sessions${queryString(params)}`,
     );
     return {
       sessions: body.sessions.map((row) => ({
@@ -596,7 +588,7 @@ export const configApi = {
   },
 
   cancelRun(id: string, reason?: string): Promise<RunCancelDto> {
-    return requestRaw(`/runs/${encodeURIComponent(id)}/cancel`, {
+    return requestRaw(`/api/v1/runs/${encodeURIComponent(id)}/cancel`, {
       method: "POST",
       body: JSON.stringify(reason ? { reason } : {}),
     }).then(
@@ -619,23 +611,25 @@ export const configApi = {
     return requestEnvelope(`/api/v1/artifacts/${encodeURIComponent(id)}/preview`);
   },
 
-  /** Files the agent wrote to the session output directory (conversation server, raw JSON). */
+  /** Files the agent wrote to the session output directory. */
   async listSessionOutputs(sessionId: string): Promise<SessionOutputFileDto[]> {
-    const response = await requestRaw(
-      `/sessions/${encodeURIComponent(sessionId)}/outputs`,
-      { headers: { Accept: "application/json" } },
-    );
-    const body = await parseJsonResponse<{ files?: SessionOutputFileDto[] }>(response);
-    return Array.isArray(body.files) ? body.files : [];
+    try {
+      const body = await requestEnvelope<{ files?: SessionOutputFileDto[] }>(
+        `/api/v1/sessions/${encodeURIComponent(sessionId)}/outputs`,
+      );
+      return Array.isArray(body.files) ? body.files : [];
+    } catch (error) {
+      // A conversation that has not run yet has no session and no outputs.
+      if (error instanceof ConfigApiErrorClass && error.status === 404) return [];
+      throw error;
+    }
   },
 
   async previewSessionOutput(sessionId: string, path: string): Promise<SessionOutputPreviewDto> {
     const params = new URLSearchParams({ path });
-    const response = await requestRaw(
-      `/sessions/${encodeURIComponent(sessionId)}/outputs/preview?${params.toString()}`,
-      { headers: { Accept: "application/json" } },
+    return requestEnvelope<SessionOutputPreviewDto>(
+      `/api/v1/sessions/${encodeURIComponent(sessionId)}/outputs/preview?${params.toString()}`,
     );
-    return parseJsonResponse<SessionOutputPreviewDto>(response);
   },
 
   listSessionArtifacts(sessionId: string): Promise<{ artifacts: ArtifactDto[] }> {

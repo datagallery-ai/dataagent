@@ -8,7 +8,7 @@ Public examples use placeholders such as `replace-with-your-key`. Do not commit 
 
 Put secrets in the process environment or Home `.env`, and reference them with `$env{...}`. Logs and error text replace secrets the runtime knows. Trace files still contain the system prompt, the conversation, and tool results.
 
-`POST /dataagent/stream` rejects `context`, `state`, and `forwardedProps`. Do not put secrets in the user message.
+`POST /api/v1/runs` rejects `context`, `state`, and `forwardedProps`. Do not put secrets in the user message.
 
 ## Identity and files
 

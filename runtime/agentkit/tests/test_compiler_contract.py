@@ -59,7 +59,7 @@ def contract(tmp_path):
     for name in ("first", "second"):
         (root / f"{name}.md").write_text(f"Prompt for {name}.\n")
         (root / f"{name}.json").write_text(json.dumps({
-            "name": name, "description": f"Delegate {name}", "system_prompt": f"{name}.md",
+            "name": name, "description": f"Delegate {name}", "system_prompt_file": f"{name}.md",
             "tools": ["increment"], "skills": ["child-skills"],
             "hooks": [hook(event, "child", agent=name) for event in (
                 "before_agent", "before_model", "after_model", "before_tool", "after_tool", "after_agent",
@@ -67,7 +67,7 @@ def contract(tmp_path):
         }))
         children.append(f"{name}.json")
     spec = PluginSpec.model_validate({
-        "id": "contract", "system_prompt": "root.md", "skills": ["skills"],
+        "id": "contract", "system_prompt_file": "root.md", "skills": ["skills"],
         "tools": {"increment": {"entrypoint": "extensions.py:increment"}},
         "subagents": children,
         "hooks": [hook("before_agent", "plugin"), hook("after_agent", "plugin")],

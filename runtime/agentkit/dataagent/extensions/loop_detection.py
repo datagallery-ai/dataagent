@@ -26,6 +26,8 @@ from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langchain_core.runnables import RunnableLambda
 
+from dataagent.errors import DataAgentError
+
 _WINDOW = 5000
 _CHUNK = 50
 _TEXT_REPEATS = 10
@@ -52,7 +54,7 @@ _TEXT_BLOCKS = ("text", "text_delta")
 _REASONING_BLOCKS = ("reasoning", "thinking", "reasoning_content")
 
 
-class LoopDetectedError(RuntimeError):
+class LoopDetectedError(DataAgentError, RuntimeError):
     """A model repeated content or actions without making progress."""
 
     error_code = "LOOP_DETECTED"
@@ -61,8 +63,12 @@ class LoopDetectedError(RuntimeError):
         self.kind = kind
         # Do not expose model text or tool arguments in errors/logs.
         super().__init__(
-            f"Agent stopped because a loop was detected ({kind}). "
-            "Review the completed steps and change the request before continuing."
+            source="constraint",
+            component="loop_detection",
+            fact=(
+                f"Agent stopped because a loop was detected ({kind}). "
+                "Review the completed steps and change the request before continuing."
+            ),
         )
 
 

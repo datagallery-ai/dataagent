@@ -1,9 +1,7 @@
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "dataagent": {
-    "model": {
-      "default": "primary"
-    },
+    "model": "primary",
     "limits": {
       "timeout_seconds": 180,
       "model_calls_per_agent": 128,
@@ -61,6 +59,6 @@
   },
   "semantic": null,
   "a2a": {
-    "agents": []
+    "remote_agents": []
   }
 }

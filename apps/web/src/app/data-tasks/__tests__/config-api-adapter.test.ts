@@ -27,6 +27,14 @@ describe("config api adapter", () => {
     await expect(configApi.cancelRun("run-1")).resolves.toMatchObject({ canceled: false, runId: "run-1" });
   });
 
+  it("lists no outputs for a session that has not run yet", async () => {
+    vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
+      success: false,
+      error: { code: "RESOURCE_NOT_FOUND", message: "Session not found" },
+    }), { headers: { "Content-Type": "application/json" }, status: 404 })));
+    await expect(configApi.listSessionOutputs("new")).resolves.toEqual([]);
+  });
+
   it("reads code and message from a session error envelope", async () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response(JSON.stringify({
       success: false,
@@ -439,7 +447,7 @@ describe("config api adapter", () => {
   });
 
   it("loads the native session document through the config client", async () => {
-    const fetchMock = vi.fn(async () => new Response(JSON.stringify({
+    const fetchMock = vi.fn(async () => new Response(JSON.stringify({ success: true, data: {
       threadId: "thread-1",
       title: "keep-me",
       createdAt: "now",
@@ -448,13 +456,13 @@ describe("config api adapter", () => {
       hasCheckpoint: true,
       messages: [{ id: "m1", role: "user", content: "keep-me" }],
       notice: "Previous run did not complete. Restored the saved checkpoint.",
-    }), { headers: { "Content-Type": "application/json" }, status: 200 }));
+    } }), { headers: { "Content-Type": "application/json" }, status: 200 }));
     vi.stubGlobal("fetch", fetchMock);
 
     const session = await configApi.getNativeSession("thread-1");
 
     expect(fetchMock).toHaveBeenCalledWith(
-      "/sessions/thread-1",
+      "/api/v1/sessions/thread-1",
       expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) }),
     );
     expect(session.threadId).toBe("thread-1");
@@ -503,18 +511,18 @@ describe("config api adapter", () => {
   it("loads and patches server sessions through the config client", async () => {
     const fetchMock = vi
       .fn()
-      .mockResolvedValueOnce(new Response(JSON.stringify({
+      .mockResolvedValueOnce(new Response(JSON.stringify({ success: true, data: {
         sessions: [
           {
             threadId: "thread-1",
             title: "渠道订单分析",
             createdAt: "2026-06-27T10:05:00.000Z",
             updatedAt: "2026-06-27T10:05:00.000Z",
-            status: "complete",
+            status: "completed",
             hasCheckpoint: true,
           },
         ],
-      }), { headers: { "Content-Type": "application/json" }, status: 200 }))
+      } }), { headers: { "Content-Type": "application/json" }, status: 200 }))
       .mockResolvedValueOnce(new Response(JSON.stringify({
         success: true,
         data: {
@@ -541,7 +549,7 @@ describe("config api adapter", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/sessions?limit=20",
+      "/api/v1/sessions?limit=20",
       expect.objectContaining({ headers: expect.objectContaining({ Accept: "application/json" }) }),
     );
     expect(fetchMock).toHaveBeenNthCalledWith(
@@ -586,7 +594,7 @@ describe("config api adapter", () => {
 
     expect(fetchMock).toHaveBeenNthCalledWith(
       1,
-      "/runs/run-1/cancel",
+      "/api/v1/runs/run-1/cancel",
       expect.objectContaining({
         method: "POST",
         body: JSON.stringify({ reason: "user-click" }),

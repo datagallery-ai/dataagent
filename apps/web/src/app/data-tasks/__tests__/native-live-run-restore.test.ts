@@ -32,7 +32,7 @@ describe("live run restore from checkpoint messages", () => {
         },
         { id: "answer", role: "assistant", content: "Roosevelt Elementary" },
       ],
-      "complete",
+      "completed",
     );
 
     expect(run.runStatus).toBe("completed");
@@ -55,7 +55,7 @@ describe("live run restore from checkpoint messages", () => {
         },
         { id: "t", role: "tool", toolCallId: "call-1", content: "done" },
       ],
-      "complete",
+      "completed",
     );
     const stored: StoredLiveRunSnapshot = {
       runStatus: "completed",

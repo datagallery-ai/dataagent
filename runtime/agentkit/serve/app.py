@@ -24,12 +24,12 @@ from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import ConfigDict, model_validator
 from starlette.background import BackgroundTask
 
-from dataagent import Runtime, SemanticServiceClient, load_mcp_tools, safe_error
-from dataagent.host import ERROR_CODES
-from serve.agents import SessionAgents
-from serve.envelopes import register_error_handlers
+from dataagent import PreparedRuntime, SemanticServiceClient, load_mcp_tools, safe_error
+from dataagent.host import ERROR_CODES, OPAQUE_ID_PATTERN
+from serve.agents import ExtensionReloadError, SessionAgents
+from serve.envelopes import register_error_handlers, success
 from serve.outputs import list_outputs, preview_output
-from serve.product import ConversationReadyGuard, register_not_found, register_product_routes
+from serve.product import ConversationReadyGuard, register_product_routes
 from serve.sessions import (
     Sessions,
     SessionTurn,
@@ -77,7 +77,7 @@ class QueryInput(RunAgentInput):
     @model_validator(mode="after")
     def minimal_query(self):
         if any(
-            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}", value)
+            not re.fullmatch(OPAQUE_ID_PATTERN, value)
             for value in (self.thread_id, self.run_id)
         ):
             raise ValueError("threadId and runId must be safe opaque IDs of at most 128 characters")
@@ -99,7 +99,7 @@ class QueryInput(RunAgentInput):
         return self
 
 
-def agentkit_health_body(runtime: Runtime, instance_id: str) -> dict:
+def agentkit_health_body(runtime: PreparedRuntime, instance_id: str) -> dict:
     """Read model and plugin readiness from an in-process runtime. Does not start a process."""
     return {
         "protocol": "dataagent",
@@ -114,7 +114,7 @@ def agentkit_health_body(runtime: Runtime, instance_id: str) -> dict:
 
 
 @asynccontextmanager
-async def conversation_lifespan(app, runtime: Runtime, *, model=None):
+async def conversation_lifespan(app, runtime: PreparedRuntime, *, model=None):
     """Open the session index, checkpointer and agent cache. Close them when the host exits."""
     with workspace_lock(runtime.paths.state_dir):
         async with AsyncExitStack() as resources:
@@ -339,6 +339,9 @@ async def _acquire_run(app, sessions, busy, user_id: str, thread_id: str, *, rej
     try:
         await _reject_foreign_session(sessions, user_id, thread_id)
         opened = await app.state.agents.get(thread_id, create=True)
+    except ExtensionReloadError as error:
+        busy.discard((user_id, thread_id))
+        raise HTTPException(500, str(error)) from None
     except ValueError as error:
         busy.discard((user_id, thread_id))
         raise HTTPException(rejected_status, str(error)) from None
@@ -356,8 +359,8 @@ async def _reject_foreign_session(sessions: Sessions, user_id: str, thread_id: s
     if owner is not None and owner != user_id:
         raise HTTPException(
             409,
-            f"Session {thread_id} is not in profile {user_id}. "
-            "Choose an existing session for this profile or start a new one.",
+            f"Session {thread_id} does not belong to user {user_id}. "
+            "Choose one of this user's sessions or start a new one.",
         )
 
 
@@ -371,7 +374,7 @@ async def _settle(turn: SessionTurn, graph) -> None:
 
 def register_conversation_routes(
     app: FastAPI,
-    runtime: Runtime,
+    runtime: PreparedRuntime,
     *,
     instance_id: str | None = None,
 ):
@@ -385,14 +388,14 @@ def register_conversation_routes(
     def local_user_id() -> str:
         return runtime.paths.user_id
 
-    @app.get("/sessions")
+    @app.get("/api/v1/sessions")
     async def list_sessions(limit: int = Query(default=50, ge=1, le=100)):
         user_id = local_user_id()
-        return {
+        return success({
             "sessions": [
                 public_session(row) for row in await app.state.sessions.list(user_id, limit)
             ]
-        }
+        })
 
     async def outputs_root(thread_id: str):
         user_id = local_user_id()
@@ -401,38 +404,32 @@ def register_conversation_routes(
         except ValueError:
             raise HTTPException(400, "Invalid session id") from None
         if await app.state.sessions.get(user_id, thread_id) is None:
-            if await app.state.sessions.owner(thread_id) is not None:
-                raise HTTPException(404, "Session not found")
-            return None  # A new TUI conversation has no persisted session yet.
+            raise HTTPException(404, "Session not found")
         return session.outputs
 
-    @app.get("/sessions/{thread_id}/outputs")
+    @app.get("/api/v1/sessions/{thread_id}/outputs")
     async def get_outputs(thread_id: str):
         root = await outputs_root(thread_id)
         try:
-            return {
-                "files": await asyncio.to_thread(list_outputs, root) if root is not None else []
-            }
+            return success({"files": await asyncio.to_thread(list_outputs, root)})
         except OSError:
             raise HTTPException(500, "Unable to list session outputs") from None
 
-    @app.get("/sessions/{thread_id}/outputs/preview")
+    @app.get("/api/v1/sessions/{thread_id}/outputs/preview")
     async def get_output_preview(thread_id: str, path: str = Query(min_length=1)):
         root = await outputs_root(thread_id)
-        if root is None:
-            raise HTTPException(404, "Output file not found")
         try:
-            return await asyncio.to_thread(preview_output, root, path)
+            return success(await asyncio.to_thread(preview_output, root, path))
         except OSError:
             raise HTTPException(500, "Unable to read output preview") from None
 
-    @app.get("/sessions/{thread_id}")
+    @app.get("/api/v1/sessions/{thread_id}")
     async def get_session(thread_id: str):
         user_id = local_user_id()
         row, messages = await load_session_checkpoint(app, user_id, thread_id)
-        return session_detail(row, messages)
+        return success(session_detail(row, messages))
 
-    @app.post("/dataagent/stream")
+    @app.post("/api/v1/runs")
     async def stream(body: QueryInput):
         user_id = local_user_id()
         thread_id = body.thread_id
@@ -607,13 +604,11 @@ def register_conversation_routes(
             },
         )
 
+
+def create_app(runtime: PreparedRuntime | None, *, instance_id: str | None = None, model=None):
+    """Create the product backend. Web and TUI share this process."""
     from a2a_server.server import register_a2a_routes
 
-    register_a2a_routes(app, runtime)
-
-
-def create_app(runtime: Runtime | None, *, instance_id: str | None = None, model=None):
-    """Create the product backend. Web and TUI share this process."""
     identity = instance_id or str(uuid4())
 
     @asynccontextmanager
@@ -637,7 +632,7 @@ def create_app(runtime: Runtime | None, *, instance_id: str | None = None, model
             app.state.checkpointer = None
             yield
 
-    app = FastAPI(title="DataGallery API", version="0.3.0", lifespan=lifespan)
+    app = FastAPI(title="DataAgent API", version="0.3.0", lifespan=lifespan)
     app.state.conversation_runtime = runtime
     app.state.conversation_instance_id = identity
     app.add_middleware(ConversationReadyGuard)
@@ -652,5 +647,5 @@ def create_app(runtime: Runtime | None, *, instance_id: str | None = None, model
     register_product_routes(app)
     if runtime is not None:
         register_conversation_routes(app, runtime, instance_id=identity)
-    register_not_found(app)
+    register_a2a_routes(app, runtime)
     return app

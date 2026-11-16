@@ -43,7 +43,7 @@ flowchart TB
 | --- | --- |
 | `declarations.py` | 描述插件、Hook 和 MCP 的数据形状 |
 | `settings.py` | 保存合并后的产品设置 |
-| `bootstrap/` | 解析路径、环境和配置，定位扩展，返回 Runtime |
+| `bootstrap/` | 解析路径、环境和配置，定位扩展，返回 PreparedRuntime |
 | `extensions/` | 把选中的声明编译成 Deep Agents 参数 |
 | `prompts/` | 把文件系统说明和扩展提示拼成文本 |
 | `agent.py` | 加上限额、会话目录和 Trace，调用 `create_deep_agent` |
@@ -67,7 +67,7 @@ apps/web  --HTTP-->  dataagent serve  <--HTTP--  apps/tui
               ~/.dataagent 与 dataagent.workspaces
 ```
 
-网页经 Next 同源转发。TUI 直接请求控制面。对话都走 `POST /dataagent/stream`。会话、Checkpoint 和产物在同一个 Home。Python SDK 可以跳过 HTTP，调用同一套 `prepare_runtime`。网页怎么部署、页面上能做什么，写在仓库 `docs/`，不在这篇架构说明里。
+网页经 Next 同源转发。TUI 直接请求控制面。对话都走 `POST /api/v1/runs`。会话、Checkpoint 和产物在同一个 Home。Python SDK 可以跳过 HTTP，调用同一套 `prepare_runtime`。网页怎么部署、页面上能做什么，写在仓库 `docs/`，不在这篇架构说明里。
 
 监听地址只有 `config.json` 的 `server.host` 和 `server.port`。目录布局见 [Home 与工作区](home-layout.md)。
 

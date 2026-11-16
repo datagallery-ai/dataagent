@@ -81,12 +81,12 @@ async def test_me_uses_the_runtime_user(client, app) -> None:
 async def test_session_list_reads_the_agentkit_index(client, app) -> None:
     user_id = app.state.agents.runtime.paths.user_id
     await app.state.sessions.start(user_id, "thread-a", "run-a", "A title")
-    await app.state.sessions.finish(user_id, "thread-a", "complete", "ckpt-a")
+    await app.state.sessions.finish(user_id, "thread-a", "completed", "ckpt-a")
     await app.state.sessions.start("someone-else", "thread-b", "run-b", "B title")
 
-    listed = await client.get("/sessions")
+    listed = await client.get("/api/v1/sessions")
     assert listed.status_code == 200, listed.text
-    sessions = listed.json()["sessions"]
+    sessions = listed.json()["data"]["sessions"]
     assert [item["threadId"] for item in sessions] == ["thread-a"]
     assert sessions[0]["title"] == "A title"
     assert sessions[0]["hasCheckpoint"] is True
@@ -96,11 +96,11 @@ async def test_session_list_reads_the_agentkit_index(client, app) -> None:
 
 async def test_session_limit_is_validated(client) -> None:
     for raw in ("0", "101", "abc"):
-        response = await client.get("/sessions", params={"limit": raw})
+        response = await client.get("/api/v1/sessions", params={"limit": raw})
         assert response.status_code == 422, response.text
-    empty = await client.get("/sessions", params={"limit": "10"})
+    empty = await client.get("/api/v1/sessions", params={"limit": "10"})
     assert empty.status_code == 200
-    assert empty.json()["sessions"] == []
+    assert empty.json()["data"]["sessions"] == []
 
 
 def _gui(text: str, thread: str) -> dict:
@@ -125,7 +125,7 @@ def _texts(payload: dict) -> list[str]:
 
 
 async def test_missing_session_is_not_found(client) -> None:
-    native = await client.get("/sessions/missing-thread")
+    native = await client.get("/api/v1/sessions/missing-thread")
     removed = await client.get("/api/v1/sessions/missing-thread/conversation")
     assert native.status_code == 404
     assert removed.status_code == 404
@@ -143,28 +143,28 @@ async def test_web_and_tui_writes_are_readable(runtime) -> None:
         async with httpx.AsyncClient(
             transport=transport, base_url="http://127.0.0.1:8787", timeout=30,
         ) as http:
-            web = await http.post("/dataagent/stream", json=_gui("来自网页", "web-thread"))
-            tui = await http.post("/dataagent/stream", json=_gui("来自终端", "tui-thread"))
-            web_view = await http.get("/sessions/web-thread")
-            tui_view = await http.get("/sessions/tui-thread")
+            web = await http.post("/api/v1/runs", json=_gui("来自网页", "web-thread"))
+            tui = await http.post("/api/v1/runs", json=_gui("来自终端", "tui-thread"))
+            web_view = await http.get("/api/v1/sessions/web-thread")
+            tui_view = await http.get("/api/v1/sessions/tui-thread")
             user_id = (await http.get("/api/v1/me")).json()["data"]["user"]["id"]
             application.state.conversation_busy.add((user_id, "web-thread"))
-            running = await http.get("/sessions/web-thread")
+            running = await http.get("/api/v1/sessions/web-thread")
 
     assert web.status_code == 200, web.text
     assert tui.status_code == 200, tui.text
     assert web_view.status_code == 200
     assert tui_view.status_code == 200
-    web_body = web_view.json()
-    tui_body = tui_view.json()
+    web_body = web_view.json()["data"]
+    tui_body = tui_view.json()["data"]
     assert web_body["threadId"] == "web-thread"
     assert "来自网页" in _texts(web_body)
     assert "from-web" in _texts(web_body)
     assert "来自终端" in _texts(tui_body)
     assert "from-tui" in _texts(tui_body)
     assert running.status_code == 200
-    assert running.json()["threadId"] == "web-thread"
-    assert "来自网页" in _texts(running.json())
+    assert running.json()["data"]["threadId"] == "web-thread"
+    assert "来自网页" in _texts(running.json()["data"])
 
 
 async def test_agent_messages_keep_tool_calls_in_checkpoint_order(runtime) -> None:
@@ -184,15 +184,15 @@ async def test_agent_messages_keep_tool_calls_in_checkpoint_order(runtime) -> No
         async with httpx.AsyncClient(
             transport=transport, base_url="http://127.0.0.1:8787", timeout=30,
         ) as http:
-            posted = await http.post("/dataagent/stream", json=_gui("tool-1", "tool-thread"))
-            native = await http.get("/sessions/tool-thread")
+            posted = await http.post("/api/v1/runs", json=_gui("tool-1", "tool-thread"))
+            native = await http.get("/api/v1/sessions/tool-thread")
     assert posted.status_code == 200, posted.text
     assert native.status_code == 200, native.text
-    roles = [message.get("role") for message in native.json()["messages"]]
+    roles = [message.get("role") for message in native.json()["data"]["messages"]]
     assert "tool" in roles
     assert any(
         message.get("toolCalls") or message.get("tool_calls")
-        for message in native.json()["messages"]
+        for message in native.json()["data"]["messages"]
     )
 
 
@@ -226,12 +226,12 @@ async def test_control_plane_serves_conversation_on_the_agentkit_routes(client) 
         assert missing.status_code == 404
         assert missing.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
 
-    stream = await client.post("/dataagent/stream", json={})
+    stream = await client.post("/api/v1/runs", json={})
     assert stream.status_code == 422
     assert stream.status_code != 404
-    sessions = await client.get("/sessions")
+    sessions = await client.get("/api/v1/sessions")
     assert sessions.status_code == 200
-    assert sessions.json()["sessions"] == []
+    assert sessions.json()["data"]["sessions"] == []
 
 
 async def test_same_app_registers_control_plane_and_conversation_routes(client) -> None:
@@ -250,9 +250,9 @@ async def test_same_app_registers_control_plane_and_conversation_routes(client) 
 
 
 async def test_cancel_unknown_run_is_not_success(client) -> None:
-    empty = await client.post("/runs/run-1/cancel")
+    empty = await client.post("/api/v1/runs/run-1/cancel")
     explicit = await client.post(
-        "/runs/run-1/cancel",
+        "/api/v1/runs/run-1/cancel",
         content=b"{}",
         headers={"Content-Type": "application/json"},
     )
@@ -270,10 +270,10 @@ async def test_engine_failure_keeps_the_control_plane_up() -> None:
         transport = httpx.ASGITransport(app=application)
         async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787") as http:
             health = await http.get("/healthz")
-            chat = await http.post("/dataagent/stream", json={"threadId": "t", "runId": "r", "messages": []})
+            chat = await http.post("/api/v1/runs", json={"threadId": "t", "runId": "r", "messages": []})
             removed = await http.get("/api/copilotkit/info")
             me = await http.get("/api/v1/me")
-            cancel = await http.post("/runs/run-1/cancel")
+            cancel = await http.post("/api/v1/runs/run-1/cancel")
             ready = await http.get("/ready")
     assert health.status_code == 200
     assert health.json()["data"]["conversation"]["ready"] is False
@@ -284,8 +284,8 @@ async def test_engine_failure_keeps_the_control_plane_up() -> None:
     assert removed.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert me.status_code == 200
     assert me.json()["data"]["user"]["id"] == "default"
-    assert cancel.status_code == 404
-    assert cancel.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
+    assert cancel.status_code == 503
+    assert cancel.json()["error"]["code"] == "CONVERSATION_UNAVAILABLE"
 
 
 async def test_partial_startup_failure_does_not_leave_a_closed_session_index(
@@ -309,13 +309,10 @@ async def test_partial_startup_failure_does_not_leave_a_closed_session_index(
         transport = httpx.ASGITransport(app=application)
         async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8787") as http:
             health = await http.get("/healthz")
-            sessions = await http.get("/api/v1/sessions")
-            native = await http.get("/sessions")
+            native = await http.get("/api/v1/sessions")
     assert health.json()["data"]["conversation"]["ready"] is False
     assert application.state.sessions is None
     assert application.state.checkpointer is None
-    assert sessions.status_code == 404
-    assert sessions.json()["error"]["code"] == "RESOURCE_NOT_FOUND"
     assert native.status_code == 503
 
 
@@ -349,12 +346,12 @@ async def test_cancel_stops_the_running_turn(client, app, monkeypatch) -> None:
         "context": [],
         "forwardedProps": {},
     }
-    running = asyncio.create_task(client.post("/dataagent/stream", json=body))
+    running = asyncio.create_task(client.post("/api/v1/runs", json=body))
     await asyncio.wait_for(started.wait(), 5)
     user_id = app.state.agents.runtime.paths.user_id
     assert (user_id, "cancel-thread") in app.state.conversation_busy
 
-    cancel = await client.post("/runs/cancel-run/cancel")
+    cancel = await client.post("/api/v1/runs/cancel-run/cancel")
     assert cancel.status_code == 204
     assert cancel.content == b""
 
@@ -369,7 +366,7 @@ async def test_cancel_stops_the_running_turn(client, app, monkeypatch) -> None:
     row = await app.state.sessions.get(user_id, "cancel-thread")
     assert row["status"] == "interrupted"
 
-    follow = await client.post("/dataagent/stream", json={**body, "runId": "cancel-run-2"})
+    follow = await client.post("/api/v1/runs", json={**body, "runId": "cancel-run-2"})
     assert follow.status_code == 200
     assert "RUN_FINISHED" not in follow.text
     assert "second-run" in follow.text
@@ -403,22 +400,22 @@ def test_port_is_validated() -> None:
 
 
 async def test_conversation_errors_use_error_envelope(client) -> None:
-    invalid = await client.get("/sessions", params={"limit": "0"})
+    invalid = await client.get("/api/v1/sessions", params={"limit": "0"})
     assert invalid.status_code == 422
     body = invalid.json()
     assert body["success"] is False
     assert body["error"]["code"] == "BAD_REQUEST"
     assert "limit" in body["error"]["message"]
 
-    stream = await client.post("/dataagent/stream", json={})
+    stream = await client.post("/api/v1/runs", json={})
     assert stream.status_code == 422
     assert stream.json()["error"]["code"] == "BAD_REQUEST"
 
-    missing = await client.get("/sessions/no-such-thread/outputs/preview", params={"path": "a.md"})
+    missing = await client.get("/api/v1/sessions/no-such-thread/outputs/preview", params={"path": "a.md"})
     assert missing.status_code == 404
     assert missing.json() == {
         "success": False,
-        "error": {"code": "RESOURCE_NOT_FOUND", "message": "Output file not found"},
+        "error": {"code": "RESOURCE_NOT_FOUND", "message": "Session not found"},
     }
 
 
@@ -440,11 +437,76 @@ async def test_active_run_id_cannot_be_reused_on_another_thread(client, app, mon
             "tools": [], "context": [], "forwardedProps": {},
         }
 
-    running = asyncio.create_task(client.post("/dataagent/stream", json=body("thread-a")))
+    running = asyncio.create_task(client.post("/api/v1/runs", json=body("thread-a")))
     await asyncio.wait_for(started.wait(), 5)
-    duplicate = await client.post("/dataagent/stream", json=body("thread-b"))
+    duplicate = await client.post("/api/v1/runs", json=body("thread-b"))
     assert duplicate.status_code == 409
     assert duplicate.json()["error"]["code"] == "CONFLICT"
 
-    assert (await client.post("/runs/shared-run/cancel")).status_code == 204
+    assert (await client.post("/api/v1/runs/shared-run/cancel")).status_code == 204
     assert (await asyncio.wait_for(running, 5)).status_code == 200
+
+
+async def test_router_errors_use_the_envelope_and_health_answers_head(client) -> None:
+    wrong_method = await client.post("/healthz")
+    unknown = await client.get("/no-such-route")
+    head = await client.head("/healthz")
+    ready_head = await client.head("/ready")
+    paths = (await client.get("/openapi.json")).json()["paths"]
+    assert wrong_method.status_code == 405
+    assert wrong_method.json() == {
+        "success": False,
+        "error": {"code": "METHOD_NOT_ALLOWED", "message": "Method not allowed."},
+    }
+    assert unknown.json()["error"] == {"code": "RESOURCE_NOT_FOUND", "message": "Route not found."}
+    assert head.status_code == 200 and ready_head.status_code == 200
+    assert head.content == ready_head.content == b""
+    operation_ids = [operation["operationId"] for path in paths.values() for operation in path.values()]
+    assert len(operation_ids) == len(set(operation_ids))
+    assert "/{path}" not in paths
+    assert {"/api/v1/runs", "/api/v1/sessions", "/api/v1/runs/{run_id}/cancel"} <= set(paths)
+
+
+async def test_missing_session_outputs_are_not_found(client) -> None:
+    response = await client.get("/api/v1/sessions/no-such-thread/outputs")
+    assert response.status_code == 404
+    assert response.json()["error"] == {"code": "RESOURCE_NOT_FOUND", "message": "Session not found"}
+
+
+@pytest.mark.parametrize("missing_runtime", [False, True])
+async def test_agent_card_stays_available_when_the_engine_fails(runtime, monkeypatch, missing_runtime) -> None:
+    import serve.app as serve_app
+
+    def broken(*_args, **_kwargs):
+        raise RuntimeError("engine down")
+
+    monkeypatch.setattr(serve_app, "conversation_lifespan", broken)
+    application = create_app(None if missing_runtime else runtime)
+    async with application.router.lifespan_context(application):
+        transport = httpx.ASGITransport(app=application)
+        async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8790") as http:
+            card = await http.get("/.well-known/agent-card.json", headers={
+                "host": "agents.example:9443", "x-forwarded-proto": "https",
+            })
+            rpc = await http.post("/a2a/jsonrpc", json={})
+            cancel = await http.post("/api/v1/runs/run-1/cancel")
+            health = await http.head("/healthz")
+            ready = await http.head("/ready")
+    assert card.status_code == 200
+    assert card.json()["supportedInterfaces"][0]["url"] == "https://agents.example:9443/a2a/jsonrpc"
+    assert rpc.status_code == 503
+    assert cancel.status_code == 503
+    assert health.status_code == 200 and ready.status_code == 503
+    assert health.content == ready.content == b""
+
+
+async def test_startup_renames_the_old_complete_status(tmp_path) -> None:
+    from serve.sessions import Sessions
+
+    path = tmp_path / "sessions.sqlite"
+    async with Sessions(path) as sessions:
+        await sessions.start("default", "old", "run-1", "hello")
+        await sessions.db.execute("UPDATE sessions SET status='complete'")
+        await sessions.db.commit()
+    async with Sessions(path) as reopened:
+        assert (await reopened.get("default", "old"))["status"] == "completed"

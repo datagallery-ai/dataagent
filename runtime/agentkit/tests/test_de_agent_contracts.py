@@ -176,7 +176,7 @@ def test_subagent_only_tools_do_not_leak_into_root(tmp_path):
             {
                 "name": "inspector",
                 "description": "Inspect items",
-                "system_prompt": "prompt.md",
+                "system_prompt_file": "prompt.md",
                 "tools": ["inspect"],
                 "filesystem_tools": ["ls", "read_file"],
             }

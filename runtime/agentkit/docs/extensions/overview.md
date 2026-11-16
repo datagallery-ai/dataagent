@@ -29,6 +29,4 @@
 | 两个个人 Hook | [examples/hooks](../../examples/hooks/check_input.py) |
 | 本地 stdio MCP | [examples/mcp](../../examples/mcp/README.md) |
 
-`builtin-plugins/attribution-analysis` 只有说明，没有 `.plugin.json`，不能启用。
-
 改完扩展后，REST 和 TUI 的下一轮请求会重新编译。模型和服务配置仍要重启。见 [插件](plugins.md)。

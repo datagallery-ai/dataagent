@@ -3,7 +3,7 @@
 这篇给集成方构造一轮对话。它不写网页布局，也不写运行时内部的图。网页和 TUI 的一轮对话都发给同一个控制面。
 
 ```text
-POST /dataagent/stream
+POST /api/v1/runs
 ```
 
 默认地址是 `http://127.0.0.1:8790`。成功响应是 `text/event-stream`，带 `Cache-Control: no-cache` 和 `X-Accel-Buffering: no`。
@@ -33,12 +33,12 @@ POST /dataagent/stream
 | `tools`、`context`、`forwardedProps` | 必须出现，且为空（`[]`、`[]`、`{}`） |
 | `resume`、`parentRunId` | 不能使用 |
 
-没有 `run_config`，也没有按请求选择数据源、知识库或模型 Profile。模型、插件和工作区来自控制面启动时的配置。网页和 TUI 都使用 `/dataagent/stream`。
+没有 `run_config`，也没有按请求选择数据源、知识库或模型 Profile。模型、插件和工作区来自控制面启动时的配置。网页和 TUI 都使用 `/api/v1/runs`。
 
 ## 取消和恢复
 
 ```text
-POST /runs/<runId>/cancel
+POST /api/v1/runs/<runId>/cancel
 ```
 
 成功是 204，事件流随后以 `RUN_ERROR`（`code` 为 `CANCELLED`）结束，客户端应显示为“已停止”。这一轮不在执行时是 404。

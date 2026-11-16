@@ -28,7 +28,7 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 from utils.sql_query_checks import read_metadata_records
 
 CONTRACT_FILE = "contract.json"
@@ -127,7 +127,7 @@ def validate_contract_joins(contract: dict[str, Any], workspace: Path) -> str | 
     return None
 
 
-async def write_delivery_contract(contract: str, *, context: ModelContext) -> dict[str, Any]:
+async def write_delivery_contract(contract: str, *, context: AgentContext) -> dict[str, Any]:
     """Write the delivery contract JSON to the workspace.
 
     Args:

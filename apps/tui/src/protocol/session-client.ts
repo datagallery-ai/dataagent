@@ -9,7 +9,7 @@ import { AguiClientError } from "./agui-client.js";
 
 const summary = z.object({
   threadId: z.string(), title: z.string(), createdAt: z.string(), updatedAt: z.string(),
-  status: z.enum(["running", "complete", "error", "interrupted"]), hasCheckpoint: z.boolean(),
+  status: z.enum(["running", "completed", "error", "interrupted"]), hasCheckpoint: z.boolean(),
 });
 const session = summary.extend({
   messages: z.array(z.unknown().transform((value) => MessageSchema.parse(value))),
@@ -22,26 +22,26 @@ export class SessionClient {
 
   private async read(path: string): Promise<unknown> {
     const response = await this.fetchImpl(this.baseUrl + path, { signal: AbortSignal.timeout(10_000) });
-    const body = await response.json() as { error?: { message?: string } };
+    const body = await response.json() as { data?: unknown; error?: { message?: string } };
     if (!response.ok) throw new AguiClientError(
       body.error?.message ?? `Session request failed (${response.status})`,
       "HTTP_ERROR", response.status,
     );
-    return body;
+    return body.data;
   }
 
   async listSessions(options = { limit: 50 }): Promise<{ sessions: SessionListItem[] }> {
-    const value = z.object({ sessions: z.array(summary) }).parse(await this.read(`/sessions?limit=${options.limit}`));
+    const value = z.object({ sessions: z.array(summary) }).parse(await this.read(`/api/v1/sessions?limit=${options.limit}`));
     return { sessions: value.sessions.map((entry) => ({ ...entry, id: entry.threadId })) };
   }
 
   async getSession(id: string): Promise<SessionDetail> {
-    return session.parse(await this.read(`/sessions/${encodeURIComponent(id)}`));
+    return session.parse(await this.read(`/api/v1/sessions/${encodeURIComponent(id)}`));
   }
 
   async cancelRun(runId: string): Promise<void> {
     const response = await this.fetchImpl(
-      `${this.baseUrl}/runs/${encodeURIComponent(runId)}/cancel`,
+      `${this.baseUrl}/api/v1/runs/${encodeURIComponent(runId)}/cancel`,
       { method: "POST", signal: AbortSignal.timeout(10_000) },
     );
     if (response.status === 204 || response.status === 404) return;
@@ -53,9 +53,17 @@ export class SessionClient {
   }
 
   async listOutputs(threadId: string): Promise<DataArtifact[]> {
+    let body: unknown;
+    try {
+      body = await this.read(`/api/v1/sessions/${encodeURIComponent(threadId)}/outputs`);
+    } catch (error) {
+      // A conversation that has not run yet has no session and no outputs.
+      if (error instanceof AguiClientError && error.statusCode === 404) return [];
+      throw error;
+    }
     const value = z.object({ files: z.array(z.object({
       path: z.string(), size: z.number().nonnegative(), modifiedAt: z.string(),
-    })) }).parse(await this.read(`/sessions/${encodeURIComponent(threadId)}/outputs`));
+    })) }).parse(body);
     return value.files.map((file) => ({
       id: file.path, title: file.path, kind: "file", type: "file",
       summary: `Session outputs: ${file.path}`, previewAvailable: true,
@@ -65,7 +73,14 @@ export class SessionClient {
   }
 
   async getOutputPreview(threadId: string, path: string): Promise<unknown> {
-    return this.read(`/sessions/${encodeURIComponent(threadId)}/outputs/preview?path=${encodeURIComponent(path)}`);
+    const preview = await this.read(
+      `/api/v1/sessions/${encodeURIComponent(threadId)}/outputs/preview?path=${encodeURIComponent(path)}`,
+    ) as { content?: unknown; truncated?: unknown };
+    if (preview.truncated !== true || typeof preview.content !== "string") return preview;
+    return {
+      ...preview,
+      content: `${preview.content}\n\n[Preview truncated at 64 KiB; open the file locally for full content.]`,
+    };
   }
 }
 

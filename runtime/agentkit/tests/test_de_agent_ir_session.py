@@ -12,7 +12,7 @@ import pytest
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 
 from dataagent.extensions.loading import PythonLoader
-from dataagent.models import ModelContext
+from dataagent.models import AgentContext
 
 PLUGIN = Path(__file__).resolve().parents[1] / "builtin-plugins/de-agent"
 FIELD = {"field_id": "time_context", "value": {
@@ -274,7 +274,7 @@ def test_snapshot_conflict_and_corruption_are_not_silently_overwritten(h):
 
 def test_session_context_copies_share_clients_but_not_plugin_state(tmp_path):
     runtime = SimpleNamespace(settings=SimpleNamespace(plugins=SimpleNamespace(enabled=("de-agent",))))
-    first = ModelContext(runtime, session=SimpleNamespace(root=tmp_path / "a", outputs=tmp_path / "oa"))
+    first = AgentContext(runtime, session=SimpleNamespace(root=tmp_path / "a", outputs=tmp_path / "oa"))
     first.get_plugin_state("de-agent")["ir"] = "a"
     second = first.for_session(SimpleNamespace(root=tmp_path / "b", outputs=tmp_path / "ob"))
     assert second.get_plugin_state("de-agent") == {}
@@ -306,7 +306,7 @@ async def test_native_graph_runs_hooks_across_two_turns_without_todos(tmp_path, 
     model = ScriptedModel(responses=[call("de-agent__read_ir", {}), AIMessage(content="完成"),
                                      call("de-agent__read_ir", {}), AIMessage(content="已更新")])
     paths, _ = runtime.paths.open_session("ir-graph", create=True)
-    context = ModelContext(runtime, model=model, session=paths)
+    context = AgentContext(runtime, model=model, session=paths)
     before_modules = set(sys.modules)
     graph = build_graph(runtime, model=model, context=context, session=paths,
                         checkpointer=InMemorySaver())

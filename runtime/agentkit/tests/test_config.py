@@ -18,6 +18,40 @@ from dataagent.strict_json import read_json
 NL2SQL_ENTRY = Path(__file__).resolve().parents[1] / "examples/nl2sql-entry.json"
 
 
+def test_old_config_file_reports_version_upgrade_steps(tmp_path):
+    path = tmp_path / "config.json"
+    path.write_text(json.dumps({
+        "schema_version": 3,
+        "dataagent": {"model": {"name": "primary"}},
+        "a2a": {"agents": []},
+        "semantic": {"base_url": "http://semantic.invalid", "timeout": 30},
+        "models": {"primary": {
+            "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "SECRET_VALUE",
+        }},
+    }))
+    with pytest.raises(ConfigurationLoadError) as caught:
+        prepare_runtime(LaunchOptions(cwd=tmp_path, config=path))
+    message = str(caught.value)
+    assert str(path) in message
+    assert "schema_version 3 is not supported" in message
+    assert "dataagent.model a string" in message
+    assert "a2a.agents to a2a.remote_agents" in message
+    assert "semantic.timeout to semantic.timeout_seconds" in message
+    assert "SECRET_VALUE" not in message
+
+
+@pytest.mark.parametrize("version", [None, 4])
+def test_current_or_omitted_config_version_loads(tmp_path, version):
+    path = tmp_path / "config.json"
+    data = {"models": {"primary": {
+        "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
+    }}}
+    if version is not None:
+        data["schema_version"] = version
+    path.write_text(json.dumps(data))
+    assert prepare_runtime(LaunchOptions(cwd=tmp_path, config=path)).settings.schema_version == 4
+
+
 def test_nl2sql_entry_example_loads(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_MODEL", "example-model")
     monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/v1")
@@ -39,7 +73,7 @@ def test_nl2sql_entry_example_loads(tmp_path, monkeypatch):
 def test_config_environment_precedence_and_path_anchor(tmp_path, monkeypatch):
     config = tmp_path / "config.json"
     config.write_text(json.dumps({
-        "schema_version": 3,
+        "schema_version": 4,
         "models": {"primary": {
             "name": "$env{LLM_MODEL}", "base_url": "https://example.invalid/v1",
             "api_key": "$env{LLM_API_KEY}",
@@ -96,7 +130,7 @@ def test_import_comes_from_agentkit():
 ])
 def test_removed_hook_protocol_is_rejected_without_version_guessing(tmp_path, hook):
     path = tmp_path / "removed-hooks.json"
-    path.write_text(json.dumps({"schema_version": 3, "dataagent": {"hooks": [hook]}}))
+    path.write_text(json.dumps({"schema_version": 4, "dataagent": {"hooks": [hook]}}))
     with pytest.raises(ValueError) as error:
         prepare_runtime(LaunchOptions(cwd=tmp_path, config=path))
     assert str(path) in str(error.value)
@@ -220,7 +254,7 @@ def test_merge_expands_only_final_model_using_each_fields_source_environment(tmp
                       "api_key": "$env{VALUE}"},
     }}, {"VALUE": "first"})
     last = merge_layer(tmp_path, "cli", {
-        "dataagent": {"model": {"default": "alternate"}},
+        "dataagent": {"model": "alternate"},
         "models": {"alternate": {"name": "$env{VALUE}", "api_key": "$env{VALUE}"}},
     }, {"VALUE": "last"})
     settings = merge((first, last))

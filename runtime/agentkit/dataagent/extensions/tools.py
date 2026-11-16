@@ -5,7 +5,7 @@ from pathlib import Path
 
 from langchain_core.tools import BaseTool, tool
 
-from dataagent.declarations import LOCAL_ID_PATTERN, PluginSpec
+from dataagent.declarations import NAME_PATTERN, PluginSpec
 from dataagent.extensions.loading import PythonLoader
 
 NATIVE_TOOL_NAMES = frozenset({
@@ -17,7 +17,7 @@ def collect_tools(
     root: Path, spec: PluginSpec, loader: PythonLoader, tool_registry: dict[str, BaseTool],
 ) -> None:
     for local_id, entry in spec.tools.items():
-        if not re.fullmatch(LOCAL_ID_PATTERN, local_id):
+        if not re.fullmatch(NAME_PATTERN, local_id):
             raise ValueError(f"Invalid local tool ID: {local_id}")
         canonical = f"{spec.id}__{local_id}"
         if canonical in tool_registry:

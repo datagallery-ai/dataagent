@@ -22,8 +22,7 @@ import httpx
 from mcp import ClientSession
 from mcp.client.streamable_http import streamable_http_client
 
-from dataagent.model_stream import collect_model_stream
-from dataagent.models import ModelContext
+from dataagent import AgentContext, collect_model_stream
 
 # Bound by the public tool for this invocation, isolated across concurrent sessions.
 settings = ContextVar("dataops_settings", default=None)
@@ -179,12 +178,12 @@ class IntegrationClient:
         return await self._call("cancel_job", {"job_id": job_id})
 
 
-def dataops_options(context: ModelContext | None) -> dict:
+def dataops_options(context: AgentContext | None) -> dict:
     return context.get_plugin_config("de-agent").get("dataops", {}) if context is not None else {}
 
 
 @contextmanager
-def dataops_settings(context: ModelContext):
+def dataops_settings(context: AgentContext):
     """Scope transport/environment overrides while passing the native context unchanged."""
     token = settings.set(dataops_options(context))
     try:

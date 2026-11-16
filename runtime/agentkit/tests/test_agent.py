@@ -12,7 +12,7 @@ from langgraph.graph.state import CompiledStateGraph
 from dataagent.agent import build_graph
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from dataagent.declarations import HookSpec
-from dataagent.models import ModelContext
+from dataagent.models import AgentContext
 
 
 def test_build_returns_native_graph_without_callback_adapter(runtime):
@@ -329,7 +329,7 @@ async def test_compiled_hook_exceptions_propagate_without_swallowing_or_retry(ru
         f"async def handle({signature}, *, params):\n    raise RuntimeError('Policy failure')\n"
     )
     (root / ".plugin.json").write_text(json.dumps({
-        "schema_version": 2, "id": "policy",
+        "schema_version": 3, "id": "policy",
         "hooks": [{"entrypoint": "policy.py:handle", "event": event}],
     }))
     runtime = replace(runtime, settings=runtime.settings.model_copy(update={"plugins": runtime.settings.plugins.model_copy(update={
@@ -389,7 +389,7 @@ def _write_direct_plugin(root: Path):
         "entrypoint": "subagents/direct.py:build",
     }))
     (root / "subagents" / "notes.json").write_text(json.dumps({
-        "name": "notes", "description": "Standard sibling.", "system_prompt": "prompts/notes.md",
+        "name": "notes", "description": "Standard sibling.", "system_prompt_file": "prompts/notes.md",
     }))
     (root / "subagents" / "direct.py").write_text(
         "import json\n"
@@ -415,7 +415,7 @@ def _write_direct_plugin(root: Path):
     )
     (root / ".plugin.json").write_text(json.dumps({
         "id": "direct",
-        "system_prompt": "prompts/agent.md",
+        "system_prompt_file": "prompts/agent.md",
         "tools": {"ping": {"entrypoint": "tools.py:ping"}},
         "skills": ["skills"],
         "subagents": ["subagents/direct.json", "subagents/notes.json"],
@@ -522,7 +522,7 @@ async def test_entry_graph_checkpoints_and_keeps_the_cached_model(runtime, tmp_p
     })
     prepared = replace(prepared, settings=prepared.settings.model_copy(update={"dataagent": dataagent}))
     model = ScriptedModel(responses=[])
-    context = ModelContext(prepared, model=model)
+    context = AgentContext(prepared, model=model)
     graph = build_graph(prepared, context=context, checkpointer=InMemorySaver())
     assert isinstance(graph, CompiledStateGraph)
     assert graph.config["recursion_limit"] == 9999

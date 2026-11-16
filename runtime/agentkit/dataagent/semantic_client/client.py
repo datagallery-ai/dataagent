@@ -46,36 +46,31 @@ class SemanticServiceClient:
         *,
         auth: tuple[str, str] | None = None,
         timeout: float = 30.0,
-        verify: bool | ssl.SSLContext = False,
+        verify: bool | ssl.SSLContext = True,
         transport: httpx.BaseTransport | None = None,
         scenario: str | None = None,
-        _shared: SemanticServiceClient | None = None,
     ) -> None:
         """Create a client for the configured semantic-service base URL.
 
         ``scenario`` tags outgoing requests with ``X-Semantic-Scenario`` (the
-        health check is exempt). ``_shared`` is internal: a scenario view
-        borrows the owner's connection pool and lifecycle instead of building
-        its own.
+        health check is exempt). TLS verification is on by default; ``from_settings``
+        applies the configured ``tls`` policy instead.
         """
         self.base_url = normalize_semantic_base_url(base_url)
         self.timeout = timeout
         self.auth = auth
         self.scenario = normalize_semantic_scenario(scenario)
-        self._owner = _shared if _shared is not None else self
-        if _shared is None:
-            self._condition = Condition()
-            self._active_requests = 0
-            self._closing = False
-            self.client = httpx.Client(
-                timeout=timeout,
-                auth=auth,
-                headers={"Accept": "application/json"},
-                verify=verify,
-                transport=transport,
-            )
-        else:
-            self.client = _shared.client
+        self._owner = self
+        self._condition = Condition()
+        self._active_requests = 0
+        self._closing = False
+        self.client = httpx.Client(
+            timeout=timeout,
+            auth=auth,
+            headers={"Accept": "application/json"},
+            verify=verify,
+            transport=transport,
+        )
 
     def __enter__(self) -> SemanticServiceClient:
         """Use the client as a context-managed connection pool."""
@@ -103,7 +98,7 @@ class SemanticServiceClient:
         return cls(
             settings.base_url,
             auth=auth,
-            timeout=settings.timeout,
+            timeout=settings.timeout_seconds,
             verify=build_ssl_context(settings.tls),
         )
 
@@ -115,13 +110,14 @@ class SemanticServiceClient:
         ``close()`` keeps waiting for in-flight view requests. Wrapping a view
         again rebinds the scenario on the same underlying pool.
         """
-        return type(self)(
-            self.base_url,
-            auth=self.auth,
-            timeout=self.timeout,
-            scenario=scenario,
-            _shared=self._owner,
-        )
+        view = object.__new__(type(self))
+        view.base_url = self.base_url
+        view.timeout = self.timeout
+        view.auth = self.auth
+        view.scenario = normalize_semantic_scenario(scenario)
+        view._owner = self._owner
+        view.client = self._owner.client
+        return view
 
     def close(self) -> None:
         """Reject new requests and close the pool once active synchronous requests finish.
@@ -155,6 +151,7 @@ class SemanticServiceClient:
     def get_columns_sample_values(
         self,
         column_ids: list[str],
+        *,
         sample_count: int = 3,
     ) -> dict[str, list[str]]:
         """Get sample values for fully qualified ``db.table.column`` identifiers."""
@@ -216,8 +213,8 @@ class SemanticServiceClient:
         self,
         database_name: str,
         keywords: list[str],
-        top_k: int,
         *,
+        limit: int = 10,
         search_values: bool = False,
     ) -> list:
         """Search columns by semantic keywords."""
@@ -226,7 +223,7 @@ class SemanticServiceClient:
             params={
                 "databaseName": database_name,
                 "keywords": keywords,
-                "topK": top_k,
+                "topK": limit,
                 "searchColumns": "true",
                 "searchValues": "true" if search_values else "false",
             },
@@ -236,6 +233,7 @@ class SemanticServiceClient:
         self,
         db_table1: str,
         db_table2: str,
+        *,
         max_depth: int = 5,
     ) -> list:
         """Get relation paths connecting two fully qualified tables."""
@@ -250,10 +248,11 @@ class SemanticServiceClient:
 
     def vector_search_column_value(
         self,
-        keyword: str,
         database_name: str,
         table_name: str,
-        top_k: int,
+        keyword: str,
+        *,
+        limit: int = 10,
     ) -> list:
         """Search imported column values by value-vector similarity."""
         return self.get(
@@ -262,25 +261,27 @@ class SemanticServiceClient:
                 "keyword": keyword,
                 "databaseName": database_name,
                 "tableName": table_name,
-                "topK": top_k,
+                "topK": limit,
             },
         )
 
-    def sql_few_shots(self, query: str, top_k: int) -> list:
+    def sql_few_shots(self, query: str, *, limit: int = 10) -> list:
         """Search semantic-service SQL examples for an NL2SQL query."""
         return self.get(
             "advanced-search/sql-few-shots",
-            params={"query": query, "topK": top_k},
+            params={"query": query, "topK": limit},
         )
 
-    def vector_search_table_desc(self, database_name: str, keywords: list[str], top_k: int) -> list:
+    def vector_search_table_desc(
+        self, database_name: str, keywords: list[str], *, limit: int = 10
+    ) -> list:
         """Search table descriptions by vector similarity."""
         return self.get(
             "advanced-search/vector-search-table-desc",
             params={
                 "databaseName": database_name,
                 "keywords": keywords,
-                "topK": int(top_k),
+                "topK": int(limit),
             },
         )
 

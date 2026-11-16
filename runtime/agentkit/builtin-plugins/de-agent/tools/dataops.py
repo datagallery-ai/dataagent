@@ -22,12 +22,12 @@ from utils.dataops_trial_compute_tool import trial_compute_once as _trial
 from utils.dataops_validate_data_tool import validate_data as _validate_data
 from utils.evidence import ArtifactPathError, output_file
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 
 
 async def dataops_probe_table(
     table: str,
-    runtime: ToolRuntime[ModelContext],
+    runtime: ToolRuntime[AgentContext],
     columns: Annotated[
         list[str],
         "必填非空列名清单。只允许单段列名，不含库/表前缀或 *；先从 metadata_recall/get_table_schema 获取真实列名。",
@@ -59,7 +59,7 @@ async def dataops_probe_table(
 
 
 async def trial_compute_table(
-    runtime: ToolRuntime[ModelContext],
+    runtime: ToolRuntime[AgentContext],
     target_table: str = "",
     dml_path: str | None = None,
     query: str = "",
@@ -85,7 +85,7 @@ async def trial_compute_table(
 
 
 async def dataops_validate_data(
-    runtime: ToolRuntime[ModelContext],
+    runtime: ToolRuntime[AgentContext],
     sql: str = "",
     sql_file_path: str | None = None,
     target_table: str = "",

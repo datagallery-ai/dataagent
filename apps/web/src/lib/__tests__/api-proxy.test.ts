@@ -8,7 +8,7 @@ import {
 
 describe("api-proxy streaming contract", () => {
   it("recognizes the conversation stream as streaming", () => {
-    expect(isStreamingProxyPath("/dataagent/stream")).toBe(true);
+    expect(isStreamingProxyPath("/api/v1/runs")).toBe(true);
     expect(isStreamingProxyPath("/api/v1/sessions")).toBe(false);
   });
 
@@ -40,7 +40,7 @@ describe("api-proxy streaming contract", () => {
   });
 
   it("applies anti-buffering headers for the conversation stream before the content type arrives", () => {
-    const headers = buildProxyResponseHeaders(new Headers({ "content-type": "application/json" }), "/dataagent/stream");
+    const headers = buildProxyResponseHeaders(new Headers({ "content-type": "application/json" }), "/api/v1/runs");
 
     expect(headers.get("Cache-Control")).toBe(STREAMING_PROXY_HEADERS["Cache-Control"]);
     expect(headers.get("X-Accel-Buffering")).toBe("no");

@@ -6,22 +6,31 @@
 
 | 用途 | 模式 |
 | --- | --- |
-| 插件 ID、子代理名、MCP 服务名 | `[a-z][a-z0-9_-]*` |
-| 插件内工具 ID | `[a-z][a-z0-9_]*` |
+| 插件 ID、插件内工具 ID、子代理名、MCP 服务名、`dataagent.entry`、A2A 远端 `id` | `[a-z][a-z0-9_-]{0,63}`（`dataagent.declarations.NAME_PATTERN`） |
+| 用户、会话、输入目录 `name` | `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`（`OPAQUE_ID_PATTERN`） |
+
+工具名统一用双下划线 `__` 分隔命名空间：
+
+| 来源 | 模型看到的工具名 | 例子 |
+| --- | --- | --- |
+| 插件工具 | `<插件 ID>__<工具 ID>` | `common__summarize_numbers` |
+| A2A 远端 | `a2a__<id>` | `a2a__finance` |
+| MCP | `mcp__<scope>__<服务名>__<MCP 工具名>`；Home 的 scope 是 `user`，插件的是插件目录名 | `mcp__user__math__add` |
+| 内置 | 无前缀 | `read_file`、`task` |
 | 保留插件 ID | `user`、`cli` |
 
 根 Agent 名固定为 `dataagent`，不能作为子代理名。
 
 ## 插件 `.plugin.json`
 
-`schema_version` 必须是 `2`。
+`schema_version` 必须是 `3`。其他版本加载失败，报错说明怎样升级：版本 3 把 `system_prompt` 改名为 `system_prompt_file`，把 `config` 改名为 `defaults_file`。
 
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `id` | 字符串 | 必填 | 等于目录名 |
 | `requires` | 插件 ID 数组 | `[]` | 自动启用本地传递依赖，依赖先加载 |
-| `config` | 相对路径或省略 | 省略 | 只含 plugins.config 的 JSON 默认片段 |
-| `system_prompt` | 相对路径或省略 | 省略 | UTF-8 Markdown |
+| `defaults_file` | 相对路径或省略 | 省略 | 只含 plugins.config 的 JSON 默认片段 |
+| `system_prompt_file` | 相对路径或省略 | 省略 | UTF-8 Markdown |
 | `tools` | 对象 | `{}` | 本地 ID 到 `{ "entrypoint": "file.py:symbol", "scope": "all" }` |
 | `skills` | 相对路径数组 | `[]` | 每个路径是含 `SKILL.md` 子目录的目录 |
 | `subagents` | 相对路径数组 | `[]` | 每个路径是一份子代理 JSON |
@@ -53,11 +62,12 @@
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
+| `schema_version` | `1` | 默认 `1`。其他值加载失败 |
 | `kind` | `standard` 或 `compiled` | 默认 `standard`。`compiled` 表示由 Python 工厂提供整张图 |
 | `name` | 字符串 | 资源 ID |
 | `description` | 非空字符串 | 交给 `task` 工具的说明。和 `description_file` 必须二选一 |
 | `description_file` | 相对路径 | 读取为 `description` 的正文 |
-| `system_prompt` | 相对路径 | 读取为提示正文。`standard` 必填，`compiled` 禁止 |
+| `system_prompt_file` | 相对路径 | 读取为提示正文。`standard` 必填，`compiled` 禁止 |
 | `entrypoint` | `file.py:symbol` | `compiled` 必填，指向图工厂。`standard` 不用 |
 | `tools` | 字符串数组或省略 | 省略继承全部；`[]` 不附加声明工具 |
 | `skills` | 字符串数组或省略 | 省略继承；`[]` 不加载 |
@@ -65,7 +75,7 @@
 | `filesystem_tools` | 原生文件工具名数组或省略 | 省略沿用框架默认；必须含 `read_file`，例如 `["ls", "read_file"]` |
 
 `filesystem_tools` 通过原生 FilesystemMiddleware 设置该子代理的文件工具集合，独立于插件工具 `tools`。
-`compiled` 子代理自行管理执行图，不接受 `system_prompt`、`tools`、`skills`、`hooks` 和 `filesystem_tools`。
+`compiled` 子代理自行管理执行图，不接受 `system_prompt_file`、`tools`、`skills`、`hooks` 和 `filesystem_tools`。
 
 ## 产品配置里的 Hook
 
@@ -79,11 +89,11 @@
 
 ## 编译工作流 Hook
 
-`plugins.config.<id>.hooks` 可声明 `before_run` 和 `after_run`，值为条目数组。
+`plugins.config.<id>.run_hooks` 可声明 `before_run` 和 `after_run`，值为条目数组。键名和 Agent Hook 的 `hooks` 分开。
 每条仅含 `entrypoint` 和可选的 `params` 对象。
 入口相对声明它的插件根或用户配置目录，即使它配置的是另一个插件也不会改变基准目录。
 宿主通过 `services.run_hooks` 向编译子代理提供已绑定的处理器；工作流负责在自己的边界调用。
-当前内置消费者是 NL2SQL，不会自动把这些 Hook 应用到任意标准子 Agent。
+当前内置消费者是 NL2SQL。插件没有编译子代理却写了 `run_hooks` 时，装配失败，不会静默忽略。
 
 函数签名 `def/async def handle(value, runtime, *, params)`，可返回 None。
 `before_run` 返回的字典合并进当次输入；`after_run` 返回完整公开结果字典。

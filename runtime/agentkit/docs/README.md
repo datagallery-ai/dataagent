@@ -64,7 +64,7 @@ AgentKit 是本地数据 Agent 运行时。Python 包名和命令名是 `dataage
 | --- | --- |
 | [概览](architecture/overview.md) | 分层、一个服务和两种展示 |
 | [Home 与工作区](architecture/home-layout.md) | `~/.dataagent`、会话目录、只读输入 |
-| [启动](architecture/bootstrap.md) | 配置加载、资源发现和 Runtime |
+| [启动](architecture/bootstrap.md) | 配置加载、资源发现和 PreparedRuntime |
 | [执行](architecture/execution.md) | 从 HTTP 到模型与工具 |
 | [上下文](architecture/context-management.md) | 摘要、长结果卸载和提示 |
 | [状态与存储](architecture/state-and-storage.md) | 会话、Checkpoint 和文件 |

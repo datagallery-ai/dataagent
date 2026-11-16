@@ -16,7 +16,7 @@ de_agent should call this tool AFTER it has run the 8-category quality
 self-check on the generated SQL, not as a hook on the NL2SQL pipeline tool.
 
 This internal helper is called by the native DataOps tools and delivery checks.
-It receives ModelContext directly and reads plugins.config.de-agent.dataops.
+It receives AgentContext directly and reads plugins.config.de-agent.dataops.
 Missing integration transport returns an explicit skipped result.
 
 Environment routing
@@ -41,7 +41,7 @@ from typing import TYPE_CHECKING, Any
 
 from loguru import logger
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 from utils.dataops_constants import DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
 from utils.dataops_log_utils import (
     bound_error_excerpt,
@@ -101,13 +101,13 @@ def partition_date_for_quality() -> str:
     return (date.today() + timedelta(days=_QUALITY_PARTITION_OFFSET_DAYS)).strftime("%Y%m%d")
 
 
-def _integration_config(context: ModelContext | None) -> dict | None:
+def _integration_config(context: AgentContext | None) -> dict | None:
     config = dataops_options(context)
     return config if IntegrationClient(config).url else None
 
 
 def _check_skip_conditions(
-    sql: str, context: ModelContext | None
+    sql: str, context: AgentContext | None
 ) -> tuple[dict | None, IntegrationClient | None]:
     """Check integration availability directly from plugin configuration."""
     if not (sql or "").strip():
@@ -208,7 +208,7 @@ def _build_failure_response(
     return response_data
 
 
-def _get_user_account(context: ModelContext | None) -> str:
+def _get_user_account(context: AgentContext | None) -> str:
     """Read the DataOps execution account from invocation settings or plugin configuration.
 
     Priority:
@@ -928,7 +928,7 @@ def _has_cte(sql: str) -> bool:
 async def _expand_cte_for_dml(
     sql: str,
     timeout_sec: int = _CTE_EXPANSION_MAX_TIMEOUT_SEC,
-    context: ModelContext | None = None,
+    context: AgentContext | None = None,
     enable_thinking: bool = False,
 ) -> str:
     """Expand WITH AS (CTE) in DML INSERT statements to equivalent inline subqueries.
@@ -1145,7 +1145,7 @@ async def dataops_validate_sql(
     _collapse_partition_range: bool = False,
     _row_limit: int | None = None,
     _enable_thinking: bool | None = None,
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, Any]:
     """Validate one SQL statement against the DataOps adHoc API.
 
@@ -1447,7 +1447,7 @@ async def _cleanup_temp_table_prod(
 async def _cleanup_temp_table_wrapper(
     sql: str,
     *,
-    context: ModelContext,
+    context: AgentContext,
     partition_date: str | None = None,
 ) -> str | None:
     """Cleanup dispatcher for ``dataops_validate_sql_with_log_analysis``.
@@ -1533,7 +1533,7 @@ async def dataops_validate_sql_with_log_analysis(
     prior_attempts: list[dict[str, Any]] | None = None,
     _partition_date: str | None = None,
     _enable_thinking: bool | None = None,
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, Any]:
     """Validate SQL and fetch + analyze OBS log on failure in a single tool call.
 
@@ -1949,7 +1949,7 @@ async def _analyze_log_directly(
     original_target_table: str | None = None,
     rewritten_target_table: str | None = None,
     enable_thinking: bool = False,
-    context: ModelContext | None = None,
+    context: AgentContext | None = None,
 ) -> dict[str, Any]:
     """Analyze an error log with LLM in-process.
 
@@ -2152,7 +2152,7 @@ def _make_analysis_summary(analysis: dict[str, Any], raw_error: str = "") -> str
 async def dataops_fetch_obs_log(
     log_file_info: dict[str, Any],
     *,
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, Any]:
     """Fetch execution log directly from OBS storage using pre-signed URL.
 
@@ -2327,7 +2327,7 @@ async def _dataops_validate_sql_prod(
     collapse_partition_range: bool = False,
     row_limit: int | None = None,
     enable_thinking: bool = False,
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, Any]:
     """Production-environment validation entry point.
 
@@ -2747,7 +2747,7 @@ def _summarize_attempt(
     }
 
 
-def _resolve_workspace_dir(context: ModelContext | None) -> Path | None:
+def _resolve_workspace_dir(context: AgentContext | None) -> Path | None:
     """Use the native session outputs, or the legacy environment fallback without a context."""
     if context is not None:
         return context.session.outputs
@@ -2758,7 +2758,7 @@ def _resolve_workspace_dir(context: ModelContext | None) -> Path | None:
 def _dump_validation_artifacts(
     sql: str,
     attempts: list[dict[str, Any]],
-    context: ModelContext | None,
+    context: AgentContext | None,
 ) -> dict[str, str | None]:
     """Best-effort write of ``validate_<table>.json`` + ``delivery_warning.md``.
 
@@ -3312,7 +3312,7 @@ async def _drop_one_temp_table_prod(
 async def cleanup_temp_tables(
     sqls: list[str] | tuple[str, ...],
     *,
-    context: ModelContext,
+    context: AgentContext,
     partition_date: str | None = None,
     context_label: str = "cleanup_temp_tables",
 ) -> list[str]:

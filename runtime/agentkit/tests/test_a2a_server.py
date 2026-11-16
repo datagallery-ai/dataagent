@@ -215,13 +215,13 @@ async def test_stream_cannot_enter_a_session_while_a2a_is_running(runtime):
         ):
             a2a_task = asyncio.create_task(rpc(a2a_client, message("from a2a", "shared-thread")))
             await asyncio.wait_for(entered.wait(), timeout=5)
-            rejected = await gui_client.post("/dataagent/stream", json=stream_turn("from gui", "shared-thread"))
+            rejected = await gui_client.post("/api/v1/runs", json=stream_turn("from gui", "shared-thread"))
             assert rejected.status_code == 409
             assert "already active" in rejected.text
             assert len(model.requests) == 0
             release.set()
             completed = task_of(await a2a_task)
-            follow = await gui_client.post("/dataagent/stream", json=stream_turn("from gui", "shared-thread"))
+            follow = await gui_client.post("/api/v1/runs", json=stream_turn("from gui", "shared-thread"))
             assert follow.status_code == 200
             await follow.aread()
     assert completed["status"]["state"] == "TASK_STATE_COMPLETED"
@@ -259,7 +259,7 @@ async def test_a2a_checkpoint_record_matches_the_stream(runtime):
     async with app.router.lifespan_context(app):
         transport = httpx.ASGITransport(app=app)
         async with httpx.AsyncClient(transport=transport, base_url="http://127.0.0.1:8790") as client:
-            saved = await client.post("/dataagent/stream", json=stream_turn("saved", thread_id))
+            saved = await client.post("/api/v1/runs", json=stream_turn("saved", thread_id))
             assert saved.status_code == 200
             assert "RUN_FINISHED" in saved.text
             noted = task_of(await rpc(client, message("CODE-7", thread_id)))
@@ -267,11 +267,11 @@ async def test_a2a_checkpoint_record_matches_the_stream(runtime):
             assert "saved" in [item.content for item in model.requests[1]]
             failed = task_of(await rpc(client, message("BLUE-42", thread_id)))
             assert failed["status"]["state"] == "TASK_STATE_FAILED"
-            restored = (await client.get(f"/sessions/{thread_id}")).json()
+            restored = (await client.get(f"/api/v1/sessions/{thread_id}")).json()["data"]
             assert restored["status"] == "error"
             contents = [item.get("content") for item in restored["messages"]]
             assert "saved" in contents and "CODE-7" in contents and "BLUE-42" in contents
-            follow = await client.post("/dataagent/stream", json=stream_turn("what was it", thread_id))
+            follow = await client.post("/api/v1/runs", json=stream_turn("what was it", thread_id))
             assert follow.status_code == 200
             assert "RUN_FINISHED" in follow.text
             seen = [item.content for item in model.requests[-1]]
@@ -300,7 +300,7 @@ async def test_other_profile_cannot_read_the_same_context(tmp_path, common_plugi
         second = task_of(await rpc(client, message("read it", "shared-context")))
     assert first["status"]["state"] == "TASK_STATE_COMPLETED"
     assert second["status"]["state"] == "TASK_STATE_FAILED"
-    assert "not in profile" in second["status"]["message"]["parts"][0]["text"]
+    assert "does not belong to user" in second["status"]["message"]["parts"][0]["text"]
     assert bob_model.requests == []
 
 

@@ -115,7 +115,7 @@ async def test_trace_preserves_subagent_model_tool_tree_and_redacts(runtime):
         AIMessage(content="mean 2"), AIMessage(content="answer test-secret"),
     ])
     async with client_for(runtime, model) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=body))
+        events = sse(await client.post("/api/v1/runs", json=body))
         assert terminal(events) == ["RUN_FINISHED"]
         assert [event["toolCallName"] for event in events if event["type"] == "TOOL_CALL_START"] == ["task"]
     data = read_trace(runtime, body)
@@ -148,7 +148,7 @@ async def test_error_or_timeout_still_saves_native_trace(runtime, timeout):
     model = WaitingModel(responses=[]) if timeout else ScriptedModel(responses=[])
     body = query()
     async with client_for(runtime, model) as (client, _):
-        assert terminal(sse(await client.post("/dataagent/stream", json=body))) == ["RUN_ERROR"]
+        assert terminal(sse(await client.post("/api/v1/runs", json=body))) == ["RUN_ERROR"]
     assert root(read_trace(runtime, body))["status"]["code"] == 2
 
 
@@ -156,14 +156,14 @@ async def test_traces_are_isolated_across_concurrent_sessions_and_turns(runtime)
     model = ScriptedModel(responses=[AIMessage(content="ok") for _ in range(3)])
     bodies = [query("first-only", thread="one"), query("second-only", thread="two")]
     async with client_for(runtime, model) as (client, _):
-        responses = await asyncio.gather(*(client.post("/dataagent/stream", json=body) for body in bodies))
+        responses = await asyncio.gather(*(client.post("/api/v1/runs", json=body) for body in bodies))
         assert all(terminal(sse(response)) == ["RUN_FINISHED"] for response in responses)
         first = read_trace(runtime, bodies[0])
         second = read_trace(runtime, bodies[1])
         assert "second-only" not in json.dumps(first)
         assert "first-only" not in json.dumps(second)
         third = query("next", thread="one")
-        assert terminal(sse(await client.post("/dataagent/stream", json=third))) == ["RUN_FINISHED"]
+        assert terminal(sse(await client.post("/api/v1/runs", json=third))) == ["RUN_FINISHED"]
         assert read_trace(runtime, bodies[0]) == first
         assert root(read_trace(runtime, third))["traceId"] != root(first)["traceId"]
 
@@ -176,11 +176,11 @@ async def test_trace_write_failure_does_not_change_answer_or_session_status(runt
     monkeypatch.setattr("dataagent.extensions.trace_exporter.LocalFileExporter._write", fail)
     model = ScriptedModel(responses=[] if model_error else [AIMessage(content="ok")])
     async with client_for(runtime, model) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
         assert terminal(events) == (["RUN_ERROR"] if model_error else ["RUN_FINISHED"])
         if model_error:
             assert "Scripted model ran out of responses" in events[-1]["message"]
-        assert (await client.get("/sessions/thread-1")).json()["status"] == ("error" if model_error else "complete")
+        assert (await client.get("/api/v1/sessions/thread-1")).json()["data"]["status"] == ("error" if model_error else "completed")
     assert "TRACE_SAVE_ERROR" in caplog.text and "test-secret" not in caplog.text
 
 
@@ -327,7 +327,7 @@ async def test_sdk_trace_keeps_nested_compiled_subagent_messages(runtime, monkey
         AIMessage(content="root answer"),
     ])
     nested = create_deep_agent(model, name="outer", subagents=[{
-        "name": "nested-specialist", "description": "A nested specialist", "system_prompt": "Help.",
+        "name": "nested-specialist", "description": "A nested specialist", "system_prompt_file": "Help.",
     }])
 
     def extensions(*args, **kwargs):

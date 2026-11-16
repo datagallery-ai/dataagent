@@ -46,7 +46,7 @@ def current(context):
 def prepare_turn(context, state):
     """Run once per root invocation, before any new evidence or inference is produced."""
     cache = ir_state(context)
-    # A ModelContext lives across turns. Only durable snapshots survive the reset.
+    # A AgentContext lives across turns. Only durable snapshots survive the reset.
     cache.clear()
     messages = list(state.get("messages", []))
     query = state.get("user_query") or next(

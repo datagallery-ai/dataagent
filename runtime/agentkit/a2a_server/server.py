@@ -22,12 +22,13 @@ from starlette.routing import Route
 from a2a_server.agent_card import JSONRPC_PATH, build_agent_card
 from a2a_server.agent_executor import AgentKitExecutor
 from a2a_server.task_store import create_task_store
-from dataagent.bootstrap import Runtime
+from dataagent.bootstrap import PreparedRuntime
+from dataagent.settings import ServerSettings
 from serve.sessions import SessionTurn, continuation_configurable
 
 _FOREIGN_SESSION = (
-    "Session {thread_id} is not in profile {user_id}. "
-    "Choose an existing session for this profile or start a new one."
+    "Session {thread_id} does not belong to user {user_id}. "
+    "Choose one of this user's sessions or start a new one."
 )
 
 
@@ -58,7 +59,7 @@ async def _stop(turn, graph, *, error: bool = False) -> None:
 class AgentHost:
     """Bridge used by routes that share the host process's agent cache."""
 
-    def __init__(self, runtime: Runtime, *, app=None):
+    def __init__(self, runtime: PreparedRuntime, *, app=None):
         self.runtime = runtime
         self.app = app
 
@@ -174,7 +175,7 @@ def _agent_card_routes(agent_card: AgentCard) -> list:
 
 
 def build_a2a_routes(
-    runtime: Runtime,
+    runtime: PreparedRuntime | None,
     *,
     app,
     host: str | None = None,
@@ -182,12 +183,16 @@ def build_a2a_routes(
     executor: AgentExecutor | None = None,
     task_store: TaskStore | None = None,
 ) -> list:
-    """Routes for JSON-RPC and the Agent Card. The host app owns the lifespan."""
-    agent_host = AgentHost(runtime, app=app)
+    """Serve discovery even without a runtime; JSON-RPC needs the host's live engine."""
+    server = runtime.settings.server if runtime is not None else ServerSettings()
     card = build_agent_card(
-        host=host or runtime.settings.server.host,
-        port=runtime.settings.server.port if port is None else port,
+        host=host or server.host,
+        port=server.port if port is None else port,
     )
+    routes = _agent_card_routes(card)
+    if runtime is None:
+        return routes
+    agent_host = AgentHost(runtime, app=app)
     if executor is None:
         executor = AgentKitExecutor(agent_host.reply, secrets=tuple(runtime.redaction_secrets))
     handler = DefaultRequestHandler(
@@ -195,29 +200,26 @@ def build_a2a_routes(
         task_store=task_store or create_task_store(),
         agent_card=card,
     )
-    return [
-        *_agent_card_routes(card),
-        *create_jsonrpc_routes(handler, rpc_url=JSONRPC_PATH),
-    ]
+    return [*routes, *create_jsonrpc_routes(handler, rpc_url=JSONRPC_PATH)]
 
 
 def register_a2a_routes(
     app,
-    runtime: Runtime,
+    runtime: PreparedRuntime | None,
     *,
     host: str | None = None,
     port: int | None = None,
     executor: AgentExecutor | None = None,
     task_store: TaskStore | None = None,
 ) -> None:
-    """Attach A2A routes to a process that already opened sessions and the checkpointer."""
+    """Attach discovery and, when a runtime is available, the shared engine's RPC routes."""
     app.router.routes.extend(build_a2a_routes(
         runtime, app=app, host=host, port=port, executor=executor, task_store=task_store,
     ))
 
 
 def create_a2a_server(
-    runtime: Runtime,
+    runtime: PreparedRuntime,
     *,
     host: str,
     port: int,
@@ -255,7 +257,7 @@ def create_a2a_server(
 
 
 def run_a2a_server(
-    runtime: Runtime,
+    runtime: PreparedRuntime,
     *,
     host: str,
     port: int,

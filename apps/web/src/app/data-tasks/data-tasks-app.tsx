@@ -1025,7 +1025,7 @@ function DataTasksCopilotShell() {
 
   return (
     <EnsureSessionAgentContext.Provider value={ensureSessionAgent}>
-    {/* The v1 CopilotKit wrapper requires runtimeUrl; agents here are self-managed over /dataagent/stream. */}
+    {/* The v1 CopilotKit wrapper requires runtimeUrl; agents here are self-managed over /api/v1/runs. */}
     <CopilotKitProvider
       key={scopeKey}
       selfManagedAgents={selfManagedAgents}

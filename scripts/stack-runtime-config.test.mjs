@@ -210,3 +210,10 @@ test("server.host and server.port come from config.json", () => {
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+test("unknown stack arguments fail instead of being dropped", () => {
+  for (const args of [["--env-file", "prod.env"], ["--user", "alice"], ["--config=team.json"], ["extra"]]) {
+    assert.throws(() => resolveStackRuntimeConfig({}, args), /Unknown argument/, args.join(" "));
+  }
+  assert.doesNotThrow(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/dataagent-home" }, ["--", "--api", "--web-port", "3311"]));
+});

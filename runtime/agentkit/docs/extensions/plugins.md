@@ -6,7 +6,7 @@
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "common",
   "tools": {
     "summarize_numbers": {
@@ -43,14 +43,14 @@
 依赖缺失、重复来源或循环依赖会在启动时失败。不会联网安装，也不建立跨插件 Python import 路径。
 
 ```json
-{"schema_version": 2, "id": "de-agent", "requires": ["nl2sql"], "config": "config.json"}
+{"schema_version": 3, "id": "de-agent", "requires": ["nl2sql"], "defaults_file": "config.json"}
 ```
 
 `config` 指向只含 `plugins.config` 的 JSON 默认配置片段，可以配置自身和已依赖插件。合并顺序：
 依赖插件的 `plugins.config` → 依赖它的插件的 `plugins.config` → 选中的那一份产品文件。
 未传 `--config` 时产品文件是 Home `config.json`，传了就只用那份文件，两份不同时参加。
 对象按字段合并。普通数组整段替换，`[]` 清空。
-`plugins.config.<id>.hooks.before_run` / `after_run` 按来源追加，空数组不清除已有 Hook。
+`plugins.config.<id>.run_hooks.before_run` / `after_run` 按来源追加，空数组不清除已有 Hook。
 同级插件按 `enabled` 声明顺序合并，后者覆盖前者；需要固定值时在 Agent 配置中显式指定。
 片段不能修改模型、宿主连接、`enabled` 或 `paths`，因此不会引发第二轮依赖发现。
 
@@ -64,8 +64,8 @@
 | 字段 | 作用 |
 | --- | --- |
 | `requires` | 依赖插件 ID 数组，默认空 |
-| `config` | 只贡献 plugins.config 的 JSON 文件，相对插件根 |
-| `system_prompt` | 相对插件根的 Markdown，拼进根 Agent 提示 |
+| `defaults_file` | 只贡献 plugins.config 的 JSON 文件，相对插件根 |
+| `system_prompt_file` | 相对插件根的 Markdown，拼进根 Agent 提示 |
 | `tools` | 本地 ID 到 `file.py:函数` |
 | `skills` | 相对插件根的 Skill 目录 |
 | `subagents` | 相对插件根的子代理 JSON |
