@@ -56,10 +56,6 @@
     },
     "check_and_repair_sql": {
       "entrypoint": "tools/sql_checkers.py:check_and_repair_sql"
-    },
-    "request_human_feedback": {
-      "entrypoint": "tools/hitl.py:request_human_feedback",
-      "enabled_when": "hitl.enabled"
     }
   },
   "hooks": {
@@ -143,15 +139,7 @@
     ],
     "before_model": [
       {
-        "entrypoint": "hooks/hitl.py:prepare_context"
-      },
-      {
         "entrypoint": "hooks/ir.py:prepare_context"
-      }
-    ],
-    "after_model": [
-      {
-        "entrypoint": "hooks/hitl.py:guard_questions"
       }
     ]
   }

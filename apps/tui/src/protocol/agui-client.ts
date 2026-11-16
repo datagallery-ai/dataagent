@@ -29,7 +29,7 @@ export class AguiClient implements AgentClient {
 
   async *runAgent(input: RunAgentInput): AsyncGenerator<AgentEvent> {
     const user = input.messages.filter((message) => message.role === "user").at(-1);
-    if (!user && !input.resume?.length) throw new AguiClientError("A new user message or interrupt reply is required", "VALIDATION_ERROR");
+    if (!user) throw new AguiClientError("A new user message is required", "VALIDATION_ERROR");
     const controller = new AbortController();
     this.controllers.set(input.runId, controller);
     let timedOut = false;
@@ -40,8 +40,7 @@ export class AguiClient implements AgentClient {
         method: "POST",
         headers: { "Content-Type": "application/json", Accept: "text/event-stream" },
         body: JSON.stringify({
-          threadId: input.threadId, runId: input.runId, messages: input.resume?.length ? [] : [user],
-          ...(input.resume?.length ? { resume: input.resume } : {}),
+          threadId: input.threadId, runId: input.runId, messages: [user],
           tools: [], context: [], state: {}, forwardedProps: {},
         }),
         signal: controller.signal,

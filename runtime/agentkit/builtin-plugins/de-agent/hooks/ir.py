@@ -23,9 +23,6 @@ from utils.data_task_ir import core
 from utils.data_task_ir import session as ir_session
 from utils.data_task_ir.inputs import tool_succeeded
 from utils.data_task_ir.runtime import ir_enabled, ir_state
-from utils.hitl import enabled as hitl_enabled
-from utils.hitl import initial as hitl_initial
-from utils.hitl import ir_questions
 
 
 def _failure(request, exc, result=None):
@@ -147,11 +144,6 @@ async def ensure_ir_ready(request, *, params):
         return None
     try:
         fallback = await core.ensure_ir_ready(request.runtime.context, request.state)
-        if hitl_enabled(request.runtime.context):
-            pending = ir_questions(request.runtime.context, hitl_initial(request.runtime.context, request.state))
-            if pending:
-                return _failure(request, RuntimeError(
-                    "DataTaskIR 存在待澄清业务口径；请先调用 request_human_feedback，再执行消费者。"))
         _capture_diagnostics(request, fallback)
         # Tool metadata reaches native callbacks/OTEL even though the post hook
         # runs after BaseTool's own on_tool_end. Clone, never mutate shared tools.

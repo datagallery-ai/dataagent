@@ -281,11 +281,9 @@ def save(context, snapshot):
 def feedback_content(message):
     if (
         getattr(message, "type", None) != "tool"
-        or getattr(message, "name", None) not in {"request_human_feedback", "de-agent__request_human_feedback"}
+        or getattr(message, "name", None) != "request_human_feedback"
         or getattr(message, "status", "success") == "error"
     ):
-        return ""
-    if message.response_metadata.get("hitl", {}).get("source") == "policy":
         return ""
     text = str(message.content).strip()
     return "" if text == "Waiting for human feedback..." else text

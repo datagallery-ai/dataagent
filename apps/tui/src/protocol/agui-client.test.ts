@@ -14,18 +14,6 @@ const input: RunAgentInput = {
 const started = { type: "RUN_STARTED", threadId: "thread", runId: "run" };
 const finished = { type: "RUN_FINISHED", threadId: "thread", runId: "run" };
 
-it("sends native resume replies with empty messages", async () => {
-  let body: unknown;
-  const client = new AguiClient("http://127.0.0.1/stream", async (_url, init) => {
-    body = JSON.parse(String(init?.body));
-    return stream([started, finished]);
-  });
-  const resume = [{ interruptId: "pending", status: "resolved" as const, payload: "近7天" }];
-  for await (const _event of client.runAgent({ ...input, messages: [], resume })) { /* consume */ }
-  assert.deepEqual(body, { threadId: "thread", runId: "run", messages: [], resume,
-    tools: [], context: [], state: {}, forwardedProps: {} });
-});
-
 it('preserves native subagent identity and lifecycle through chunked SSE', async () => {
   const events = [started,
     { type: 'SUBAGENT_STARTED', subagentRunId: 'child', name: 'nl2sql', parentToolCallId: 'task' },

@@ -737,8 +737,6 @@ def get_ir_context(context: ModelContext) -> str:
     rendered = cache.get("ir_rendered_context")
     if not rendered or rendered == "IR init!":
         rendered = render_constraint_context(fields, warnings=cache.get("ir_gate_warnings") or [])
-    if cache.get("ir_hitl_best_effort"):
-        rendered += "\n【未决口径降级】仅采用已确认约束，未确认槽位未作为用户确认；请在交付中说明未决项。"
     return rendered
 
 

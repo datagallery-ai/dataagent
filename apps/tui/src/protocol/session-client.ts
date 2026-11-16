@@ -9,7 +9,7 @@ import { AguiClientError } from "./agui-client.js";
 
 const summary = z.object({
   threadId: z.string(), title: z.string(), createdAt: z.string(), updatedAt: z.string(),
-  status: z.enum(["running", "complete", "error", "interrupted", "waiting_for_input"]), hasCheckpoint: z.boolean(),
+  status: z.enum(["running", "complete", "error", "interrupted"]), hasCheckpoint: z.boolean(),
 });
 const session = summary.extend({
   messages: z.array(z.unknown().transform((value) => MessageSchema.parse(value))),

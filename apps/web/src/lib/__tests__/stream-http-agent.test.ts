@@ -25,20 +25,6 @@ function frame(event: unknown): string {
 }
 
 describe("StreamHttpAgent", () => {
-  it("forwards an interrupt reply without replaying message history", async () => {
-    let body: unknown;
-    const agent = new StreamHttpAgent({ threadId: "thread-1", fetch: async (_url, init) => {
-      body = JSON.parse(String(init.body));
-      return sseResponse([frame(started), frame(finished)]);
-    }});
-    const resume = [{ interruptId: "pending", status: "resolved" as const, payload: "近7天" }];
-    await firstValueFrom(agent.run({ threadId: "thread-1", runId: "run-1",
-      messages: [], resume, tools: [], context: [], state: {}, forwardedProps: {},
-    }).pipe(toArray()));
-    expect(body).toEqual({ threadId: "thread-1", runId: "run-1", messages: [], resume,
-      tools: [], context: [], state: {}, forwardedProps: {} });
-  });
-
   it("posts one user message and rewrites child progress for the old client", async () => {
     let captured: { url: string; body: unknown; accept: string | null } | undefined;
     const agent = new StreamHttpAgent({

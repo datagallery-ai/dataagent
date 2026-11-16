@@ -69,7 +69,6 @@ class ToolSpec(StrictModel):
 
     entrypoint: str = Field(min_length=1)
     scope: Literal["all", "subagents"] = "all"
-    enabled_when: str | None = Field(default=None, min_length=1)
 
 
 def json_containers(value):

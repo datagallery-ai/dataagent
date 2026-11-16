@@ -65,13 +65,6 @@
         "history_sql": {
           "enabled": false,
           "corpus_path": null
-        },
-        "hitl": {
-          "enabled": false,
-          "auto_resolve": false,
-          "budget": 4,
-          "model": "primary",
-          "final_confirmation": false
         }
       },
       "nl2sql": {

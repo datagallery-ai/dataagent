@@ -4,8 +4,6 @@ import json
 
 import httpx
 from langchain_core.messages import HumanMessage, ToolMessage
-from utils.hitl import enabled as hitl_enabled
-from utils.hitl import task_workspace
 from utils.recall import load_semantic_context
 
 
@@ -19,18 +17,6 @@ def prepare_recall(request, *, params):
         if not query:
             raise ValueError("The original user query is required for metadata recall")
         result = load_semantic_context(request.runtime.context, query)
-        if hitl_enabled(request.runtime.context):
-            workspace = task_workspace(request.runtime.context, request.state.get("hitl", {}))
-            marker = workspace / ".semantic/hitl_expand_retrieve_request.json"
-            if marker.is_file() and arguments.get("description", "").strip():
-                expanded = load_semantic_context(
-                    request.runtime.context,
-                    query + "\n检索补充：" + arguments["description"][:4000],
-                )
-                result = {**result, "tables": list(dict.fromkeys([
-                    *result.get("tables", []), *expanded.get("tables", []),
-                ]))}
-                marker.unlink(missing_ok=True)
     except (httpx.HTTPError, ValueError) as exc:
         return ToolMessage(
             content=(

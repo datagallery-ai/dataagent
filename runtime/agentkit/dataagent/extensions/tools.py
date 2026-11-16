@@ -15,15 +15,8 @@ NATIVE_TOOL_NAMES = frozenset({
 
 def collect_tools(
     root: Path, spec: PluginSpec, loader: PythonLoader, tool_registry: dict[str, BaseTool],
-    *, params: dict | None = None,
 ) -> None:
     for local_id, entry in spec.tools.items():
-        if entry.enabled_when:
-            enabled = params or {}
-            for key in entry.enabled_when.split("."):
-                enabled = enabled.get(key) if isinstance(enabled, dict) else None
-            if enabled is not True:
-                continue
         if not re.fullmatch(LOCAL_ID_PATTERN, local_id):
             raise ValueError(f"Invalid local tool ID: {local_id}")
         canonical = f"{spec.id}__{local_id}"

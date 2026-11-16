@@ -49,11 +49,11 @@
 约束：
 
 - `threadId`、`runId` 是最长 128 的安全 ID
-- 普通调用的 `messages` 恰好一条，`role` 为 `user`，`content` 为非空字符串
+- `messages` 恰好一条，带 `id`，`role` 为 `user`，`content` 为非空字符串
 - 不接受子代理消息
 - `state` 只能是 `null` 或 `{}`
-- `tools`、`context`、`forwardedProps` 必须为空
-- `parentRunId` 不能使用；业务澄清允许 `resume`，此时 `messages` 必须为空，详见 [HITL](hitl.md)
+- `tools`、`context`、`forwardedProps` 必须出现，且为空（`[]`、`[]`、`{}`）
+- `resume` 和 `parentRunId` 不能使用
 
 成功响应是 `text/event-stream`，带 `Cache-Control: no-cache` 和 `X-Accel-Buffering: no`。事件见 [事件](events.md)。
 
@@ -103,7 +103,7 @@
 }
 ```
 
-`status` 为 `running`、`complete`、`error`、`interrupted` 或 `waiting_for_input`。后者表示等待业务澄清；会话详情同时返回 `pendingInterrupts`，输入文本可回答唯一待处理问题。进程启动时，索引里仍为 `running` 的行会改成 `interrupted`。
+`status` 为 `running`、`complete`、`error` 或 `interrupted`。进程启动时，索引里仍为 `running` 的行会改成 `interrupted`。
 
 ## `GET /sessions/{threadId}`
 
