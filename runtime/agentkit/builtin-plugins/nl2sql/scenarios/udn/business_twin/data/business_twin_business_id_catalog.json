@@ -778,6 +778,48 @@
         ]
       }
     },
+    "crh_geo": {
+      "business_ids": [
+        "dw1745159030",
+        "dw1745159031",
+        "dw1745159032",
+        "dw1745159033",
+        "dw1745159034"
+      ],
+      "trigger_dimensions": [
+        "crh_station_id",
+        "crh_railway_id",
+        "crh_section_id"
+      ]
+    },
+    "high_rail": {
+      "default_routes": [
+        "dw1745159030"
+      ],
+      "experience_routes": [
+        "dw1745159011",
+        "dw1745159032"
+      ],
+      "grouped_user_dimensions": [
+        "crh_group",
+        "guarantee_group"
+      ],
+      "grouped_user_routes": [
+        "dw1745159034"
+      ],
+      "ride_dimensions": [
+        "gpsi"
+      ],
+      "ride_metrics": [
+        "crh_ride_times"
+      ],
+      "ride_routes": [
+        "dw1745159012"
+      ],
+      "user_metrics": [
+        "crh_users"
+      ]
+    },
     "ordinary_experience": {
       "default_routes": [
         "dw1745159007",

@@ -317,6 +317,7 @@ class BusinessTwinTableSelector:
             "filter_business_twin_business_id_",
             {"question": question},
         )
+        logger.info(f"payload={payload}")
         try:
             return select_business_twin_business_id(payload)
         except (TypeError, ValueError) as exc:

@@ -147,6 +147,16 @@ def test_production_prompt_embeds_full_catalog_and_requires_bare_array() -> None
     assert "只返回一个 JSON 字符串数组" in user_text
 
 
+def test_production_prompt_keeps_assurance_business_scope_off_guarantee_group() -> None:
+    """"保障业务" only scopes the business being counted, so it must not force `guarantee_group`."""
+    text = PROMPT_PATH.read_text(encoding="utf-8")
+
+    scope_rules = [line for line in text.splitlines() if "保障业务" in line and "guarantee_group" in line]
+
+    assert scope_rules, "prompt 缺少“保障业务”业务范围限定的抽取规则"
+    assert any("不得因此抽取 `guarantee_group`" in line for line in scope_rules)
+
+
 def test_railway_dimension_bit_is_exposed_on_its_table_family() -> None:
     """Bits 23-26 stay station, section, railway, and max-share resolution."""
     assert BusinessTwinTableSelector._decode_dimensions("0000000000800000") == ["crh_station_id"]

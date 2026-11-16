@@ -72,13 +72,25 @@ def _fenced_json(payload: dict[str, Any]) -> str:
 
 
 def test_time_granularity_rules_text() -> None:
-    """The merged block keeps the exact contract the old per-scenario copies pinned."""
-    rules = time_granularity_rules()
+    """The merged helper keeps each pack's exact contract pinned once.
 
-    assert rules.startswith("\n\n## 时间粒度")
-    assert "`time` 必须出现在 SELECT 和 GROUP BY" in rules
-    assert "不得把结果压成单行" in rules
-    assert "任何要求移除 `time` 的意见都应判为无效" in rules
+    business_twin keeps the hard contract; traffic_insight (since br_release_1230)
+    only steers table choice and asks the model to keep `time` grouped.
+    """
+    strict = time_granularity_rules()
+
+    assert strict.startswith("\n\n## 时间粒度")
+    assert "`time` 必须出现在 SELECT 和 GROUP BY" in strict
+    assert "不得把结果压成单行" in strict
+    assert "任何要求移除 `time` 的意见都应判为无效" in strict
+
+    soft = time_granularity_rules(strict=False)
+
+    assert soft.startswith("\n\n## 时间粒度")
+    assert "显式时间粒度主要用于选表" in soft
+    assert "`time` 应出现在 SELECT 和 GROUP BY" in soft
+    assert "不宜把结果压成单行" in soft
+    assert "建议保留 SELECT 与 GROUP BY 中的 `time`" in soft
 
 
 def test_current_date_rule_relative_time_hint() -> None:
@@ -191,19 +203,25 @@ async def _traffic_insight_context(
     return await selector.select(question)
 
 
-async def test_traffic_insight_named_granularity_makes_time_mandatory(
+async def test_traffic_insight_named_granularity_prefers_time_in_output(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    """The selector already tells a named granularity apart; nodes need not re-read it."""
+    """The selector already tells a named granularity apart; nodes need not re-read it.
+
+    traffic_insight's contract is soft (since br_release_1230): a named
+    granularity mainly picks the table; `time` should reach SELECT and GROUP BY
+    only when the question groups by time.
+    """
     context = await _traffic_insight_context(
         monkeypatch, TI_NAMED_QUESTION, explicit_granularity=True
     )
 
     rules = context.extra_rules
     assert "\n\n## 时间粒度" in rules
-    assert "`time` 必须出现在 SELECT 和 GROUP BY" in rules
-    assert "不得把结果压成单行" in rules
-    assert "任何要求移除 `time` 的意见都应判为无效" in rules
+    assert "显式时间粒度主要用于选表" in rules
+    assert "`time` 应出现在 SELECT 和 GROUP BY" in rules
+    assert "不宜把结果压成单行" in rules
+    assert "建议保留 SELECT 与 GROUP BY 中的 `time`" in rules
     # traffic_insight gets the bare date rule: no relative-time parsing hint, by design.
     assert "现在为" in rules
     assert "请基于当前日期解析用户问题中的相对时间" not in rules
