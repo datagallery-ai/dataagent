@@ -16,7 +16,7 @@ def test_product_plugin_and_subagent_use_the_same_hook_declaration():
 
 def test_tool_declaration_keeps_native_arguments_and_defaults_to_all_agents():
     """Visibility does not introduce a second tool argument schema or change default exposure."""
-    assert set(ToolSpec.model_fields) == {"entrypoint", "scope"}
+    assert set(ToolSpec.model_fields) == {"entrypoint", "scope", "enabled_when"}
     plugin = PluginSpec.model_validate(
         {
             "id": "example",
@@ -25,13 +25,20 @@ def test_tool_declaration_keeps_native_arguments_and_defaults_to_all_agents():
     )
     assert isinstance(plugin.tools.get("count"), ToolSpec)
     assert plugin.model_dump().get("tools") == {
-        "count": {"entrypoint": "tools.py:count", "scope": "all"}
+        "count": {"entrypoint": "tools.py:count", "scope": "all", "enabled_when": None}
     }
+    conditional = ToolSpec.model_validate(
+        {"entrypoint": "tools.py:count", "enabled_when": "hitl.enabled"}
+    )
+    assert conditional.scope == "all"
+    assert conditional.enabled_when == "hitl.enabled"
     for invalid in (
         {},
         {"entrypoint": ""},
         {"entrypoint": "tools.py:count", "parameters": {}},
         {"entrypoint": "tools.py:count", "scope": "unknown"},
+        {"entrypoint": "tools.py:count", "enabled_when": ""},
+        {"entrypoint": "tools.py:count", "enabled_when": True},
     ):
         with pytest.raises(ValidationError):
             ToolSpec.model_validate(invalid)

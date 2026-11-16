@@ -165,7 +165,13 @@ class SessionTurn:
         checkpoint_id = configurable.get("checkpoint_id")
         if complete:
             if latest.next:
-                raise RuntimeError("Agent stopped with unfinished work or an unsupported interrupt")
+                from serve.human_feedback import pending_feedback
+
+                if not pending_feedback(latest):
+                    raise RuntimeError("Agent stopped with unfinished work or an unsupported interrupt")
+                self.status = "waiting_for_input"
+                await self.sessions.finish(self.user_id, self.thread_id, self.status, checkpoint_id)
+                return latest
             await self.complete(latest.config["configurable"]["checkpoint_id"])
             return latest
         if checkpoint_id and (latest.values or {}).get("messages"):

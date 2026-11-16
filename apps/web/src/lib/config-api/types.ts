@@ -524,7 +524,7 @@ export type NativeSessionDetail = {
   title: string;
   createdAt: string;
   updatedAt: string;
-  status: "running" | "complete" | "error" | "interrupted";
+  status: "running" | "complete" | "error" | "interrupted" | "waiting_for_input";
   hasCheckpoint: boolean;
   messages: Array<{ id?: string; role?: string; content?: unknown }>;
   notice: string | null;

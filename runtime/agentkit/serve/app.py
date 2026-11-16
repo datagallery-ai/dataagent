@@ -28,6 +28,7 @@ from dataagent import Runtime, SemanticServiceClient, load_mcp_tools, safe_error
 from dataagent.host import ERROR_CODES
 from serve.agents import SessionAgents
 from serve.envelopes import register_error_handlers
+from serve.human_feedback import pending_feedback, question_messages, resume_input
 from serve.outputs import list_outputs, preview_output
 from serve.product import ConversationReadyGuard, register_not_found, register_product_routes
 from serve.sessions import (
@@ -81,21 +82,24 @@ class QueryInput(RunAgentInput):
             for value in (self.thread_id, self.run_id)
         ):
             raise ValueError("threadId and runId must be safe opaque IDs of at most 128 characters")
-        if len(self.messages) != 1 or self.messages[0].role != "user":
+        if self.resume:
+            if self.messages:
+                raise ValueError("Send either interrupt replies or one new user message")
+        elif len(self.messages) != 1 or self.messages[0].role != "user":
             raise ValueError(
                 "Send exactly one new user message; the server owns conversation history"
             )
-        message = self.messages[0]
-        if not isinstance(message.content, str) or not message.content.strip():
+        message = self.messages[0] if self.messages else None
+        if message is not None and (not isinstance(message.content, str) or not message.content.strip()):
             raise ValueError("A nonempty text message is required")
-        if getattr(message, "subagent_run_id", None) is not None:
+        if message is not None and getattr(message, "subagent_run_id", None) is not None:
             raise ValueError("Subagent messages are not accepted as user input")
         if self.state not in (None, {}) or self.tools or self.context or self.forwarded_props:
             raise ValueError(
                 "Client state, tools, context and forwardedProps injection is unsupported"
             )
-        if self.resume or self.parent_run_id:
-            raise ValueError("Interrupt resume, edits and run replay are unsupported")
+        if self.parent_run_id:
+            raise ValueError("Run replay is unsupported")
         return self
 
 
@@ -311,8 +315,11 @@ async def load_session_checkpoint(app, user_id: str, thread_id: str):
     })
     messages = [
         message.model_dump(by_alias=True)
-        for message in langchain_messages_to_agui(state.values.get("messages", []))
+        for message in langchain_messages_to_agui([
+            *state.values.get("messages", []), *question_messages(state),
+        ])
     ]
+    row = {**row, "pending_interrupts": pending_feedback(state)}
     return row, messages
 
 
@@ -322,8 +329,10 @@ def session_detail(row: dict, messages: list) -> dict:
     return {
         **public_session(row),
         "messages": messages,
+        "pendingInterrupts": row.get("pending_interrupts", []),
         "notice": (
-            None if not incomplete
+            "等待人工回复，请在输入框回答上述问题。" if row["status"] == "waiting_for_input"
+            else None if not incomplete
             else "Previous run did not complete. Restored the saved checkpoint."
             if row["last_checkpoint_id"]
             else "No checkpoint was saved. Continue this conversation."
@@ -465,6 +474,7 @@ def register_conversation_routes(
         turn = SessionTurn(sessions, user_id, thread_id)
         try:
             row = await sessions.get(user_id, thread_id)
+            state = None
             if row:
                 if row["last_run_id"] == body.run_id:
                     raise HTTPException(409, "Run replay is not supported; use a new runId")
@@ -473,10 +483,11 @@ def register_conversation_routes(
                 config["configurable"] = continuation_configurable(thread_id, row)
                 state = await graph.aget_state({"configurable": config["configurable"]})
                 if any(
-                    message.id == body.messages[0].id
+                    body.messages and message.id == body.messages[0].id
                     for message in state.values.get("messages", [])
                 ):
                     raise HTTPException(409, "Message replay or editing is not supported")
+            run_body = resume_input(body, state)
             await turn.start(body.run_id, _turn_text(body.messages))
         except HTTPException:
             busy.discard((user_id, thread_id))
@@ -509,7 +520,7 @@ def register_conversation_routes(
             try:
                 yield encoder.encode(RunStartedEvent(thread_id=thread_id, run_id=body.run_id))
                 async with asyncio.timeout(run_runtime.timeout_seconds):
-                    upstream = adapter.run(body)
+                    upstream = adapter.run(run_body)
                     terminal = None
                     async for event in _iter_until_cancelled(upstream, handle):
                         if event is None:
@@ -560,14 +571,19 @@ def register_conversation_routes(
                     latest = await turn.settle(graph, complete=True)
                     yield encoder.encode(
                         MessagesSnapshotEvent(
-                            messages=langchain_messages_to_agui(latest.values.get("messages", [])),
+                            messages=langchain_messages_to_agui([
+                                *latest.values.get("messages", []), *question_messages(latest),
+                            ]),
                         )
                     )
                     yield encoder.encode(
                         RunFinishedEvent(
                             thread_id=thread_id,
                             run_id=body.run_id,
-                            metadata={"durationMs": round((time.monotonic() - started) * 1000)},
+                            outcome=getattr(terminal, "outcome", None),
+                            metadata={"durationMs": round((time.monotonic() - started) * 1000),
+                                      "status": turn.status,
+                                      "pendingInterrupts": pending_feedback(latest)},
                         )
                     )
             except _RunCancelled:

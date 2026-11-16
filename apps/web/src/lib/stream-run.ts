@@ -4,6 +4,13 @@ export const STREAM_RUNTIME_PATH = "/dataagent/stream";
 
 /** Body accepted by `POST /dataagent/stream`: one new user text, no client-owned fields. */
 export function toStreamRunInput(input: RunAgentInput): RunAgentInput {
+  if (input.resume?.length) {
+    return {
+      threadId: input.threadId, runId: input.runId, messages: [],
+      resume: input.resume.map(({ interruptId, status, payload }) => ({ interruptId, status, payload })),
+      tools: [], context: [], state: {}, forwardedProps: {},
+    };
+  }
   const user = [...(input.messages ?? [])].reverse().find((message) => message.role === "user");
   if (!user || typeof user.id !== "string" || user.id.length === 0) {
     throw new Error("A new user message is required");
