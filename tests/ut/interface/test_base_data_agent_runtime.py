@@ -51,17 +51,17 @@ def test_normalize_structured_error_uses_public_field_allowlist() -> None:
     }
 
 
-def test_normalize_error_sanitizes_surrogate_in_agent_message() -> None:
-    """An agent message embedding raw LLM output with a lone surrogate must render safely."""
+def test_normalize_error_drops_raw_detail_and_keeps_fixed_message() -> None:
+    """The fixed public message must survive while raw model output stays in detail (dropped)."""
     service = DataAgentService()
     error = {
         "success": False,
         "code": "NL2SQL-LLM-002",
-        "message": "Model output format error: JSON parsing failed after 3 attempts: "
-        "No JSON block found in model output, raw content: \ud85d",
+        "message": "Model output format error: JSON parsing failed after 3 attempts",
         "http_status": 502,
         "component": "llm",
         "retryable": True,
+        "detail": "No JSON block found in model output, raw content: \ud85d",
     }
 
     result = service._normalize_error_payload(error)
@@ -70,8 +70,7 @@ def test_normalize_error_sanitizes_surrogate_in_agent_message() -> None:
         "result": {
             "success": False,
             "code": "NL2SQL-LLM-002",
-            "message": "Model output format error: JSON parsing failed after 3 attempts: "
-            "No JSON block found in model output, raw content: �",
+            "message": "Model output format error: JSON parsing failed after 3 attempts",
             "http_status": 502,
             "component": "llm",
             "retryable": True,

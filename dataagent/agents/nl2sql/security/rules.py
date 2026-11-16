@@ -295,14 +295,14 @@ def _check_grouped_projections(statement: exp.Expression) -> list[SecurityViolat
                 seen.add(name)
                 missing.append(column.name)
         if missing:
-            rendered = ", ".join(f"`{name}`" for name in missing)
             violations.append(
                 SecurityViolation(
                     "SYNTAX-001",
                     (
-                        f"Selected column {rendered} is not in GROUP BY and is not aggregated, "
-                        "so the query cannot execute. Wrap a metric in SUM(), or add a dimension to GROUP BY."
+                        "A selected column is not in GROUP BY and is not aggregated, so the query cannot "
+                        "execute. Wrap a metric in SUM(), or add a dimension to GROUP BY."
                     ),
+                    detail=", ".join(f"`{name}`" for name in missing),
                 )
             )
     return violations
@@ -374,12 +374,13 @@ def check_semantic_schema(
             has_base_relation = True
             matches = _matching_schema_tables(source, allowed_tables)
             if len(matches) != 1:
-                message = (
-                    "Source table cannot be resolved uniquely in the provided semantic schema: "
-                    f"{source.sql(dialect=dialect)}. Use exactly one modeled table and check its "
-                    "table qualifier or alias."
-                )
-                return [SecurityViolation("SCHEMA-001", message)]
+                return [
+                    SecurityViolation(
+                        "SCHEMA-001",
+                        "Source table cannot be resolved uniquely in the provided semantic schema.",
+                        detail=source.sql(dialect=dialect),
+                    )
+                ]
     if not has_base_relation:
         message = (
             "Query does not reference a table from the provided semantic schema. Regenerate it with at least one "
@@ -391,17 +392,27 @@ def check_semantic_schema(
     try:
         qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
     except ValueError as exc:
-        detail = str(exc)
-        if _unresolved_column_name(detail) in _COLUMN_CONTEXT_FUNCTION_NAMES:
+        qualify_detail = str(exc)
+        if _unresolved_column_name(qualify_detail) in _COLUMN_CONTEXT_FUNCTION_NAMES:
             return []
-        ambiguous = _ambiguous_column_context(statement, detail, normalized_schema, allowed_tables)
+        ambiguous = _ambiguous_column_context(statement, qualify_detail, normalized_schema, allowed_tables)
         if ambiguous is not None:
             column_name, candidates, full_outer_join = ambiguous
-            message = _ambiguous_column_resolution_message(column_name, candidates, full_outer_join)
-            return [SecurityViolation("SCHEMA-004", message)]
-        hint = _wrong_cte_qualifier_hint(statement, detail)
-        message = _schema_column_resolution_message(detail, hint)
-        return [SecurityViolation("SCHEMA-002", message)]
+            return [
+                SecurityViolation(
+                    "SCHEMA-004",
+                    _AMBIGUOUS_COLUMN_MESSAGE,
+                    detail=_ambiguous_column_resolution_detail(column_name, candidates, full_outer_join),
+                )
+            ]
+        hint = _wrong_cte_qualifier_hint(statement, qualify_detail)
+        return [
+            SecurityViolation(
+                "SCHEMA-002",
+                _SCHEMA_COLUMN_RESOLUTION_MESSAGE,
+                detail=_schema_column_resolution_detail(qualify_detail, hint),
+            )
+        ]
     for scope in traverse_scope(qualified):
         for column in scope.columns:
             source = scope.sources.get(column.table)
@@ -412,24 +423,30 @@ def check_semantic_schema(
                     for column_name in normalized_schema.get(table_name, {}).get("columns", {})
                 }
                 if _normalize_identifier(column.name) not in allowed_columns:
-                    message = _schema_column_resolution_message(column.sql())
-                    return [SecurityViolation("SCHEMA-002", message)]
+                    return [SecurityViolation("SCHEMA-002", _SCHEMA_COLUMN_RESOLUTION_MESSAGE, detail=column.sql())]
     return []
 
 
-def _schema_column_resolution_message(detail: str, hint: str = "") -> str:
-    message = (
-        "Column is not exposed by a source available in this query scope: "
-        f"{detail.rstrip('.')}. Verify that the column exists in the referenced physical table's semantic schema or "
-        "is included in the referenced CTE/subquery SELECT list. Then use the actual exposed column name with the "
-        "correct table or CTE alias."
-    )
-    if hint:
-        return f"{message} {hint}"
-    return message
+_SCHEMA_COLUMN_RESOLUTION_MESSAGE = (
+    "Column is not exposed by a source available in this query scope. Verify that the column exists in the "
+    "referenced physical table's semantic schema or is included in the referenced CTE/subquery SELECT list. "
+    "Then use the actual exposed column name with the correct table or CTE alias."
+)
+
+_AMBIGUOUS_COLUMN_MESSAGE = (
+    "Column reference is ambiguous in the current query scope because multiple sources expose it. "
+    "This is not a missing semantic-schema column. Qualify every unqualified reference with the "
+    "intended source alias."
+)
 
 
-def _ambiguous_column_resolution_message(
+def _schema_column_resolution_detail(detail: str, hint: str = "") -> str:
+    """Return the server-side diagnostic combining the qualify error and the CTE hint."""
+    parts = [part for part in (detail.rstrip("."), hint.strip()) if part]
+    return " ".join(parts)
+
+
+def _ambiguous_column_resolution_detail(
     column_name: str,
     candidates: list[str],
     full_outer_join: bool,
@@ -437,8 +454,8 @@ def _ambiguous_column_resolution_message(
     candidate_text = ", ".join(candidates)
     message = (
         f"Column reference '{column_name}' is ambiguous in the current query scope because multiple sources expose "
-        f"it: {candidate_text}. This is not a missing semantic-schema column. Qualify every unqualified reference "
-        f"with the intended source alias, for example '{candidates[0]}'."
+        f"it: {candidate_text}. Qualify every unqualified reference with the intended source alias, "
+        f"for example '{candidates[0]}'."
     )
     if not full_outer_join or len(candidates) != 2:
         return message

@@ -18,11 +18,25 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
+from dataagent.agents.nl2sql.errors import truncate_detail
 from dataagent.agents.nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
+from dataagent.agents.nl2sql.security.models import SecurityViolation
 from dataagent.agents.nl2sql.utils.nl2sql_utils import flatten_schema, metadata_parser
 from dataagent.agents.nl2sql.utils.sql_service import build_sql_service
 from dataagent.agents.nl2sql.workflow.state import NL2SQLState, Result
 from dataagent.utils.log import logger
+
+
+def _violation_issue(violation: SecurityViolation) -> str:
+    """Render one violation as a Reflector repair hint.
+
+    The public message stays fixed; the raw detail is appended only for the
+    server-side repair loop and logs, never for the API response.
+    """
+    detail = truncate_detail(violation.detail) or ""
+    if detail:
+        return f"{violation.rule_id}: {violation.message} ({detail})"
+    return f"{violation.rule_id}: {violation.message}"
 
 
 class ValidatorNode(BaseNL2SQLNode):
@@ -93,7 +107,7 @@ class ValidatorNode(BaseNL2SQLNode):
                     gr.sql = security_result.normalized_sql
                 gr.security_checked = True
                 gr.security_violations = [violation.to_dict() for violation in security_result.violations]
-                issues = [f"{violation.rule_id}: {violation.message}" for violation in security_result.violations]
+                issues = [_violation_issue(violation) for violation in security_result.violations]
             else:
                 gr.security_checked = False
                 gr.security_violations = []

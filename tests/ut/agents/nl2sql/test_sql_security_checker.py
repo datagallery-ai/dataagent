@@ -392,8 +392,9 @@ def test_check_sql_rejects_table_missing_from_semantic_schema() -> None:
 
     assert result.blocked is True
     assert [violation.rule_id for violation in result.violations] == ["SCHEMA-001"]
-    assert "provided semantic schema" in result.violations[0].message
-    assert "table qualifier or alias" in result.violations[0].message
+    assert result.violations[0].message == ("Source table cannot be resolved uniquely in the provided semantic schema.")
+    assert "pg_authid" in result.violations[0].detail
+    assert "pg_authid" not in result.violations[0].message
 
 
 def test_check_sql_checks_base_table_shadowed_by_cte_name() -> None:
@@ -609,7 +610,8 @@ def test_check_sql_rejects_selected_column_missing_from_group_by() -> None:
 
     assert bare.blocked is True
     assert bare.violations[0].rule_id == "SYNTAX-001"
-    assert "crh_unsub_users" in bare.violations[0].message
+    assert "crh_unsub_users" in bare.violations[0].detail
+    assert "crh_unsub_users" not in bare.violations[0].message
     assert summed.blocked is False
 
 

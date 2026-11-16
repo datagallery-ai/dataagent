@@ -20,10 +20,15 @@ from typing import Optional
 
 @dataclass(frozen=True)
 class SecurityViolation:
-    """Describe one blocking SQL security rule violation."""
+    """Describe one blocking SQL security rule violation.
+
+    ``message`` is the public fixed text; ``detail`` carries server-side
+    diagnostics (raw SQL fragments, identifiers) and must never reach the API.
+    """
 
     rule_id: str
     message: str
+    detail: str = ""
 
     def to_dict(self) -> dict[str, str]:
         """Return a serializable representation of the violation."""

@@ -19,9 +19,22 @@ __all__ = [
     "SQLSecurityValidationError",
     "SQLServiceError",
     "ThirdPartyServiceError",
+    "truncate_detail",
 ]
 
 from typing import Any
+
+_DETAIL_MAX_LENGTH = 2000
+
+
+def truncate_detail(detail: str | None) -> str | None:
+    """Cap server-side diagnostic detail so raw payloads cannot bloat errors or logs."""
+    if detail is None:
+        return None
+    if len(detail) > _DETAIL_MAX_LENGTH:
+        return f"{detail[:_DETAIL_MAX_LENGTH]}..."
+    return detail
+
 
 _SQL_SECURITY_PUBLIC_CODES = {
     "SQL-001": "NL2SQL-SEC-002",
@@ -72,7 +85,7 @@ class NL2SQLError(Exception):
     def __init__(self, message: str | None = None, *, detail: str | None = None):
         """Initialize NL2SQL error."""
         self.message = message or self.message
-        self.detail = detail
+        self.detail = truncate_detail(detail)
         super().__init__(self.message)
 
     def to_dict(self) -> dict[str, Any]:
