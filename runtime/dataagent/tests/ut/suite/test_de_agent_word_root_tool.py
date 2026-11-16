@@ -104,6 +104,21 @@ async def test_names_all_match_dedup_roots_and_omit_default_k(validator, context
 
 
 @pytest.mark.asyncio
+async def test_abbreviation_match_type_is_accepted(validator, context):
+    validator.side_effect = lambda *, items, _tool_context, **opts: _match_items(
+        items, found_overrides={"app": {"found": True, "match_type": "abbreviation"}}
+    )
+
+    result = await validate_identifier_word_roots(["app_user"], _tool_context=context)
+
+    assert result == {
+        "pass": True,
+        "names": [{"name": "app_user", "pass": True, "failed_roots": []}],
+        "error_msg": "",
+    }
+
+
+@pytest.mark.asyncio
 async def test_names_report_per_name_failures_with_in_name_index(validator, context):
     miss = {
         "found": False, "match_type": None,
