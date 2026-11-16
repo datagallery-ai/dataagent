@@ -38,7 +38,7 @@ def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityChec
     try:
         statements = sqlglot.parse(sql, read=dialect, error_level=ErrorLevel.RAISE)
     except Exception as exc:
-        return SecurityCheckResult([SecurityViolation("SQL-001", f"SQL parse failed: {exc}")])
+        return SecurityCheckResult([SecurityViolation("SQL-001", "SQL parse failed.", detail=str(exc))])
     executable = [statement for statement in statements if statement is not None]
     if len(executable) != 1:
         return SecurityCheckResult([SecurityViolation("SQL-001", "Exactly one SQL statement is allowed.")])
@@ -54,7 +54,7 @@ def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityChec
             try:
                 statement = cast(Any, sqlglot.parse_one(normalized_sql, read=dialect, error_level=ErrorLevel.RAISE))
             except Exception as exc:
-                return SecurityCheckResult([SecurityViolation("SQL-001", f"SQL normalization failed: {exc}")])
+                return SecurityCheckResult([SecurityViolation("SQL-001", "SQL normalization failed.", detail=str(exc))])
             sql = normalized_sql
         violations = _check_read_only_structure(statement)
         if violations:

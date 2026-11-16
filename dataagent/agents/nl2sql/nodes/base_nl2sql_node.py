@@ -103,13 +103,18 @@ class BaseNL2SQLNode(BaseNode):
     async def execute_with_llm_json(self, context: dict[str, str], action: str = "") -> Any:
         """Execute the LLM with the given context and action, returning parsed JSON output."""
         for attempt in range(3):
+            content = await self.execute_with_llm(context, action)
+            block = ""
             try:
-                return json.loads(json_parser(await self.execute_with_llm(context, action)))
+                block = json_parser(content)
+                return json.loads(block)
             except (LLMOutputParseError, json.JSONDecodeError) as exc:
                 if attempt == 2:
-                    detail = exc.detail if isinstance(exc, LLMOutputParseError) and exc.detail else str(exc)
+                    # Keep the raw output server-side: a missing block keeps the whole
+                    # model output, a malformed one keeps the extracted JSON block.
+                    detail = block if isinstance(exc, json.JSONDecodeError) else exc.detail or content
                     raise LLMOutputParseError(
-                        message=f"Model output format error: JSON parsing failed after 3 attempts: {detail}",
+                        message="Model output format error: JSON parsing failed after 3 attempts",
                         detail=detail,
                     ) from exc
 

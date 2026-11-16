@@ -17,7 +17,15 @@ import pytest
 
 from dataagent.agents.nl2sql.errors import SQLSecurityValidationError
 from dataagent.agents.nl2sql.nodes.reflector import ReflectorNode
+from dataagent.agents.nl2sql.nodes.validator import ValidatorNode
 from dataagent.agents.nl2sql.workflow.state import Result, get_default_state
+from dataagent.config.config_manager import ConfigManager
+
+
+def _config_manager() -> ConfigManager:
+    manager = ConfigManager()
+    manager.settings = {"DATABASE": {"dialect": "postgres", "engine": "sqlite", "config": {}}}
+    return manager
 
 
 def _candidate(
@@ -186,6 +194,33 @@ async def test_reflector_receives_actionable_security_issue_without_rewriting_it
     assert cases[0].get("issues", []) == [issue]
     assert context.get("review_history") == ""
     assert fixes == [{"sql": "SELECT orders.id FROM orders", "unresolved": []}]
+
+
+@pytest.mark.asyncio
+async def test_reflector_repair_prompt_retains_validator_detail() -> None:
+    """The repair prompt must keep the raw detail the public message no longer carries."""
+    validator = ValidatorNode(config_manager=_config_manager(), db_explain=False)
+    candidates = [Result(id=0, sql="SELECT id FROM secret_leak_table WHERE id = 1")]
+
+    syntax_result = await validator._validate_syntax(candidates, {})
+
+    issue = syntax_result[0]["issues"][0]
+    assert issue.startswith("SCHEMA-001: Source table cannot be resolved uniquely in the provided semantic schema.")
+    assert "secret_leak_table" in issue
+    # The public violations stay free of detail; only the repair issue carries it.
+    assert set(candidates[0].security_violations[0]) == {"rule_id", "message"}
+
+    node = ReflectorNode(threshold=0.9)
+    node.execute_with_llm_json = AsyncMock(return_value=[{"id": 0, "sql": "SELECT id FROM orders WHERE id = 1"}])
+    candidates[0].score = 0.0
+    candidates[0].prompt = "schema prompt"
+    candidates[0].issues = [issue]
+
+    await node._fix_sql(candidates)
+
+    context = node.execute_with_llm_json.await_args.args[0]
+    cases = json.loads(context.get("cases", "[]"))
+    assert cases[0].get("issues", []) == [issue]
 
 
 _PRIOR_ROUND = [{"round": 1, "id": 0, "issues": [], "changed": False, "unresolved": ["cannot be fixed"]}]

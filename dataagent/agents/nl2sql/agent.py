@@ -206,6 +206,11 @@ class NL2SQLAgent(BaseAgent):
                     completed=completed,
                 )
         except NL2SQLError as exc:
+            # Public messages are fixed text; the sanitized detail only lands in server logs.
+            logger.warning(
+                "NL2SQL chat error: {}",
+                {"code": exc.code, "message": exc.message, "detail": exc.detail},
+            )
             return {"error": exc.to_dict()}
         except Exception as exc:
             logger.exception(
@@ -294,6 +299,11 @@ class NL2SQLAgent(BaseAgent):
                 ):
                     yield item
             except NL2SQLError as exc:
+                # Public messages are fixed text; the sanitized detail only lands in server logs.
+                logger.warning(
+                    "NL2SQL stream error: {}",
+                    {"code": exc.code, "message": exc.message, "detail": exc.detail},
+                )
                 yield {"error": exc.to_dict()}
             except Exception as exc:
                 logger.exception(
