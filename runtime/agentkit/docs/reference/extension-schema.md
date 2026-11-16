@@ -30,6 +30,10 @@
 入口路径相对插件根，解析后必须仍在根内。`file.py:symbol` 的 `symbol` 必须是标识符。
 工具 `scope` 默认 `all`；`subagents` 只保留在子代理可引用的注册表中，不加入根 Agent 工具列表。
 
+工具可声明 `enabled_when: "hitl.enabled"`，按该插件配置中的路径决定是否装配；仅精确值 `true` 启用。
+生命周期 hook 函数可通过 `handler.state_schema` 声明原生状态 schema，编译器传给 LangChain
+middleware 装饰器，使工具返回的额外状态能正常 checkpoint。未声明的 hook 行为不变。
+
 ## Hook
 
 分组形式的键只能是：

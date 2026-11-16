@@ -936,3 +936,112 @@ _RENDERERS: dict[str, Callable[[dict[str, Any]], str]] = {
     "pipeline": _render_pipeline,
     "sequence": _render_sequence,
 }
+
+
+def collect_ir_hitl_questions(
+    field_results: list[dict] | None,
+    *,
+    blocking_fields: frozenset[str] | set[str] | list[str] | None = None,
+    max_items: int = 1,
+) -> list[dict[str, Any]]:
+    """Collect blocking IR clarifications for HITL (critical unresolved + question).
+
+    Non-whitelist fields may still carry unresolved/question for diagnostics, but they
+    do not enter the HITL queue and must not block nl2sql consumers.
+
+    By default only the highest-priority unresolved field is queued (max_items=1) so
+    HITL / auto-resolver answers one口径 at a time instead of a packed multi-ask.
+    """
+    allowed = (
+        IR_HITL_BLOCKING_FIELDS
+        if blocking_fields is None
+        else frozenset(str(item).strip() for item in blocking_fields if str(item).strip())
+    )
+    items: list[dict[str, Any]] = []
+    for output in field_results or []:
+        if not isinstance(output, dict):
+            continue
+        field_id = str(output.get("field_id") or "").strip()
+        if field_id not in allowed:
+            continue
+        unresolved = _normalize_unresolved(output.get("unresolved"))
+        question = output.get("question")
+        if not unresolved:
+            continue
+        if not isinstance(question, str) or not question.strip():
+            continue
+        items.append({
+            "field_id": field_id,
+            "title": FIELD_TITLES.get(field_id, field_id or "未命名字段"),
+            "question": question.strip(),
+            "unresolved": unresolved,
+        })
+    priority = {field_id: index for index, field_id in enumerate(IR_HITL_FIELD_PRIORITY)}
+    items.sort(key=lambda item: priority.get(str(item.get("field_id") or ""), 99))
+    if max_items is not None and max_items > 0:
+        items = items[:max_items]
+    return items
+
+
+def format_ir_hitl_pending_action(questions: list[dict[str, Any]], *, max_chars: int = 2000) -> str:
+    """Build request_human_feedback pending_action text from IR clarification queue.
+
+    Prefix keeps IR markers for hitl_auto_resolver routing; body asks for a concrete
+    choice (and surfaces options parsed from the fill question when present).
+    """
+    if not questions:
+        return ""
+    lines = [
+        f"{IR_HITL_PENDING_MARKER}（请给出倾向方案，并附 1-2 个具体候选供确认）：",
+    ]
+    for item in questions:
+        title = item.get("title") or item.get("field_id") or "未命名字段"
+        question = str(item.get("question") or "").strip()
+        unresolved = item.get("unresolved") or []
+        lines.append(f"【{title}】{question}")
+        if isinstance(unresolved, list) and unresolved:
+            notes = [str(note).strip() for note in unresolved if str(note).strip()]
+            if notes:
+                lines.append("未决点：" + "；".join(notes[:3]))
+        choices = _extract_choice_hints(question)
+        if choices:
+            lines.append("候选：" + " / ".join(choices))
+        else:
+            lines.append(
+                "请在答复中选定一个具体方案（表名/字段名/时间窗口等具体值），"
+                "不要只回答“请你自主判断”。"
+            )
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        return text[: max_chars - 1] + "…"
+    return text
+
+IR_HITL_BLOCKING_FIELDS = frozenset({
+    "identity",
+    "sources",
+    "time_context",
+    "output_features",
+})
+
+IR_HITL_FIELD_PRIORITY = (
+    "identity",
+    "sources",
+    "time_context",
+    "output_features",
+)
+
+IR_HITL_PENDING_MARKER = "DataTaskIR 未确认口径"
+
+
+def _extract_choice_hints(question: str) -> list[str]:
+    """Best-effort parse of A/B choices from fill questions (还是/或/)."""
+    text = (question or "").strip()
+    if not text:
+        return []
+    for sep in (" 还是 ", "还是", " 或 ", "或者", " / ", "/"):
+        if sep in text:
+            parts = [part.strip(" ，,。.?？:：;；") for part in text.split(sep)]
+            hints = [part for part in parts if 1 < len(part) <= 80]
+            if len(hints) >= 2:
+                return hints[:3]
+    return []

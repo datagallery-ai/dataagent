@@ -66,7 +66,7 @@ def compile_extensions(
         compiled_skill_sources.extend(
             compile_skill_sources(root, spec.skills, skill_names, label=spec.id)
         )
-        collect_tools(root, spec, loader, tool_registry)
+        collect_tools(root, spec, loader, tool_registry, params=(plugin_params or {}).get(spec.id))
         child_only_tools.update(
             f"{spec.id}__{name}" for name, entry in spec.tools.items() if entry.scope == "subagents"
         )

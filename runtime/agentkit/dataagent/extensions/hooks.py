@@ -176,7 +176,9 @@ def compile_hook(spec: HookSpec, handler: Callable, *, name: str) -> AgentMiddle
         def invoke(state, runtime):
             return _state_result(handler(state, runtime, params=deepcopy(params)))
 
-    return _STATE_DECORATORS[spec.event](invoke, name=name)
+    return _STATE_DECORATORS[spec.event](
+        invoke, name=name, state_schema=getattr(handler, "state_schema", None)
+    )
 
 
 def compile_hooks(
