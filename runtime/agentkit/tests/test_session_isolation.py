@@ -248,9 +248,9 @@ def test_resume_keeps_the_saved_workspace_binding(tmp_path):
     assert resumed.paths.workspaces == runtime.paths.workspaces
     with pytest.raises(ValueError, match="different workspace list"):
         runtime_for(tmp_path, other, session_id="sess-a")
-    with pytest.raises(ValueError, match="not in profile"):
+    with pytest.raises(ValueError, match="does not belong to user"):
         runtime_for(tmp_path, source, session_id="missing")
-    with pytest.raises(ValueError, match="not in profile"):
+    with pytest.raises(ValueError, match="does not belong to user"):
         runtime_for(tmp_path, source, user_id="beta", session_id="sess-a")
 
 

@@ -6,7 +6,7 @@
 
 `compile_extensions` 按 `plugins.enabled` 的顺序处理插件：
 
-1. 读取 `system_prompt` 并拼接
+1. 读取 `system_prompt_file` 并拼接
 2. 编译插件 Skill，再编译 Home 的独立 Skill
 3. 加载工具，名字变成 `<plugin-id>__<local-id>`
 4. 收集插件 Hook
@@ -34,9 +34,9 @@ REST 的缓存键是线程 ID 加输入绑定。指纹未变且键存在时直�
 2. 若 MCP 映射变了，重新加载工具
 3. `create_agent`，带上新的 `extension_revision`
 4. 若加载期间指纹又变，放弃这次结果并报错
-5. 成功后清空最多 32 条缓存，换成新 Runtime
+5. 成功后清空最多 32 条缓存，换成新 PreparedRuntime
 
-进行中的流不更换图。失败的刷新不替换 Runtime。
+进行中的流不更换图。失败的刷新不替换 PreparedRuntime。
 
 Skill 中间件把修订号放进私有状态。修订变化才重新扫描元数据，避免每轮重读全部 Skill 正文。
 
@@ -44,4 +44,4 @@ SDK 没有这层缓存。其他宿主可以用 `dataagent.host` 的 `extension_r
 
 ## 仍然要重启的变更
 
-模型连接、限额、`dataagent.entry`、`server`、`semantic`、Home 和输入目录留在原来的 Runtime 上。`refresh_extensions` 不更新它们。改入口要重新 `prepare_runtime`。
+模型连接、限额、`dataagent.entry`、`server`、`semantic`、Home 和输入目录留在原来的 PreparedRuntime 上。`refresh_extensions` 不更新它们。改入口要重新 `prepare_runtime`。

@@ -17,7 +17,7 @@ SDK 与 REST 共用数据库文件，但不读写 REST 的 `sessions` 索引表�
 
 主键是 `(user_id, thread_id)`。`thread_id` 全局唯一。字段有标题、创建和更新时间、状态、最后 Checkpoint、最后 `run_id`。
 
-`start` 把状态设为 `running`。正常结束写成 `complete` 并保存 Checkpoint id。错误写成 `error`，不推进 Checkpoint id。连接断开写成 `interrupted`。服务再次启动时，残留的 `running` 改成 `interrupted`。
+`start` 把状态设为 `running`。正常结束写成 `completed` 并保存 Checkpoint id。错误写成 `error`，不推进 Checkpoint id。连接断开写成 `interrupted`。服务再次启动时，残留的 `running` 改成 `interrupted`。
 
 标题是用户文本压缩空白后的前 100 个字符。
 

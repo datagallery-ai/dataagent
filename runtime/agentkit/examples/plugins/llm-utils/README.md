@@ -45,10 +45,10 @@ result = await agent.ainvoke(
 No per-call `context` argument is needed, including after rebuilding a graph for
 checkpoint restoration.
 `agent.graph` is the original compiled graph for checkpoint and schema APIs.
-Callers that manage their own LangGraph graph can use `ModelContext(runtime)`,
+Callers that manage their own LangGraph graph can use `AgentContext(runtime)`,
 `dataagent.lowlevel.build_graph(runtime, context=context)` and native
 `graph.ainvoke(..., context=context)` instead. No `.bind()` is used.
-`get_model()` selects `dataagent.model.default`; `get_model("fast")` selects
+`get_model()` selects `dataagent.model`; `get_model("fast")` selects
 `models.fast`. An unknown alias is an error, never a fallback. Clients are native,
 unbound chat models, reused within this graph's context. Additional model aliases
 are created lazily; separate graph builds have separate caches. There is no

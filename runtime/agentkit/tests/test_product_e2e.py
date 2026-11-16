@@ -63,7 +63,7 @@ class Terminal:
     def wait_for_round(self, workspace, previous_run_id=None):
         def finished():
             row = saved_session(workspace)
-            return row is not None and row["last_run_id"] != previous_run_id and row["status"] == "complete"
+            return row is not None and row["last_run_id"] != previous_run_id and row["status"] == "completed"
 
         # Ink redraws historical completion labels on resize and while composing.
         # A label alone must not terminate the still-running next round.
@@ -163,9 +163,9 @@ def test_terminal_wait_ignores_previous_round_completion(monkeypatch):
     from types import SimpleNamespace
 
     rows = iter([
-        {"last_run_id": "previous", "status": "complete"},
+        {"last_run_id": "previous", "status": "completed"},
         {"last_run_id": "current", "status": "running"},
-        {"last_run_id": "current", "status": "complete"},
+        {"last_run_id": "current", "status": "completed"},
     ])
     observed = []
 
@@ -310,7 +310,12 @@ async def saved_messages(workspace, row):
         from conftest import ScriptedModel
         from langchain_core.messages import AIMessage
 
-        from dataagent.bootstrap import ExtensionLocations, Runtime, RuntimePaths, StartupReport
+        from dataagent.bootstrap import (
+            ExtensionLocations,
+            PreparedRuntime,
+            RuntimePaths,
+            StartupReport,
+        )
         from dataagent.bootstrap.paths import WorkspaceInput
         from dataagent.settings import Settings
 
@@ -319,7 +324,7 @@ async def saved_messages(workspace, row):
         }})
         paths = RuntimePaths.resolve(home, (WorkspaceInput("workspace-0", Path(workspace) / "inputs"),))
         builtin = tuple(sorted(child for child in paths.builtin_plugins.iterdir() if child.is_dir()))
-        runtime = Runtime(settings, paths,
+        runtime = PreparedRuntime(settings, paths,
                           StartupReport((), ()),
                           ExtensionLocations(plugin_roots=builtin))
         graph = build_graph(runtime, checkpointer=saver, model=ScriptedModel(responses=[AIMessage(content="unused")]))
@@ -346,7 +351,7 @@ def exercise_query_and_resume(tmp_path, values):
         terminal.submit("Use common__summarize_numbers to summarize 2, 4, 6. Reply briefly in English.")
         terminal.wait_for_round(tmp_path)
         first = saved_session(tmp_path)
-        assert first["status"] == "complete"
+        assert first["status"] == "completed"
         messages = asyncio.run(saved_messages(tmp_path, first))
         statistics = [json.loads(message.content) for message in messages
                       if isinstance(message, ToolMessage) and message.name == "common__summarize_numbers"]
@@ -361,7 +366,7 @@ def exercise_query_and_resume(tmp_path, values):
         )
         terminal.wait_for_round(tmp_path, first["last_run_id"])
         row = saved_session(tmp_path)
-        assert row["status"] == "complete"
+        assert row["status"] == "completed"
         audit = audit_path.read_text()
         assert audit.startswith(previous_audit)
         records = []
@@ -391,7 +396,7 @@ def exercise_query_and_resume(tmp_path, values):
         terminal.submit("Which numbers did I ask the specialist to summarize? Reply with the numbers only; no tools.")
         terminal.wait_for_round(tmp_path, row["last_run_id"])
         final = saved_session(tmp_path)
-        assert final["thread_id"] == row["thread_id"] and final["status"] == "complete"
+        assert final["thread_id"] == row["thread_id"] and final["status"] == "completed"
         messages = asyncio.run(saved_messages(tmp_path, final))
         assert sum(message.type == "human" for message in messages) == 3
         assert all(number in messages[-1].content for number in ("1", "2", "3"))

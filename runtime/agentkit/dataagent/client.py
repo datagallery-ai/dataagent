@@ -14,9 +14,9 @@ from langchain_core.tools import BaseTool
 from langgraph.graph.state import CompiledStateGraph
 
 from dataagent.agent import build_graph, check_agent_configuration
-from dataagent.bootstrap import Runtime
+from dataagent.bootstrap import PreparedRuntime
 from dataagent.bootstrap.paths import SessionPaths, WorkspaceInput
-from dataagent.models import ModelContext
+from dataagent.models import AgentContext
 from dataagent.semantic_client import SemanticServiceClient
 
 # Matches the REST session-handle cache; evicted graphs keep checkpoints in their checkpointer.
@@ -68,9 +68,9 @@ class _ContextAgent(LangGraphAgent):
 class Agent:
     """Shared SDK services with a fixed native graph/backend per session."""
 
-    context: ModelContext = field(repr=False)
+    context: AgentContext = field(repr=False)
     _graph_options: dict = field(default_factory=dict, repr=False)
-    _graphs: OrderedDict[str, tuple[CompiledStateGraph, ModelContext]] = field(
+    _graphs: OrderedDict[str, tuple[CompiledStateGraph, AgentContext]] = field(
         default_factory=OrderedDict, repr=False,
     )
     _owned_semantic_client: SemanticServiceClient | None = field(default=None, repr=False)
@@ -214,7 +214,7 @@ class Agent:
 
 
 def create_agent(
-    runtime: Runtime,
+    runtime: PreparedRuntime,
     *,
     model=None,
     checkpointer=None,
@@ -237,14 +237,14 @@ def create_agent(
         if session is not None:
             expected = runtime.paths.for_session(session.root.name)
             if session.root != expected.root:
-                raise ValueError("session.root must match this profile's Home runtime path")
+                raise ValueError("session.root must match this user's Home runtime path")
             if session.traces != expected.traces:
                 raise ValueError("session.traces must use the standard Home path")
             session, _ = runtime.paths.open_session(
                 session.root.name, create=True, output_dir=session.outputs,
                 input_workspaces=input_workspaces,
             )
-        context = ModelContext(
+        context = AgentContext(
             runtime,
             model=model,
             semantic_client=semantic_client,

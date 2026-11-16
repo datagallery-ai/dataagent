@@ -18,6 +18,7 @@ from pydantic import ValidationError, create_model
 
 from dataagent.bootstrap.paths import absolute, output_directory
 from dataagent.declarations import StrictModel, normalize_hooks
+from dataagent.errors import DataAgentError
 from dataagent.settings import (
     SECTION_MODELS,
     ModelSettings,
@@ -30,10 +31,17 @@ ENV_REFERENCE = re.compile(r"\$env\{([A-Za-z_][A-Za-z0-9_]*)\}")
 Scope = Literal["user", "cli", "plugin"]
 
 
-class ConfigurationLoadError(ValueError):
+class MissingEnvironmentError(ValueError):
+    """A `$env{NAME}` reference has no value. Hosts start unready instead of exiting."""
+
+
+class ConfigurationLoadError(DataAgentError, ValueError):
     """The selected product file was not loaded."""
 
     error_code = "CONFIG_ERROR"
+
+    def __init__(self, message: str):
+        super().__init__(source="config", component="configuration", fact=message)
 
 
 @dataclass(frozen=True)
@@ -103,7 +111,7 @@ def expand_env(value, env, *, source, home, location=(), dotenv=None):
         def replace(match):
             name = match.group(1)
             if not env.get(name):
-                raise ValueError(
+                raise MissingEnvironmentError(
                     f"{source}: missing environment variable {name} for "
                     f"{'.'.join(map(str, location))}; configure {hint}"
                 )
@@ -160,6 +168,8 @@ def load_layers(
     for scope, path in _config_sources(home, cli_config):
         try:
             layer = _load_layer(scope, path, env=env, home=home, dotenv=dotenv)
+        except MissingEnvironmentError:
+            raise  # Same handling as a missing model variable: fixable in .env, not a file error.
         except ValueError as error:
             raise ConfigurationLoadError(str(error)) from None
         if layer is not None:
@@ -188,7 +198,7 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
             elif location == ("dataagent", "hooks") or (
                 len(location) == 5
                 and location[:2] == ("plugins", "config")
-                and location[3] == "hooks"
+                and location[3] == "run_hooks"
                 and location[4] in {"before_run", "after_run"}
             ):
                 # Each registration keeps its position; repeated events/functions are valid.
@@ -205,7 +215,9 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
         overlay(merged, layer.data, layer)
 
     # Only now is the effective model known; each field keeps its winning layer's source.
-    selected = merged.get("dataagent", {}).get("model", {}).get("default", "primary")
+    selected = merged.get("dataagent", {}).get("model", "primary")
+    if not isinstance(selected, str):
+        selected = ""  # Settings validation reports the wrong type.
     model_values = merged.get("models", {}).get(selected, {})
     for key, value in model_values.items():
         model_values[key] = _expand_model_value(value, field_sources, ("models", selected, key))

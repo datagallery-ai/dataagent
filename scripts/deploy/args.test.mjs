@@ -61,20 +61,20 @@ test("tui accepts optional --runtime-url", () => {
     webPort: null,
     config: null
   });
-  assert.deepEqual(parseDeployArgs(["tui", "--runtime-url", "http://127.0.0.1:9000/dataagent/stream"]), {
+  assert.deepEqual(parseDeployArgs(["tui", "--runtime-url", "http://127.0.0.1:9000/api/v1/runs"]), {
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: "http://127.0.0.1:9000/dataagent/stream",
+    runtimeUrl: "http://127.0.0.1:9000/api/v1/runs",
     webHost: null,
     webPort: null,
     config: null
   });
-  assert.deepEqual(parseDeployArgs(["--runtime-url", "http://example/dataagent/stream", "tui"]), {
+  assert.deepEqual(parseDeployArgs(["--runtime-url", "http://example/api/v1/runs", "tui"]), {
     command: "tui",
     reconfigure: false,
     nonInteractive: false,
-    runtimeUrl: "http://example/dataagent/stream",
+    runtimeUrl: "http://example/api/v1/runs",
     webHost: null,
     webPort: null,
     config: null

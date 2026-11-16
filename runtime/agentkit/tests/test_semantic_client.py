@@ -25,7 +25,7 @@ from dataagent.semantic_client import SemanticServiceClient, normalize_semantic_
         ("semantic_retrieve", ("orders",), "POST", "semantic/retrieve"),
         (
             "semantic_search_columns",
-            ("db", ["orders"], 3),
+            ("db", ["orders"]),
             "GET",
             "advanced-search/semantic-search-columns",
         ),
@@ -37,14 +37,14 @@ from dataagent.semantic_client import SemanticServiceClient, normalize_semantic_
         ),
         (
             "vector_search_column_value",
-            ("x", "db", "table", 3),
+            ("db", "table", "x"),
             "GET",
             "advanced-search/vector-search-column-value",
         ),
-        ("sql_few_shots", ("orders", 3), "GET", "advanced-search/sql-few-shots"),
+        ("sql_few_shots", ("orders",), "GET", "advanced-search/sql-few-shots"),
         (
             "vector_search_table_desc",
-            ("db", ["orders"], 3),
+            ("db", ["orders"]),
             "GET",
             "advanced-search/vector-search-table-desc",
         ),
@@ -201,7 +201,7 @@ def test_query_encoding_defaults_samples_and_post_payload():
     with SemanticServiceClient(
         "semantic.test", auth=("user", "password"), transport=httpx.MockTransport(respond)
     ) as client:
-        assert client.get_columns_sample_values(["db.t.c"], 3) == {"db.t.c": ["0", "x"]}
+        assert client.get_columns_sample_values(["db.t.c"], sample_count=3) == {"db.t.c": ["0", "x"]}
         client.get_joinable_tables([" db.a ", "", "db.b"])
         client.get_table_list("db")
         client.get_table_columns_info("db.a")
@@ -319,3 +319,17 @@ def test_structured_error_redaction_and_roundtrip():
     assert restored.to_dict() == error.to_dict()
     assert restored.actor_text().startswith("[tool/semantic-service]")
     assert all(secret not in str(error) for secret in ("private", "secret", "hidden"))
+
+
+def test_counts_are_keyword_only_limit_and_tls_verification_is_on_by_default():
+    import inspect
+
+    from dataagent import SemanticServiceClient
+
+    for name in ("semantic_search_columns", "vector_search_column_value", "sql_few_shots",
+                 "vector_search_table_desc", "get_table_list", "get_table_columns_info",
+                 "get_joinable_tables", "search_fulltext", "search_entities"):
+        parameter = inspect.signature(getattr(SemanticServiceClient, name)).parameters["limit"]
+        assert parameter.kind is inspect.Parameter.KEYWORD_ONLY, name
+    init = inspect.signature(SemanticServiceClient.__init__).parameters
+    assert init["verify"].default is True and "_shared" not in init

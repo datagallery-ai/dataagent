@@ -17,15 +17,17 @@
 | 名称 | 作用 |
 | --- | --- |
 | `LaunchOptions` | 启动输入：配置文件、环境文件、用户、输入目录。冻结数据类 |
-| `prepare_runtime` | `LaunchOptions` → `Runtime`。读取配置并校验，不创建 Agent |
-| `Runtime` | `prepare_runtime` 的结果：设置、路径和扩展位置。只读，不要自己构造 |
-| `create_agent` | 由 `Runtime` 创建 `Agent`。唯一推荐的创建方式 |
+| `prepare_runtime` | `LaunchOptions` → `PreparedRuntime`。读取配置并校验，不创建 Agent |
+| `PreparedRuntime` | `prepare_runtime` 的结果：设置、路径和扩展位置。只读，不要自己构造 |
+| `create_agent` | 由 `PreparedRuntime` 创建 `Agent`。唯一推荐的创建方式 |
 | `Agent` | `create_agent` 的返回类型。用于类型标注，不要自己构造 |
 | `load_mcp_tools` | 配置了 MCP 时，先 `await` 它，再把结果传给 `create_agent` |
-| `ModelContext` | 工具里 `ToolRuntime[ModelContext]` 的上下文类型：配置的模型、语义客户端、插件配置 |
+| `AgentContext` | 工具里 `ToolRuntime[AgentContext]` 的上下文类型：配置的模型、语义客户端、插件配置 |
 | `SemanticServiceClient` | 语义服务 HTTP 客户端 |
+| `collect_model_stream(model, messages, **kwargs)` | 以流式调用模型并合成一条完整消息，保留工具调用、推理和用量。插件里调用 `AgentContext.get_model()` 返回的模型时用它 |
+| `SubagentServices` | 编译子代理工厂 `factory(params, services)` 的第二个参数：`get_model`、`semantic_client`、`outputs_dir`、`run_hooks` |
 | `ConfigurationLoadError` | 配置文件不存在、不是合法 JSON 或校验失败。`ValueError` 的子类 |
-| `DataAgentError` | 结构化错误，字段为 `source`、`component`、`fact`、`trace_id`。目前由语义服务客户端抛出 |
+| `DataAgentError` | 所有 DataAgent 异常的基类，字段为 `source`、`component`、`fact`、`trace_id`。`ConfigurationLoadError`、`LoopDetectedError`、`A2ACallError` 都继承它，并保留各自的内置基类（`ValueError`、`RuntimeError`）。语义服务客户端也抛出它 |
 | `LoopDetectedError` | 循环检测终止本轮。`kind` 说明是文本复读还是工具循环 |
 | `safe_error` | 把异常渲染成 `{"code", "message"}`：去掉已知密钥和终端控制符，消息截断到 1500。`code` 的取值见 [事件](events.md) |
 
@@ -83,13 +85,13 @@ create_agent(runtime, *, model=None, checkpointer=None, mcp_tools=None, semantic
 - 流式调用开始迭代后占用会话，流结束、出错或关闭时释放。提前停止时用 `contextlib.closing` / `aclosing` 关闭流，不能只靠 `break`。
 - `output_dir` 只在会话首次调用时生效，之后不能改。规则见 [会话与产物](../guides/sessions-and-outputs.md)。
 
-### `ModelContext`
+### `AgentContext`
 
 工具通过 `runtime.context` 拿到它，SDK 用户不需要自己构造。
 
 | 成员 | 说明 |
 | --- | --- |
-| `get_model(alias=None)` | 返回配置的模型。省略别名时用 `dataagent.model.default`。未知别名抛出 `ValueError` |
+| `get_model(alias=None)` | 返回配置的模型。省略别名时用 `dataagent.model`。未知别名抛出 `ValueError` |
 | `semantic_client` | 语义客户端，没有配置 `semantic` 时为 `None` |
 | `session.outputs` | 本轮产物目录 |
 | `home` | 已解析的 Home 路径，用于跨会话共享的资源 |
@@ -102,10 +104,11 @@ create_agent(runtime, *, model=None, checkpointer=None, mcp_tools=None, semantic
 
 | 名称 | 作用 |
 | --- | --- |
-| `refresh_extensions(runtime)` | 重读插件、Hook 和 MCP 声明，返回新的 `Runtime`。保留模型、路径和启动策略。先编译成功再替换正在使用的 Runtime；进行中的调用继续用旧图 |
+| `refresh_extensions(runtime)` | 重读插件、Hook 和 MCP 声明，返回新的 `PreparedRuntime`。保留模型、路径和启动策略。先编译成功再替换正在使用的 PreparedRuntime；进行中的调用继续用旧图 |
 | `extension_revision(runtime)` | 扩展来源的 SHA-256 指纹，用来判断是否需要刷新。不含业务输入和会话状态 |
 | `server_listen(options=None)` | 读所选配置的 `server` 段，按 `prepare_runtime` 的环境规则展开 `$env{NAME}`（含 `options.env_file`），返回 `(host, port)`。读不到、缺少变量或校验失败时返回 `127.0.0.1:8790`。`prepare_runtime` 失败时也能用 |
 | `error_code(error)` | 把异常映射为固定错误码 |
+| `OPAQUE_ID_PATTERN` | 客户端给的 ID（`threadId`、`runId`、用户）的正则：`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`。宿主校验请求时用它 |
 | `ERROR_CODES` | 全部错误码。取值和含义见 [事件](events.md)。异常类可用类属性 `error_code` 声明自己的码 |
 
 宿主另外使用这些成员：
@@ -123,10 +126,10 @@ create_agent(runtime, *, model=None, checkpointer=None, mcp_tools=None, semantic
 `build_graph` 返回一张原生 LangGraph `CompiledStateGraph`，绑定一个会话。它不拥有语义客户端，不按 `thread_id` 缓存图，也不管理产物目录。调用方每次调用都要传上下文。多任务应用请用 `create_agent`。
 
 ```python
-from dataagent import ModelContext, load_mcp_tools
+from dataagent import AgentContext, load_mcp_tools
 from dataagent.lowlevel import build_graph
 
-context = ModelContext(runtime, semantic_client=client)
+context = AgentContext(runtime, semantic_client=client)
 graph = build_graph(
     runtime, context=context, checkpointer=checkpointer,
     mcp_tools=await load_mcp_tools(runtime),
@@ -156,4 +159,4 @@ build_graph(runtime, *, checkpointer=None, model=None, session=None,
 | `create_a2a_server(runtime, *, host, port, auth_token=None)` | 宿主 | 返回只含 A2A 路由的 Starlette 应用 |
 | `run_a2a_server(runtime, *, host, port, auth_token=None)` | 宿主 | 用 uvicorn 运行上面的应用。命令行入口是 `dataagent serve-a2a` |
 
-配置里的 `a2a.agents` 会自动变成名为 `a2a__<id>` 的工具，不需要调用 Python 接口。约定见 [A2A](a2a.md)。
+配置里的 `a2a.remote_agents` 会自动变成名为 `a2a__<id>` 的工具，不需要调用 Python 接口。约定见 [A2A](a2a.md)。

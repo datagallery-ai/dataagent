@@ -52,12 +52,12 @@ def config_file(tmp_path, listener=None):
 
 
 def test_ready_url_brackets_ipv6_bind_addresses():
-    assert runtime_url("127.0.0.1", 8790) == "http://127.0.0.1:8790/dataagent/stream"
-    assert runtime_url("0.0.0.0", 8790) == "http://0.0.0.0:8790/dataagent/stream"
-    assert runtime_url("::", 8790) == "http://[::]:8790/dataagent/stream"
-    assert runtime_url("::0", 8790) == "http://[::0]:8790/dataagent/stream"
-    assert runtime_url("::1", 8790) == "http://[::1]:8790/dataagent/stream"
-    assert runtime_url("[::1]", 8790) == "http://[::1]:8790/dataagent/stream"
+    assert runtime_url("127.0.0.1", 8790) == "http://127.0.0.1:8790/api/v1/runs"
+    assert runtime_url("0.0.0.0", 8790) == "http://0.0.0.0:8790/api/v1/runs"
+    assert runtime_url("::", 8790) == "http://[::]:8790/api/v1/runs"
+    assert runtime_url("::0", 8790) == "http://[::0]:8790/api/v1/runs"
+    assert runtime_url("::1", 8790) == "http://[::1]:8790/api/v1/runs"
+    assert runtime_url("[::1]", 8790) == "http://[::1]:8790/api/v1/runs"
 
 
 def test_occupied_port_is_untouched():
@@ -150,6 +150,23 @@ def test_invalid_config_exits_without_listening(tmp_path):
     assert "Invalid JSON" in text
 
 
+def test_old_config_exits_with_upgrade_steps(tmp_path):
+    path = tmp_path / "old.json"
+    path.write_text(json.dumps({
+        "schema_version": 3,
+        "dataagent": {"model": {"name": "primary"}},
+        "a2a": {"agents": []},
+        "semantic": {"timeout": 30},
+    }))
+    code, text = _run_serve(tmp_path, "--config", str(path))
+    assert code == 1
+    assert "old.json" in text
+    assert "schema_version 3 is not supported" in text
+    assert "dataagent.model a string" in text
+    assert "a2a.agents to a2a.remote_agents" in text
+    assert "semantic.timeout to semantic.timeout_seconds" in text
+
+
 def test_loaded_config_without_model_env_stays_unready(tmp_path, monkeypatch, capsys):
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
     for name in ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"):
@@ -218,3 +235,18 @@ def test_degraded_start_expands_env_in_listen_address(tmp_path, monkeypatch) -> 
     monkeypatch.setenv("BIND_HOST", "127.0.0.2")
     monkeypatch.setenv("BIND_PORT", "8803")
     assert _listen(None, str(config)) == ("127.0.0.2", 8803)
+
+
+def test_missing_env_in_any_section_stays_unready_like_models(tmp_path, monkeypatch, capsys):
+    monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
+    monkeypatch.delenv("SEMANTIC_PASSWORD", raising=False)
+    for name, value in (("LLM_MODEL", "m"), ("LLM_BASE_URL", "http://127.0.0.1:1/v1"), ("LLM_API_KEY", "k")):
+        monkeypatch.setenv(name, value)
+    config = tmp_path / "config.json"
+    config.write_text(json.dumps({
+        "models": {"primary": {"name": "$env{LLM_MODEL}", "base_url": "$env{LLM_BASE_URL}",
+                               "api_key": "$env{LLM_API_KEY}"}},
+        "semantic": {"base_url": "http://127.0.0.1:1", "username": "u", "password": "$env{SEMANTIC_PASSWORD}"},
+    }))
+    assert _prepare(_parser().parse_args(["serve", "--config", str(config)])) is None
+    assert "missing environment variable SEMANTIC_PASSWORD" in capsys.readouterr().err

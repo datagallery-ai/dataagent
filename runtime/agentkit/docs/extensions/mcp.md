@@ -38,7 +38,7 @@
 | `http` | `url`、`headers`。传输为 Streamable HTTP |
 | `sse` | `url`、`headers` |
 
-服务名匹配 `[a-z][a-z0-9_-]*`。连接后的服务 ID 是 `mcp__<scope>__<name>`。同名冲突会使准备失败。工具名再带上该服务的命名空间。
+服务名匹配 `[a-z][a-z0-9_-]{0,63}`。连接后的服务 ID 是 `mcp__<scope>__<name>`。同名冲突会使准备失败。工具名是 `mcp__<scope>__<name>__<tool>`。
 
 ## 何时生效
 

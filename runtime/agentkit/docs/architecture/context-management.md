@@ -23,10 +23,10 @@ core 总会加上摘要中间件。阈值由 `compute_summarization_defaults` �
 
 Skill 正文不进 Checkpoint。中间件把名称和描述写进系统提示。扩展修订变化时，`VersionedSkillsMiddleware` 丢掉旧的 `skills_metadata` 再扫描。
 
-根提示由文件系统说明和插件 `system_prompt` 拼成。文件系统说明列出 `outputs/` 和输入目录，并要求模型把输入当作只读、把新文件写到输出目录。文件权限见 [安全](security-boundaries.md)。
+根提示由文件系统说明和插件 `system_prompt_file` 拼成。文件系统说明列出 `outputs/` 和输入目录，并要求模型把输入当作只读、把新文件写到输出目录。文件权限见 [安全](security-boundaries.md)。
 
 子代理有自己的提示文件，再附上同一份文件系统说明。
 
 ## 调用参数
 
-`ModelContext`、语义客户端和 API 密钥通过调用参数传递，并放在 Pydantic 私有属性中。它们不进入消息或 Checkpoint。远端 MCP 服务使用自己的模型配置。
+`AgentContext`、语义客户端和 API 密钥通过调用参数传递，并放在 Pydantic 私有属性中。它们不进入消息或 Checkpoint。远端 MCP 服务使用自己的模型配置。

@@ -6,7 +6,7 @@
 
 ```text
 浏览器 apps/web
-  -> Next 同源转发 /dataagent/stream 与 /api/v1/*
+  -> Next 同源转发 /api/v1/runs 与 /api/v1/*
   -> dataagent serve（config.json 的 server.host:server.port，默认 127.0.0.1:8790）
   <- apps/tui 直接请求同一进程
 ```
@@ -16,7 +16,7 @@
 | Web | `npm run start` 或 `npm run start:web` | `http://127.0.0.1:3000/data-tasks` |
 | TUI | `npm run start:tui` | 终端。控制面没在听就由 TUI 拉起 |
 
-Python SDK 可以不经 HTTP，直接准备同一份运行时。对话的 HTTP 入口是 `POST /dataagent/stream`。
+Python SDK 可以不经 HTTP，直接准备同一份运行时。对话的 HTTP 入口是 `POST /api/v1/runs`。
 
 ## 主要模块
 

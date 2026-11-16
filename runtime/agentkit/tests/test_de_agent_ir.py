@@ -24,7 +24,7 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
 from dataagent.extensions.loading import PythonLoader
-from dataagent.models import ModelContext
+from dataagent.models import AgentContext
 
 PLUGIN = Path(__file__).resolve().parents[1] / "builtin-plugins/de-agent"
 FIELD = {
@@ -225,8 +225,8 @@ def test_plugin_state_is_private_and_isolated_between_agent_handles(tmp_path):
         settings=SimpleNamespace(plugins=SimpleNamespace(enabled=("de-agent",)))
     )
     session = SimpleNamespace(outputs=tmp_path)
-    first = ModelContext(runtime, session=session)
-    second = ModelContext(runtime, session=session)
+    first = AgentContext(runtime, session=session)
+    second = AgentContext(runtime, session=session)
     first.get_plugin_state("de-agent")["secret"] = "private IR data"
     assert second.get_plugin_state("de-agent") == {}
     assert first.model_dump() == {}

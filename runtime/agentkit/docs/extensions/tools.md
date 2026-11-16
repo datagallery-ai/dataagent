@@ -19,7 +19,7 @@ def summarize_numbers(values: list[float]) -> str:
 
 ```json
 {
-  "schema_version": 2,
+  "schema_version": 3,
   "id": "common",
   "tools": {
     "summarize_numbers": {
@@ -29,7 +29,7 @@ def summarize_numbers(values: list[float]) -> str:
 }
 ```
 
-注册名是 `common__summarize_numbers`。本地 ID 必须匹配 `[a-z][a-z0-9_]*`。模型调用时使用这个全名。
+注册名是 `common__summarize_numbers`。本地 ID 必须匹配 `[a-z][a-z0-9_-]{0,63}`。模型调用时使用这个全名。
 
 入口格式是 `相对路径.py:导出名`。导出名必须是合法标识符。加载被限制在插件根目录内。同一次编译里，同一个文件只导入一次。
 
@@ -41,9 +41,9 @@ def summarize_numbers(values: list[float]) -> str:
 
 ```python
 from langchain.tools import ToolRuntime
-from dataagent import ModelContext
+from dataagent import AgentContext
 
-async def summarize(text: str, runtime: ToolRuntime[ModelContext]) -> str:
+async def summarize(text: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Summarize text with the configured fast model."""
     model = runtime.context.get_model("fast")
     return (await model.ainvoke(text, config=runtime.config)).text

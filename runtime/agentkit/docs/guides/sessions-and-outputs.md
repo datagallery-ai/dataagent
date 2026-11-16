@@ -23,7 +23,7 @@ Home 默认是 `~/.dataagent`，可以用环境变量 `DATAAGENT_HOME` 改变。
 会话 = Home + user_id + thread_id
 ```
 
-- `user_id` 是本地 profile 名，默认是 `default`，用 `--user` 或 `LaunchOptions(user_id=...)` 选择。它不是登录账号。
+- `user_id` 是本地用户 ID，默认是 `default`，用 `--user` 或 `LaunchOptions(user_id=...)` 选择。它不是登录账号。
 - `user_id` 和 `thread_id` 只能包含字母、数字、下划线和连字符，最长 128 个字符。
 
 **换一个 Home，就是换一套独立的环境。** 新 Home 看不到旧 Home 的会话，这和 git 仓库或浏览器 profile 的做法相同。例如：

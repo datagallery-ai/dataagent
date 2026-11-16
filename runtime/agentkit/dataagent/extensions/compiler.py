@@ -61,8 +61,8 @@ def compile_extensions(
         if spec.id in plugin_ids:
             raise ValueError(f"Duplicate plugin ID: {spec.id}")
         plugin_ids.add(spec.id)
-        if spec.system_prompt:
-            prompts.append(contained_path(root, spec.system_prompt).read_text(encoding="utf-8"))
+        if spec.system_prompt_file:
+            prompts.append(contained_path(root, spec.system_prompt_file).read_text(encoding="utf-8"))
         compiled_skill_sources.extend(
             compile_skill_sources(root, spec.skills, skill_names, label=spec.id)
         )
@@ -77,6 +77,12 @@ def compile_extensions(
     all_hook_entries.extend(hook_entries)
 
     compiled_hooks = compile_hooks(all_hook_entries, loader, agent_name=ROOT_AGENT_NAME)
+    with_workflow = {plugin_id for _, plugin_id, child in child_specs if child.kind == "compiled"}
+    for plugin_id in sorted(set(run_hook_entries or {}) & plugin_ids - with_workflow):
+        raise ValueError(
+            f"plugins.config.{plugin_id}.run_hooks needs a compiled SubAgent in that plugin; "
+            "use dataagent.hooks or the plugin's hooks for Agent Hooks"
+        )
     children = materialize_subagents(
         child_specs,
         tool_registry=tool_registry,

@@ -2,10 +2,10 @@
 
 from langchain.tools import ToolRuntime
 
-from dataagent import ModelContext
+from dataagent import AgentContext
 
 
-async def summarize_text(text: str, runtime: ToolRuntime[ModelContext]) -> str:
+async def summarize_text(text: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Summarize the supplied text using the configured fast model."""
     model = runtime.context.get_model("fast")
     response = await model.ainvoke(

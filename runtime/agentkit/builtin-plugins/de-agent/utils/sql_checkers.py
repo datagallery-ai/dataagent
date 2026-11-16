@@ -27,9 +27,7 @@ from uuid import uuid4
 
 from loguru import logger
 
-from dataagent.errors import DataAgentError
-from dataagent.model_stream import collect_model_stream
-from dataagent.models import ModelContext
+from dataagent import AgentContext, DataAgentError, collect_model_stream
 from utils import dataops_validate_tool
 from utils.dataops_constants import DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
 from utils.dataops_mcp import dataops_settings
@@ -166,7 +164,7 @@ class SQLCheckerPipeline:
         rules: Path,
         config: dict[str, Any] | None = None,
         *,
-        context: ModelContext | None = None,
+        context: AgentContext | None = None,
     ) -> None:
         """Bind a real model, canonical rule source and a private report directory."""
         self.workspace = workspace.resolve()
@@ -424,7 +422,7 @@ class SQLCheckerPipeline:
             self.report.update(dataops={"status": "DISABLED", "results": []})
             return True
         if self.context is None:
-            raise ValueError("DataOps validation requires a ModelContext")
+            raise ValueError("DataOps validation requires a AgentContext")
 
         # Persist the per-SQL attempt budget for this DDL/DML pair across tool calls,
         # including calls after the Agent changes the SQL. Concurrent calls fail closed.

@@ -92,11 +92,11 @@ def test_configured_agents_compile_into_the_graph(runtime):
     from dataagent.settings import A2AAgentSettings, A2ASettings
 
     with pytest.raises(ValidationError, match="duplicate ids"):
-        A2ASettings(agents=(
+        A2ASettings(remote_agents=(
             A2AAgentSettings(id="researcher", url="http://127.0.0.1:9999"),
             A2AAgentSettings(id="researcher", url="http://127.0.0.1:9998"),
         ))
-    settings = runtime.settings.model_copy(update={"a2a": A2ASettings(agents=(
+    settings = runtime.settings.model_copy(update={"a2a": A2ASettings(remote_agents=(
         A2AAgentSettings(
             id="researcher",
             url="http://127.0.0.1:9999",
@@ -178,7 +178,7 @@ async def test_input_required_follow_up_keeps_the_task():
             id="task-wait",
             context_id="ctx-1",
             status=TaskStatus(state=TaskState.TASK_STATE_COMPLETED),
-            artifacts=[new_text_artifact("agentkit_result", "done")],
+            artifacts=[new_text_artifact("dataagent_result", "done")],
         ))
 
     async with peer(respond) as http:

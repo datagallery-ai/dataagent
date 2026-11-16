@@ -4,7 +4,7 @@ This page is for integrators calling the control plane. It does not describe int
 
 ## Envelope
 
-`/healthz`, `/ready`, and `/api/v1/*` use an envelope for success and error. Every other HTTP route uses the same error envelope; on success `/sessions` and the output routes return their documents directly.
+Every JSON response uses the envelope, for success and error alike. The only exceptions: `POST /api/v1/runs` returns an SSE event stream on success, and cancel returns an empty 204.
 
 ```json
 {"success": true, "data": {}}
@@ -14,16 +14,16 @@ This page is for integrators calling the control plane. It does not describe int
 {"success": false, "error": {"code": "RESOURCE_NOT_FOUND", "message": "Route not found."}}
 ```
 
-`/sessions`, the output routes, and `POST /runs/{runId}/cancel` are outside `/api/v1`. Cancel returns an empty 204 on success.
+Every route is under `/api/v1` except `/healthz`, `/ready`, and A2A (`/.well-known/agent-card.json`, `/a2a/jsonrpc`, whose paths the protocol fixes).
 
-Unknown paths return 404 with `RESOURCE_NOT_FOUND`. Conversation paths return 503 with `CONVERSATION_UNAVAILABLE` while the engine is not ready.
+Unknown paths return 404 with `RESOURCE_NOT_FOUND`; a wrong method returns 405 with `METHOD_NOT_ALLOWED`. Conversation paths, including cancel, return 503 with `CONVERSATION_UNAVAILABLE` while the engine is not ready; the Agent Card is not affected.
 
 ## Health and identity
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/healthz` | Always 200. When the engine is ready, `data.conversation` includes `ready`, `protocol`, `instanceId`, `model`, `plugins`, `home`, `entry`, `user`, and `timeoutSeconds`; `ready` is the only readiness flag. Otherwise `conversation` is only `ready: false`. |
-| GET | `/ready` | 200 when the engine is ready, with `data.status` set to `ready`. Otherwise 503. |
+| GET, HEAD | `/healthz` | Always 200. When the engine is ready, `data.conversation` includes `ready`, `protocol`, `instanceId`, `model`, `plugins`, `home`, `entry`, `user`, and `timeoutSeconds`; `ready` is the only readiness flag. Otherwise `conversation` is only `ready: false`. |
+| GET, HEAD | `/ready` | 200 when the engine is ready, with `data.status` set to `ready`. Otherwise 503. |
 | GET | `/api/v1/me` | The current `--user`. The id is `default` when the engine is not ready. There is no signed-in account. |
 
 `/healthz` does not return input directories, the state directory, or the configuration body.
@@ -32,11 +32,11 @@ Unknown paths return 404 with `RESOURCE_NOT_FOUND`. Conversation paths return 50
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/sessions?limit=` | Sessions for the current user. Web and TUI both use this route. `limit` is 1 to 100, default 50. |
-| GET | `/sessions/{threadId}` | List fields plus `messages` and `notice`. Messages come from the saved checkpoint when the row has one, otherwise from the latest graph state on that thread. 409 when the binding cannot be opened. 404 for another user's session. A running turn can still be read. |
-| GET | `/sessions/{threadId}/outputs` | Output files. Skips symlinks, `artifacts/conversation_history`, and `artifacts/large_tool_results`. |
-| GET | `/sessions/{threadId}/outputs/preview?path=` | UTF-8 text, at most 64 KiB. Non-text is 415. |
-| POST | `/runs/{runId}/cancel` | Cancel the active turn. `runId` comes from the `POST /dataagent/stream` request body. Returns an empty 204 on success, 404 when that run does not exist or has finished. After a cancel the event stream ends with `RUN_ERROR` whose `code` is `CANCELLED`; the session is marked `interrupted` and the next turn continues from the saved checkpoint. |
+| GET | `/api/v1/sessions?limit=` | Sessions for the current user. Web and TUI both use this route. `limit` is 1 to 100, default 50. |
+| GET | `/api/v1/sessions/{threadId}` | List fields plus `messages` and `notice`. Messages come from the saved checkpoint when the row has one, otherwise from the latest graph state on that thread. 409 when the binding cannot be opened. 404 for another user's session. A running turn can still be read. |
+| GET | `/api/v1/sessions/{threadId}/outputs` | Output files. Skips symlinks, `artifacts/conversation_history`, and `artifacts/large_tool_results`. 404 when the session does not exist. |
+| GET | `/api/v1/sessions/{threadId}/outputs/preview?path=` | UTF-8 text, at most 64 KiB; `truncated` is `true` when cut. Non-text is 415. |
+| POST | `/api/v1/runs/{runId}/cancel` | Cancel the active turn. `runId` comes from the `POST /api/v1/runs` request body. Returns an empty 204 on success, 404 when that run does not exist or has finished. After a cancel the event stream ends with `RUN_ERROR` whose `code` is `CANCELLED`; the session is marked `interrupted` and the next turn continues from the saved checkpoint. |
 
 These paths are not implemented: login, `/api/v1/capabilities`, `/api/copilotkit`, `/api/copilotkit/info`, datasources, knowledge bases, workspace configuration, session rename, delete, branches, or a trace DAG. They return the 404 envelope.
 
@@ -44,9 +44,9 @@ These paths are not implemented: login, `/api/v1/capabilities`, `/api/copilotkit
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| POST | `/dataagent/stream` | One turn. The body is one AG-UI input; extra fields are rejected. Success is `text/event-stream`. |
+| POST | `/api/v1/runs` | One turn. The body is one AG-UI input; extra fields are rejected. Success is `text/event-stream`. |
 
-Constraints for `POST /dataagent/stream`:
+Constraints for `POST /api/v1/runs`:
 
 - `threadId` and `runId` are safe ids of at most 128 characters
 - `messages` is exactly one item with an `id`, `role` is `user`, and `content` is a nonempty string
@@ -65,7 +65,7 @@ The same process also serves two A2A 1.0 routes for other agents.
 | GET | `/.well-known/agent-card.json` | Agent Card. Declares JSON-RPC only; streaming is not supported. |
 | POST | `/a2a/jsonrpc` | JSON-RPC entry, for example `SendMessage`. Requests must send the `A2A-Version: 1.0` header. |
 
-- `contextId` is the session `threadId`. It shares sessions and checkpoints with `/dataagent/stream`. It must be a safe ID of at most 128 characters; the protocol generates one when it is omitted.
+- `contextId` is the session `threadId`. It shares sessions and checkpoints with `/api/v1/runs`. It must be a safe ID of at most 128 characters; the protocol generates one when it is omitted.
 - Only text parts are read. On success the final answer is in `result.task.artifacts` with state `TASK_STATE_COMPLETED`.
 - When the environment variable `DATAAGENT_A2A_AUTH_TOKEN` is set, `/a2a/jsonrpc` requires `Authorization: Bearer <token>` and otherwise returns 401 with code `UNAUTHORIZED`. The Agent Card stays anonymous. Always set it before exposing A2A.
 - JSON-RPC errors follow the JSON-RPC spec, not the error envelope above.

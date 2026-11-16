@@ -14,7 +14,7 @@ from langchain_core.messages import HumanMessage, ToolMessage
 from dataagent import LaunchOptions, create_agent, prepare_runtime
 from dataagent.agent import load_extensions
 from dataagent.extensions.loading import PythonLoader
-from dataagent.models import ModelContext
+from dataagent.models import AgentContext
 from dataagent.semantic_client import SemanticServiceClient
 
 
@@ -36,7 +36,7 @@ def _live_runtime(tmp_path):
                     }
                 },
                 "dataagent": {"limits": {"timeout_seconds": 180, "model_calls_per_agent": 25}},
-                "semantic": {"base_url": semantic_url, "timeout": 30},
+                "semantic": {"base_url": semantic_url, "timeout_seconds": 30},
                 "plugins": {
                     "enabled": ["de-agent"],
                     "config": {"de-agent": {"dataops": {"enabled": False}}},
@@ -122,7 +122,7 @@ async def test_real_parallel_nl2sql_sessions_and_missing_evidence(tmp_path):
         source = "temp.tmp_dwd_adv_1688_intentions_crowd_ds"
         metadata = await asyncio.to_thread(client.get_table_columns_info, source)
         contexts = [
-            ModelContext(runtime, semantic_client=client, session=runtime.paths.for_session(name))
+            AgentContext(runtime, semantic_client=client, session=runtime.paths.for_session(name))
             for name in ("parallel-a", "parallel-b")
         ]
         children = []

@@ -35,7 +35,7 @@ from nl2sql.utils.nl2sql_utils import (
 )
 
 if TYPE_CHECKING:
-    from dataagent.semantic_client import SemanticServiceClient
+    from dataagent import SemanticServiceClient
 
 _SCHEMA_MODE_FULL = "full_schema"
 _SCHEMA_MODE_LINKING = "schema_linking"
@@ -79,7 +79,7 @@ class PerceptorNode(BaseNL2SQLNode):
             return {}, []
         dt_set, tc_set, j_set, dt_desc, schema = set(), set(), set(), {}, {}
         raw = self._call_semantic_service(
-            self.semantic_client.semantic_search_columns, self.db, keywords, self.top_k
+            self.semantic_client.semantic_search_columns, self.db, keywords, limit=self.top_k
         )
         for payload in iter_semantic_column_payloads(raw):
             for entry in payload.get("column_name_search") or []:

@@ -31,7 +31,7 @@
 ## MCP
 
 `.mcp.json` 使用 `{"mcpServers": {}}` 格式，仓库完整模板位于 `examples/mcp/mcp.full.json`。
-例如放入名为 `analytics` 的服务后，其 `query` 工具名为 `mcp__common__analytics_query`。
+例如放入名为 `analytics` 的服务后，其 `query` 工具名为 `mcp__common__analytics__query`。
 在本目录配置 stdio 时，工作目录为本插件根；环境引用仍从产品环境解析，不读取插件旁 `.env`。
 
 没有默认 MCP 服务地址或凭证，所以保留空对象，不放会导致启动失败的占位连接。

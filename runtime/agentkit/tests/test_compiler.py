@@ -81,7 +81,7 @@ def test_plugin_schema_rejects_unknown_shape(declaration):
 
 @pytest.mark.parametrize("schema,base", [
     (PluginSpec, {"id": "example"}),
-    (SubAgentSpec, {"name": "example", "description": "Example", "system_prompt": "prompt.md"}),
+    (SubAgentSpec, {"name": "example", "description": "Example", "system_prompt_file": "prompt.md"}),
 ])
 @pytest.mark.parametrize("field", ["middleware", "callbacks"])
 @pytest.mark.parametrize("value", [[], [{"entrypoint": "factory.py:create"}]])
@@ -161,7 +161,7 @@ def test_python_hooks_are_path_confined(tmp_path):
 
 def test_subagent_description_file_is_read_from_plugin_root(runtime, tmp_path):
     (tmp_path / "child.json").write_text(
-        '{"name": "child", "description_file": "child.md", "system_prompt": "prompt.md"}'
+        '{"name": "child", "description_file": "child.md", "system_prompt_file": "prompt.md"}'
     )
     (tmp_path / "child.md").write_text("Long description.\n")
     (tmp_path / "prompt.md").write_text("Help")
@@ -173,4 +173,4 @@ def test_subagent_description_file_is_read_from_plugin_root(runtime, tmp_path):
 @pytest.mark.parametrize("fields", [{}, {"description": "Inline", "description_file": "child.md"}])
 def test_subagent_requires_exactly_one_description_source(fields):
     with pytest.raises(ValidationError, match="exactly one of description or description_file"):
-        SubAgentSpec.model_validate({"name": "child", "system_prompt": "prompt.md", **fields})
+        SubAgentSpec.model_validate({"name": "child", "system_prompt_file": "prompt.md", **fields})

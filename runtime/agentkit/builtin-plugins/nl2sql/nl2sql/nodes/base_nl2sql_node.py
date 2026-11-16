@@ -28,7 +28,7 @@ from typing import Any
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from dataagent.model_stream import collect_model_stream
+from dataagent import LoopDetectedError, collect_model_stream
 from nl2sql.config_manager import NL2SQLConfig
 from nl2sql.constants import NL2SQL_PROMPT_PREFIX
 from nl2sql.errors import DataAgentError
@@ -115,6 +115,9 @@ class BaseNL2SQLNode:
         for attempt in range(3):
             try:
                 return json.loads(json_parser(await self.execute_with_llm(context, action)))
+            except LoopDetectedError:
+                # A detected loop terminates the run; it is not a JSON format failure.
+                raise
             except (DataAgentError, json.JSONDecodeError) as exc:
                 if attempt == 2:
                     if isinstance(exc, DataAgentError):

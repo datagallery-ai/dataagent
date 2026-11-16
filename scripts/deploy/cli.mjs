@@ -56,7 +56,7 @@ export function resolveTuiRuntimeUrl(env = {}, runtimeUrl = null, apiListen = nu
   const explicit = String(runtimeUrl ?? "").trim();
   if (explicit) return explicit;
   const listen = apiListen ?? readServerListen(env);
-  return `${httpOrigin(clientListenHost(listen.host), listen.port)}/dataagent/stream`;
+  return `${httpOrigin(clientListenHost(listen.host), listen.port)}/api/v1/runs`;
 }
 
 export function healthProbeUrls(env = {}, web = {}, apiListen = null) {
@@ -232,7 +232,7 @@ export async function configureDeploymentInteractively(options) {
     timestamp
   } = options;
 
-  const listenEnv = processEnv ?? { DATAAGENT_HOME: "" };
+  const listenEnv = processEnv ?? process.env;
   const configPath = typeof options.configPath === "string" ? options.configPath.trim() : "";
   const selectedListen = readServerListen(listenEnv, configPath || undefined);
   let text = sourceText ?? "";
@@ -457,10 +457,7 @@ function createRealDeps(context) {
         backupExistingSecrets: !parsed.reconfigure
       });
       if (current.listen && !parsed.config) {
-        writeServerListen(
-          { DATAAGENT_HOME: process.env.DATAAGENT_HOME || path.join(os.homedir(), ".dataagent") },
-          current.listen
-        );
+        writeServerListen(process.env, current.listen);
       }
     },
     async isRunning() {

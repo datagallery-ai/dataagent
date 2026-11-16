@@ -12,6 +12,9 @@ import { getMessageTextContent } from '../state/message-history.js';
 import { SessionClient } from '../protocol/session-client.js';
 import type { AgentClient, RunAgentInput } from '../protocol/types.js';
 
+/** Success envelope used by every /api/v1 JSON route. */
+const ok = (data: unknown) => Response.json({ success: true, data });
+
 const views: Array<ReturnType<typeof render>> = [];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
@@ -131,10 +134,10 @@ it('Ink resumes native saved messages, rejects unsupported commands, and clears 
   const sessions = new SessionClient('http://127.0.0.1:8790', async (url) => {
     requests.push(String(url));
     if (String(url).endsWith('/outputs')) {
-      assert.equal(String(url), 'http://127.0.0.1:8790/sessions/saved-thread/outputs');
-      return Response.json({ files: [{ path: 'restored.csv', size: 10, modifiedAt: '2026-09-23T00:00:00Z' }] });
+      assert.equal(String(url), 'http://127.0.0.1:8790/api/v1/sessions/saved-thread/outputs');
+      return ok({ files: [{ path: 'restored.csv', size: 10, modifiedAt: '2026-09-23T00:00:00Z' }] });
     }
-    return Response.json({
+    return ok({
       threadId: 'saved-thread', title: 'Saved statistics', createdAt: '', updatedAt: '',
       status: 'interrupted', hasCheckpoint: true,
       notice: 'Restored the last successful checkpoint; no work was replayed.',
@@ -156,7 +159,7 @@ it('Ink resumes native saved messages, rejects unsupported commands, and clears 
   await until(() => store.getState().threadId === 'saved-thread');
   assert.equal(store.getState().messages.length, 2);
   assert.match(getMessageTextContent(store.getState().messages.at(-1)!), /Previous answer/);
-  assert.deepEqual(requests, ['http://127.0.0.1:8790/sessions/saved-thread']);
+  assert.deepEqual(requests, ['http://127.0.0.1:8790/api/v1/sessions/saved-thread']);
   await until(() => current.frames.join('').includes('no work was replayed'));
   await submit('/outputs');
   await until(() => latestOutputFrame(current).includes('restored.csv'));
@@ -171,7 +174,7 @@ it('Ink resumes native saved messages, rejects unsupported commands, and clears 
 });
 
 it('Ink keeps the saved thread when the session has no checkpoint', async () => {
-  const sessions = new SessionClient('http://127.0.0.1:8790', async () => Response.json({
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () => ok({
     threadId: 'saved-thread', title: 'Unfinished', createdAt: '', updatedAt: '',
     status: 'interrupted', hasCheckpoint: false,
     notice: 'No checkpoint was saved. Continue this conversation.',
@@ -217,7 +220,7 @@ it('/stop cancels the active run and stays on this thread', async () => {
   await until(() => store.getState().runStatus !== 'running');
   assert.deepEqual(stopped, [runId]);
   assert.equal(store.getState().threadId, threadId);
-  assert.equal(cancels[0], `POST http://127.0.0.1:8790/runs/${runId}/cancel`);
+  assert.equal(cancels[0], `POST http://127.0.0.1:8790/api/v1/runs/${runId}/cancel`);
   const text = store.getState().messages.map(getMessageTextContent).join('\n');
   assert.match(text, /keep going/);
   assert.doesNotMatch(text, /INCOMPLETE_STREAM/);
@@ -283,15 +286,15 @@ it('/resume list opens the picker and does not load a session id named list', as
     requests.push(String(url));
     const href = String(url);
     if (href.includes('/sessions?')) {
-      return Response.json({ sessions: [{
+      return ok({ sessions: [{
         threadId: 'saved-thread', title: 'Saved statistics', createdAt: '', updatedAt: '',
-        status: 'complete', hasCheckpoint: true,
+        status: 'completed', hasCheckpoint: true,
       }] });
     }
     if (href.endsWith('/sessions/saved-thread')) {
-      return Response.json({
+      return ok({
         threadId: 'saved-thread', title: 'Saved statistics', createdAt: '', updatedAt: '',
-        status: 'complete', hasCheckpoint: true, notice: null,
+        status: 'completed', hasCheckpoint: true, notice: null,
         messages: [{ id: 'saved-user', role: 'user', content: 'Previous question' }],
       });
     }
@@ -713,10 +716,10 @@ for (const columns of [60, 80, 160]) it(`/outputs opens and closes the full view
   const sessions = new SessionClient('http://127.0.0.1:8790', async (url) => {
     calls.push(String(url));
     if (String(url).includes('/outputs/preview?')) {
-      return Response.json({ type: 'file', path: '销售报告.md', content: '# Sales\n\nTotal: 42' });
+      return ok({ type: 'file', path: '销售报告.md', content: '# Sales\n\nTotal: 42' });
     }
-    assert.equal(String(url), 'http://127.0.0.1:8790/sessions/ui-test/outputs');
-    return Response.json({ files: [{ path: '销售报告.md', size: 20, modifiedAt: '2026-09-23T00:00:00Z' }] });
+    assert.equal(String(url), 'http://127.0.0.1:8790/api/v1/sessions/ui-test/outputs');
+    return ok({ files: [{ path: '销售报告.md', size: 20, modifiedAt: '2026-09-23T00:00:00Z' }] });
   });
   const current = view(outputClient(requests), columns, 24, sessions);
   const frame = () => latestOutputFrame(current);
@@ -745,7 +748,7 @@ for (const columns of [60, 80, 160]) it(`/outputs opens and closes the full view
 });
 
 it('/outputs opens the empty view and q returns to the home composer', async () => {
-  const sessions = new SessionClient('http://127.0.0.1:8790', async () => Response.json({ files: [] }));
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () => ok({ files: [] }));
   const current = view({ async *runAgent() { throw new Error('Must not call the model'); } }, 160, 24, sessions);
   const frame = () => latestOutputFrame(current);
   await tick();
@@ -776,7 +779,7 @@ it('discards output responses from a session that has been cleared', async () =>
   await until(() => latestOutputFrame(current).includes('Loading session outputs'));
   await submit(current, '/clear');
   await until(() => store.getState().threadId !== 'ui-test');
-  finish(Response.json({ files: [{ path: 'old.txt', size: 4, modifiedAt: '2026-09-23T00:00:00Z' }] }));
+  finish(ok({ files: [{ path: 'old.txt', size: 4, modifiedAt: '2026-09-23T00:00:00Z' }] }));
   await tick();
   await tick();
   assert.doesNotMatch(latestOutputFrame(current), /Outputs \(1\)|old.txt/);

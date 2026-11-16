@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Expose the bounded SQL checker through native ToolRuntime and ModelContext."""
+"""Expose the bounded SQL checker through native ToolRuntime and AgentContext."""
 
 from pathlib import Path
 
@@ -18,13 +18,13 @@ from langchain.tools import ToolRuntime
 from utils.sql_checkers import SQLCheckerPipeline
 from utils.sql_rule_detectors import COVERAGE
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 
 
 async def check_and_repair_sql(
     ddl_path: str,
     dml_path: str,
-    runtime: ToolRuntime[ModelContext],
+    runtime: ToolRuntime[AgentContext],
     repair: bool = True,
 ) -> dict:
     """Check a CREATE/INSERT file pair within this session's outputs directory.

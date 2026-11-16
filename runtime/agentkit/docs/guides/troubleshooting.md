@@ -8,7 +8,7 @@
 | --- | --- |
 | `Cannot determine user home; set DATAAGENT_HOME` | 在进程环境设置 `DATAAGENT_HOME` 为可写目录 |
 | `Configuration file does not exist`、`Expected a configuration file`、`Invalid JSON` | 进程以退出码 1 结束，不监听端口。检查 `--config` 指向的文件。相对路径相对启动命令的工作目录 |
-| `unknown field` 或重复键 | 删掉未知字段。JSON 不允许重复键，包括嵌套对象。`schema_version` 只能是产品配置的 `3` 或插件清单的 `2` |
+| `unknown field` 或重复键 | 删掉未知字段。JSON 不允许重复键，包括嵌套对象。`schema_version` 只能是产品配置的 `4`、插件清单的 `3` 或子代理 JSON 的 `1`；版本不对时报错会说明怎样升级 |
 | `missing environment variable LLM_...` | 在这次选中的环境文件或进程环境中提供该变量。传了 `--env-file` 用那份文件，否则用 Home `.env` |
 | `Port 127.0.0.1:8790 is occupied` | 改 `config.json` 的 `server.port`，或停掉占用进程。启动不会接管已有服务 |
 | 引擎未就绪 | 配置文件已经读入，对话引擎没有起来。进程仍在。`/healthz` 为 200，`data.conversation.ready` 为 false。`/ready` 和对话返回 503。标准错误里有 `DataAgent:`，常见原因是模型环境变量还没填 |
@@ -21,7 +21,7 @@
 
 | 现象 | 处理 |
 | --- | --- |
-| `dataagent.model.default does not name a configured model` | `default` 必须是 `models` 里的 ID，不是服务商模型名 |
+| `dataagent.model does not name a configured model` | `dataagent.model` 必须是 `models` 里的 ID，不是服务商模型名 |
 | `Unknown model alias` | 工具调用了未配置的别名。补上 `models.<id>`，或改调用 |
 | 连接超时或 401 | 核对 `base_url` 和 `api_key`。地址写 API 根，不要写到 `/chat/completions` |
 | 重试很久后仍失败 | `max_retries` 默认 2，即最多 3 次 HTTP。设为 `0` 可关闭。它不重跑已经开始的 Agent 循环 |
@@ -41,9 +41,9 @@
 
 | 现象 | 处理 |
 | --- | --- |
-| `Session ... is not in profile` | `threadId` 属于另一个 `--user`。换对应用户，或新开对话 |
+| `Session ... does not belong to user` | `threadId` 属于另一个 `--user`。换对应用户，或新开对话 |
 | `bound to a different workspace list` | 恢复时不要换输入目录。新输入请新开会话 |
-| 首轮报错后同一会话发不出去 | 用新的 `runId` 再发一条新消息。没有检查点时 `/dataagent/stream` 从最新图状态继续。取消会把会话指到图里当时的检查点，界面和下一轮读同一段历史 |
+| 首轮报错后同一会话发不出去 | 用新的 `runId` 再发一条新消息。没有检查点时 `/api/v1/runs` 从最新图状态继续。取消会把会话指到图里当时的检查点，界面和下一轮读同一段历史 |
 | HTTP 409，`A run is already active for this session` | 等当前轮结束，或先取消这一轮。同一会话不能并行两轮。读取会话在运行中也返回 200 |
 | `Run replay is not supported` | 使用新的 `runId`，并发送一条新的用户消息 |
 | `Extension reload failed` | 这一轮拒绝新查询。正在跑的轮次仍用旧图。修好插件或 Hook 后再发 |

@@ -12,7 +12,7 @@ npm install
 npm run start:tui
 ```
 
-`npm run start:tui` connects to `/dataagent/stream` at the address in Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused.
+`npm run start:tui` connects to `/api/v1/runs` at the address in Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused.
 
 ## Home
 
@@ -42,7 +42,7 @@ is four rows. Both home and chat support
 - Enter submits. Shift+Enter (CSI-u or xterm modifyOtherKeys), Alt+Enter and Ctrl+J insert a newline.
 - Multi-line bracketed paste stays one editable draft; large pastes keep the existing fold/expand behavior.
 - Up/Down navigate the draft and command history. Messages entered during a run remain queued.
-- `/` opens commands and Tab completes. The TUI exposes `/help`, `/clear`, `/stop`, `/resume`, `/resume list`, `/resume latest`, `/resume <id>`, `/outputs` and `/exit`. `/stop` cancels the active turn through `POST /runs/{runId}/cancel` and stays on the same thread. `/resume` and `/resume list` open the session picker and restore that thread.
+- `/` opens commands and Tab completes. The TUI exposes `/help`, `/clear`, `/stop`, `/resume`, `/resume list`, `/resume latest`, `/resume <id>`, `/outputs` and `/exit`. `/stop` cancels the active turn through `POST /api/v1/runs/{runId}/cancel` and stays on the same thread. `/resume` and `/resume list` open the session picker and restore that thread.
 - `/outputs` opens the full output list at any width. Enter previews a result; Esc returns to the list, then chat; q closes the view. Chat always uses a single column, with no output sidebar or extra footer indicators.
 - Ctrl+C keeps the existing two-press exit flow; Ctrl+Z/fg restores the terminal and input cursor in the TUI.
 

@@ -24,11 +24,11 @@ class StrictModel(BaseModel):
 
 # --- Shared validation and extension declarations -------------------------------------------
 
-LOCAL_ID_PATTERN = r"[a-z][a-z0-9_]*"
-"""Plugin-local tool IDs."""
+NAME_PATTERN = r"[a-z][a-z0-9_-]{0,63}"
+"""Declared names: plugin IDs, plugin-local tool IDs, SubAgent names, entry, A2A agent IDs."""
 
-RESOURCE_ID_PATTERN = r"[a-z][a-z0-9_-]*"
-"""Plugin IDs and SubAgent names."""
+OPAQUE_ID_PATTERN = r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}"
+"""Caller-chosen IDs and labels: user, thread and workspace names."""
 
 
 class StdioMCPServer(StrictModel):
@@ -46,7 +46,7 @@ class RemoteMCPServer(StrictModel):
 
 class MCPConfig(StrictModel):
     mcpServers: dict[
-        Annotated[str, Field(pattern=f"^{RESOURCE_ID_PATTERN}$")],
+        Annotated[str, Field(pattern=f"^{NAME_PATTERN}$")],
         Annotated[StdioMCPServer | RemoteMCPServer, Field(discriminator="type")],
     ]
 
@@ -144,6 +144,20 @@ RESERVED_PLUGIN_IDS = frozenset({"user", "cli"})
 """Product configuration scopes cannot also name plugins."""
 
 
+def supported_version(document: str, current: int, upgrade: str):
+    """Reject another schema_version with a message that says how to upgrade."""
+
+    def check(value):
+        if value != current:
+            raise ValueError(
+                f"{document} schema_version {value!r} is not supported; "
+                f"this DataAgent reads {current}. {upgrade}"
+            )
+        return value
+
+    return check
+
+
 class SubAgentSpec(StrictModel):
     """One SubAgent declaration: a standard prompt-driven agent or a compiled graph factory.
 
@@ -156,12 +170,14 @@ class SubAgentSpec(StrictModel):
     existing standard meaning.
     """
 
+    schema_version: Literal[1] = 1
     kind: Literal["standard", "compiled"] = "standard"
-    name: str = Field(pattern=f"^{RESOURCE_ID_PATTERN}$")
+    name: str = Field(pattern=f"^{NAME_PATTERN}$")
     description: str | None = Field(default=None, min_length=1)
     # A file relative to the plugin root; collect_subagents reads it into description.
     description_file: str | None = Field(default=None, min_length=1)
-    system_prompt: str | None = None
+    # Prompt file relative to the plugin root.
+    system_prompt_file: str | None = Field(default=None, min_length=1)
     entrypoint: str | None = Field(default=None, min_length=1)
     tools: list[str] | None = None
     # Omitted sources inherit the root's compiled Skills; [] explicitly opts out.
@@ -175,6 +191,10 @@ class SubAgentSpec(StrictModel):
         ]
         | None
     ) = None
+
+    _supported_version = field_validator("schema_version", mode="before")(
+        supported_version("SubAgent JSON", 1, "Set schema_version to 1.")
+    )
 
     @model_validator(mode="before")
     @classmethod
@@ -194,9 +214,10 @@ class SubAgentSpec(StrictModel):
                 raise ValueError(
                     f"Compiled SubAgent {self.name!r} requires an entrypoint (file.py:symbol)"
                 )
-            if self.system_prompt is not None:
+            if self.system_prompt_file is not None:
                 raise ValueError(
-                    f"Compiled SubAgent {self.name!r} does not take system_prompt; the graph owns its prompts"
+                    f"Compiled SubAgent {self.name!r} does not take system_prompt_file; "
+                    "the graph owns its prompts"
                 )
             if (
                 self.tools is not None
@@ -211,9 +232,9 @@ class SubAgentSpec(StrictModel):
         else:
             if self.filesystem_tools is not None and "read_file" not in self.filesystem_tools:
                 raise ValueError("filesystem_tools must include read_file for large tool results")
-            if self.system_prompt is None:
+            if self.system_prompt_file is None:
                 raise ValueError(
-                    f"SubAgent {self.name!r} requires system_prompt; "
+                    f"SubAgent {self.name!r} requires system_prompt_file; "
                     "declare kind='compiled' for a graph factory instead"
                 )
             if self.entrypoint is not None:
@@ -231,17 +252,25 @@ class RunHookSpec(ExtensionConfig):
 
 
 class PluginSpec(StrictModel):
-    schema_version: Literal[2] = 2
-    id: str = Field(pattern=f"^{RESOURCE_ID_PATTERN}$")
-    requires: list[Annotated[str, Field(pattern=f"^{RESOURCE_ID_PATTERN}$")]] = Field(
+    schema_version: Literal[3] = 3
+    id: str = Field(pattern=f"^{NAME_PATTERN}$")
+    requires: list[Annotated[str, Field(pattern=f"^{NAME_PATTERN}$")]] = Field(
         default_factory=list
     )
-    config: str | None = Field(default=None, min_length=1)
-    system_prompt: str | None = None
+    # Files relative to the plugin root: plugins.config defaults and the prompt.
+    defaults_file: str | None = Field(default=None, min_length=1)
+    system_prompt_file: str | None = Field(default=None, min_length=1)
     tools: dict[str, ToolSpec] = Field(default_factory=dict)
     skills: list[str] = Field(default_factory=list)
     subagents: list[str] = Field(default_factory=list)
     hooks: list[HookSpec] = Field(default_factory=list)
+
+    _supported_version = field_validator("schema_version", mode="before")(
+        supported_version(
+            ".plugin.json", 3,
+            "Version 3 renames system_prompt to system_prompt_file and config to defaults_file.",
+        )
+    )
 
     @model_validator(mode="before")
     @classmethod

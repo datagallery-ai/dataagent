@@ -29,8 +29,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.model_stream import collect_model_stream
-from dataagent.models import ModelContext
+from dataagent import AgentContext, collect_model_stream
 
 _PROMPT_VERSION = "word-root-candidate-ranking-full-table-topk-v3"
 _MAX_K = 20
@@ -46,7 +45,7 @@ _result_cache_lock = threading.RLock()
 class WordRootContext:
     """Adapt the validator to native AgentKit model and plugin settings."""
 
-    context: ModelContext
+    context: AgentContext
 
     @property
     def tool_config(self) -> dict:

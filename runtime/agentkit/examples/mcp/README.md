@@ -56,12 +56,12 @@ LEGACY_MCP_API_KEY=replace-with-your-service-api-key
 
 1. 读取 Home 和启用插件的 `.mcp.json`，校验并展开环境变量。
 2. 通过官方适配器连接每个服务、发现工具；任意保留的服务不可用都会导致启动失败。
-3. 将发现的原生工具装配到 Agent。Home 中 `math` 服务的 `add` 工具名为 `mcp__user__math_add`；
-   插件 `analytics` 中同一服务的工具名为 `mcp__analytics__math_add`。
+3. 将发现的原生工具装配到 Agent。Home 中 `math` 服务的 `add` 工具名为 `mcp__user__math__add`；
+   插件 `analytics` 中同一服务的工具名为 `mcp__analytics__math__add`。
 4. REST/TUI 在下一轮请求前检测本地配置变化并刷新；当前按工具调用建立连接，不保留跨调用的服务内存状态。
    仅服务端工具列表变化而本地配置不变时，仍需重启；SDK 调用方显式重新加载工具并建图。
 
 本地示例配置好后，从仓库根运行 `npm run start:tui`。地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；控制面已经在跑时同一条命令直接连上。输入：
-`Use mcp__user__math_add to add 12 and 30.`
+`Use mcp__user__math__add to add 12 and 30.`
 
 完整配置语义及 SDK 用法见 [MCP 接入](../../docs/extensions/mcp.md) 和 [MCP 配置](../../docs/reference/mcp-configuration.md)。

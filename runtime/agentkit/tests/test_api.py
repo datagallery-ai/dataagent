@@ -77,7 +77,7 @@ async def test_health_derives_model_and_plugins_from_replaced_settings(runtime):
     settings = runtime.settings.model_copy(update={
         "models": {**runtime.settings.models, "alternate": model},
         "dataagent": runtime.settings.dataagent.model_copy(update={
-            "model": runtime.settings.dataagent.model.model_copy(update={"default": "alternate"}),
+            "model": "alternate",
         }),
         "plugins": runtime.settings.plugins.model_copy(update={"enabled": ()}),
     })
@@ -101,20 +101,20 @@ async def test_stream_two_rounds_and_restart(runtime):
     model = ScriptedModel(responses=[AIMessage(content="first answer"), AIMessage(content="second answer")])
     async with client_for(runtime, model) as (client, app):
         for text in ["first", "second"]:
-            events = sse(await client.post("/dataagent/stream", json=query(text)))
+            events = sse(await client.post("/api/v1/runs", json=query(text)))
             assert events[0]["type"] == "RUN_STARTED"
             assert terminal(events) == ["RUN_FINISHED"]
         snapshots = [event for event in events if event["type"] == "MESSAGES_SNAPSHOT"]
         assert len(snapshots) == 1
         assert len(snapshots[0]["messages"]) == 4
         assert events[-1]["metadata"]["durationMs"] >= 0
-        assert (await client.get("/sessions")).json()["sessions"][0]["threadId"] == "thread-1"
+        assert (await client.get("/api/v1/sessions")).json()["data"]["sessions"][0]["threadId"] == "thread-1"
     async with client_for(runtime, ScriptedModel(responses=[AIMessage(content="after restart")])) as (client, app):
-        restored = (await client.get("/sessions/thread-1")).json()
+        restored = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
         assert len(restored["messages"]) == 4
-        events = sse(await client.post("/dataagent/stream", json=query("third")))
+        events = sse(await client.post("/api/v1/runs", json=query("third")))
         assert terminal(events) == ["RUN_FINISHED"]
-        assert len((await client.get("/sessions/thread-1")).json()["messages"]) == 6
+        assert len((await client.get("/api/v1/sessions/thread-1")).json()["data"]["messages"]) == 6
 
 
 async def test_empty_inputs_write_and_restore_outputs_after_restart(runtime):
@@ -126,7 +126,7 @@ async def test_empty_inputs_write_and_restore_outputs_after_restart(runtime):
         AIMessage(content="saved"),
     ])
     async with client_for(runtime, model) as (client, _):
-        assert terminal(sse(await client.post("/dataagent/stream", json=query()))) == ["RUN_FINISHED"]
+        assert terminal(sse(await client.post("/api/v1/runs", json=query()))) == ["RUN_FINISHED"]
     assert (session.outputs / "result.txt").read_text() == "saved-output"
     from dataagent.bootstrap.paths import read_session_binding
     assert read_session_binding(session).workspaces == ()
@@ -135,8 +135,8 @@ async def test_empty_inputs_write_and_restore_outputs_after_restart(runtime):
         call("read_file", {"file_path": output}), AIMessage(content="restored"),
     ])
     async with client_for(runtime, model) as (client, _):
-        assert (await client.get("/sessions/thread-1")).json()["threadId"] == "thread-1"
-        assert terminal(sse(await client.post("/dataagent/stream", json=query("read it")))) == ["RUN_FINISHED"]
+        assert (await client.get("/api/v1/sessions/thread-1")).json()["data"]["threadId"] == "thread-1"
+        assert terminal(sse(await client.post("/api/v1/runs", json=query("read it")))) == ["RUN_FINISHED"]
     assert any("saved-output" in str(message.content) for message in model.requests[-1]
                if message.type == "tool" and message.name == "read_file")
 
@@ -144,19 +144,19 @@ async def test_empty_inputs_write_and_restore_outputs_after_restart(runtime):
 async def test_error_terminal_and_last_successful_checkpoint(runtime):
     model = ScriptedModel(responses=[AIMessage(content="saved answer")])
     async with client_for(runtime, model) as (client, app):
-        sse(await client.post("/dataagent/stream", json=query("saved")))
-        events = sse(await client.post("/dataagent/stream", json=query("will fail")))
+        sse(await client.post("/api/v1/runs", json=query("saved")))
+        events = sse(await client.post("/api/v1/runs", json=query("will fail")))
         assert terminal(events) == ["RUN_ERROR"]
         assert "ran out" in events[-1]["message"]
         assert len(model.requests) == 2
-        restored = (await client.get("/sessions/thread-1")).json()
+        restored = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
         assert restored["status"] == "error"
         contents = [message.get("content") for message in restored["messages"]]
         assert "saved" in contents and "will fail" in contents
         assert "Restored the saved checkpoint" in restored["notice"]
     model = ScriptedModel(responses=[AIMessage(content="recovered")])
     async with client_for(runtime, model) as (client, app):
-        events = sse(await client.post("/dataagent/stream", json=query("continue")))
+        events = sse(await client.post("/api/v1/runs", json=query("continue")))
         assert terminal(events) == ["RUN_FINISHED"]
         contents = [message.content for message in model.requests[0]]
         assert "will fail" in contents
@@ -165,13 +165,13 @@ async def test_error_terminal_and_last_successful_checkpoint(runtime):
 
 async def test_first_run_failure_can_be_retried_on_the_same_thread(runtime):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
-        assert terminal(sse(await client.post("/dataagent/stream", json=query("first")))) == ["RUN_ERROR"]
-        restored = (await client.get("/sessions/thread-1")).json()
+        assert terminal(sse(await client.post("/api/v1/runs", json=query("first")))) == ["RUN_ERROR"]
+        restored = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
         assert restored["status"] == "error"
         assert any(message.get("content") == "first" for message in restored["messages"])
     model = ScriptedModel(responses=[AIMessage(content="recovered")])
     async with client_for(runtime, model) as (client, app):
-        events = sse(await client.post("/dataagent/stream", json=query("again")))
+        events = sse(await client.post("/api/v1/runs", json=query("again")))
         assert terminal(events) == ["RUN_FINISHED"]
         seen = [message.content for message in model.requests[-1]]
         assert "first" in seen
@@ -187,7 +187,7 @@ async def test_failure_log_and_sse_include_only_redacted_exception_chain(runtime
     caplog.set_level("ERROR", logger="dataagent.api")
     body = query()
     async with client_for(runtime, FailedModel(responses=[])) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=body))
+        events = sse(await client.post("/api/v1/runs", json=body))
     assert terminal(events) == ["RUN_ERROR"]
     record, = [r for r in caplog.records if r.name == "dataagent.api" and "RUN_ERROR" in r.getMessage()]
     message = record.getMessage()
@@ -213,7 +213,7 @@ async def test_upstream_run_error_is_also_logged_redacted(runtime, caplog, monke
     monkeypatch.setattr("ag_ui_langgraph.LangGraphAgent.run", fail)
     caplog.set_level("ERROR", logger="dataagent.api")
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["message"] == "upstream failed: [REDACTED]"
     assert events[-1]["code"] == "INTERNAL_ERROR"
@@ -234,7 +234,7 @@ async def test_native_child_error_is_redacted_without_becoming_root_terminal(run
 
     monkeypatch.setattr("ag_ui_langgraph.LangGraphAgent.run", fail)
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
     child = next(event for event in events if event["type"] == "SUBAGENT_ERROR")
     assert child["subagentRunId"] == "child"
     assert child["message"] == "failed: [REDACTED]"
@@ -245,7 +245,7 @@ async def test_native_child_error_is_redacted_without_becoming_root_terminal(run
 
 async def test_unsafe_thread_id_is_rejected(runtime):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, _):
-        response = await client.post("/dataagent/stream", json=query(thread="../x"))
+        response = await client.post("/api/v1/runs", json=query(thread="../x"))
     assert response.status_code == 422
     assert "safe opaque" in response.text
 
@@ -258,19 +258,19 @@ async def test_unsafe_thread_id_is_rejected(runtime):
 ])
 async def test_injection_is_rejected(runtime, extra):
     async with client_for(runtime, ScriptedModel(responses=[])) as (client, app):
-        assert (await client.post("/dataagent/stream", json=query(**extra))).status_code == 422
+        assert (await client.post("/api/v1/runs", json=query(**extra))).status_code == 422
 
 
 async def test_replay_rejected_and_session_isolation(runtime):
     model = ScriptedModel(responses=[AIMessage(content="one"), AIMessage(content="two")])
     async with client_for(runtime, model) as (client, app):
         body = query()
-        sse(await client.post("/dataagent/stream", json=body))
-        assert (await client.post("/dataagent/stream", json=body)).status_code == 409
+        sse(await client.post("/api/v1/runs", json=body))
+        assert (await client.post("/api/v1/runs", json=body)).status_code == 409
         body["runId"] = str(uuid4())
-        assert (await client.post("/dataagent/stream", json=body)).status_code == 409
-        sse(await client.post("/dataagent/stream", json=query("other", thread="other")))
-        messages = (await client.get("/sessions/other")).json()["messages"]
+        assert (await client.post("/api/v1/runs", json=body)).status_code == 409
+        sse(await client.post("/api/v1/runs", json=query("other", thread="other")))
+        messages = (await client.get("/api/v1/sessions/other")).json()["data"]["messages"]
         assert len(messages) == 2 and messages[0]["content"] == "other"
 
 
@@ -289,17 +289,17 @@ async def test_cancel_before_completion_keeps_the_user_message(runtime):
     model = WaitingModel(responses=[AIMessage(content="continued")])
     async with client_for(runtime, model) as (client, app):
         body = query("keep-me")
-        running = asyncio.create_task(client.post("/dataagent/stream", json=body))
+        running = asyncio.create_task(client.post("/api/v1/runs", json=body))
         await asyncio.wait_for(ready.wait(), 5)
-        cancel = await client.post(f"/runs/{body['runId']}/cancel")
+        cancel = await client.post(f"/api/v1/runs/{body['runId']}/cancel")
         assert cancel.status_code == 204
         response = await asyncio.wait_for(running, 5)
         assert response.status_code == 200
         assert "RUN_FINISHED" not in response.text
-        restored = (await client.get("/sessions/thread-1")).json()
+        restored = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
         assert restored["status"] == "interrupted"
         assert any(message.get("content") == "keep-me" for message in restored["messages"])
-        follow = sse(await client.post("/dataagent/stream", json=query("next")))
+        follow = sse(await client.post("/api/v1/runs", json=query("next")))
         assert terminal(follow) == ["RUN_FINISHED"]
         assert any(message.content == "keep-me" for message in model.requests[-1] if getattr(message, "type", None) == "human")
 
@@ -319,19 +319,19 @@ async def test_session_reads_match_while_running_and_after_cancel(runtime):
     model = WaitingModel(responses=[AIMessage(content="continued")])
     async with client_for(runtime, model) as (client, _):
         body = query("keep-me")
-        running = asyncio.create_task(client.post("/dataagent/stream", json=body))
+        running = asyncio.create_task(client.post("/api/v1/runs", json=body))
         await asyncio.wait_for(ready.wait(), 5)
-        tui_view = (await client.get("/sessions/thread-1")).json()
+        tui_view = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
         assert tui_view["status"] == "running"
         assert "newThreadRequired" not in tui_view
         assert tui_view["notice"] is None
-        assert (await client.post(f"/runs/{body['runId']}/cancel")).status_code == 204
+        assert (await client.post(f"/api/v1/runs/{body['runId']}/cancel")).status_code == 204
         await asyncio.wait_for(running, 5)
-        tui_after = (await client.get("/sessions/thread-1")).json()
+        tui_after = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
         assert tui_after["status"] == "interrupted"
         assert "Restored the saved checkpoint" in tui_after["notice"]
         assert any(message.get("content") == "keep-me" for message in tui_after["messages"])
-        follow = sse(await client.post("/dataagent/stream", json=query("next")))
+        follow = sse(await client.post("/api/v1/runs", json=query("next")))
         assert terminal(follow) == ["RUN_FINISHED"]
         assert any(message.content == "keep-me" for message in model.requests[-1] if getattr(message, "type", None) == "human")
 
@@ -353,21 +353,21 @@ async def test_cancel_after_success_keeps_the_cancelled_message_for_the_next_tur
         AIMessage(content="continued"),
     ])
     async with client_for(runtime, model) as (client, app):
-        sse(await client.post("/dataagent/stream", json=query("saved")))
+        sse(await client.post("/api/v1/runs", json=query("saved")))
         body = query("BLUE-42")
-        running = asyncio.create_task(client.post("/dataagent/stream", json=body))
+        running = asyncio.create_task(client.post("/api/v1/runs", json=body))
         await asyncio.wait_for(ready.wait(), 5)
-        mid = (await client.get("/sessions/thread-1")).json()
+        mid = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
         assert mid["status"] == "running"
         assert "saved" in [message.get("content") for message in mid["messages"]]
-        assert (await client.post(f"/runs/{body['runId']}/cancel")).status_code == 204
+        assert (await client.post(f"/api/v1/runs/{body['runId']}/cancel")).status_code == 204
         response = await asyncio.wait_for(running, 5)
         assert "RUN_FINISHED" not in response.text
-        restored = (await client.get("/sessions/thread-1")).json()
+        restored = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
         assert restored["status"] == "interrupted"
         contents = [message.get("content") for message in restored["messages"]]
         assert "saved" in contents and "BLUE-42" in contents
-        follow = sse(await client.post("/dataagent/stream", json=query("what was the code")))
+        follow = sse(await client.post("/api/v1/runs", json=query("what was the code")))
         assert terminal(follow) == ["RUN_FINISHED"]
         seen = [message.content for message in model.requests[-1]]
         assert "BLUE-42" in seen and "saved" in seen
@@ -381,10 +381,10 @@ async def test_concurrent_same_thread_rejected(runtime):
             await release.wait()
             return await super()._agenerate(*args, **kwargs)
     async with client_for(runtime, WaitingModel(responses=[AIMessage(content="done")])) as (client, app):
-        first = asyncio.create_task(client.post("/dataagent/stream", json=query()))
+        first = asyncio.create_task(client.post("/api/v1/runs", json=query()))
         await asyncio.wait_for(ready.wait(), 5)
         try:
-            assert (await client.post("/dataagent/stream", json=query())).status_code == 409
+            assert (await client.post("/api/v1/runs", json=query())).status_code == 409
         finally:
             release.set()
         assert terminal(sse(await first)) == ["RUN_FINISHED"]
@@ -398,10 +398,10 @@ async def test_deadline_covers_iteration_and_releases_session(runtime):
         async def _agenerate(self, *args, **kwargs):
             await asyncio.Event().wait()
     async with client_for(runtime, NeverModel(responses=[])) as (client, app):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
         assert terminal(events) == ["RUN_ERROR"]
         assert events[-1]["code"] == "TIMEOUT"
-        assert (await client.get("/sessions/thread-1")).status_code == 200
+        assert (await client.get("/api/v1/sessions/thread-1")).status_code == 200
 
 
 async def test_native_child_progress_visible_but_internal_content_hidden(runtime, monkeypatch):
@@ -418,7 +418,7 @@ async def test_native_child_progress_visible_but_internal_content_hidden(runtime
         AIMessage(content="child-private-answer"), AIMessage(content="root-answer"),
     ])
     async with client_for(runtime, model) as (client, app):
-        response = await client.post("/dataagent/stream", json=query("delegate"))
+        response = await client.post("/api/v1/runs", json=query("delegate"))
         events = sse(response)
         assert terminal(events) == ["RUN_FINISHED"]
         starts = [event for event in events if event["type"] == "TOOL_CALL_START"]
@@ -449,7 +449,7 @@ async def test_provider_failure_after_actual_streamed_tokens(runtime):
 
     model = BrokenStream(responses=[])
     async with client_for(runtime, model) as (client, app):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
         assert terminal(events) == ["RUN_ERROR"]
         assert "Provider stream failed" in events[-1]["message"]
         assert any("partial provider output" in str(event.get("delta", "")) for event in events)
@@ -496,7 +496,7 @@ async def test_real_http_disconnect_cancels_model_and_releases_session(runtime, 
                 base_url=f"http://127.0.0.1:{port}",
             ) as client:
                 body = query()
-                async with client.stream("POST", "/dataagent/stream", json=body) as response:
+                async with client.stream("POST", "/api/v1/runs", json=body) as response:
                     async for line in response.aiter_lines():
                         if "partial output" in line:
                             break
@@ -504,9 +504,9 @@ async def test_real_http_disconnect_cancels_model_and_releases_session(runtime, 
                 async with asyncio.timeout(5):
                     while (await app.state.sessions.get(runtime.paths.user_id, "thread-1"))["status"] == "running":
                         await asyncio.sleep(0.01)
-                restored = await client.get("/sessions/thread-1")
+                restored = await client.get("/api/v1/sessions/thread-1")
                 assert restored.status_code == 200
-                assert restored.json()["status"] == "interrupted"
+                assert restored.json()["data"]["status"] == "interrupted"
                 assert not recorder.active
                 assert recorder.events[-1][1] == "on_chain_error"
                 traces = list(runtime.paths.for_session("thread-1").traces.glob("*.json"))
@@ -544,7 +544,7 @@ async def test_sdk_and_http_share_hook_lifecycle(runtime, monkeypatch, scenario)
     monkeypatch.setattr(importlib.import_module("dataagent.client"), "build_graph",
                         lambda *args, **kwargs: build_graph(*args, **kwargs).with_config(callbacks=[http_hooks]))
     async with client_for(runtime, ScriptedModel(responses=responses)) as (client, app):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
         assert terminal(events) == (["RUN_ERROR"] if scenario == "model_error" else ["RUN_FINISHED"])
     assert [(agent, event) for agent, event, _ in sdk_hooks.events] == [
         (agent, event) for agent, event, _ in http_hooks.events
@@ -564,7 +564,7 @@ async def test_configured_hook_error_reaches_http_without_false_success_or_retry
         f"async def handle({signature}, *, params):\n    raise RuntimeError('Policy failure')\n"
     )
     (root / ".plugin.json").write_text(json.dumps({
-        "schema_version": 2, "id": "policy",
+        "schema_version": 3, "id": "policy",
         "hooks": [{"entrypoint": "policy.py:handle", "event": event}],
     }))
     runtime = replace(runtime, settings=runtime.settings.model_copy(update={"plugins": runtime.settings.plugins.model_copy(update={
@@ -574,11 +574,11 @@ async def test_configured_hook_error_reaches_http_without_false_success_or_retry
         call("common__summarize_numbers", {"numbers": [1]}), AIMessage(content="Original successful answer"),
     ])
     async with client_for(runtime, model) as (client, app):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
         assert terminal(events) == ["RUN_ERROR"]
         assert events[-1]["code"] == "INTERNAL_ERROR"
         assert "Policy failure" in events[-1]["message"]
-        assert (await client.get("/sessions/thread-1")).json()["status"] == "error"
+        assert (await client.get("/api/v1/sessions/thread-1")).json()["data"]["status"] == "error"
     assert len(model.requests) == (0 if event in {"before_agent", "before_model"}
                                    else 2 if event == "after_agent" else 1)
 
@@ -663,7 +663,7 @@ async def test_unknown_entry_fails_the_request_not_health(runtime):
         health = await client.get("/healthz")
         assert health.status_code == 200
         assert health.json()["data"]["conversation"]["entry"] == "missing"
-        response = await client.post("/dataagent/stream", json=query())
+        response = await client.post("/api/v1/runs", json=query())
     assert response.status_code == 409 and "missing" in response.text
 
 
@@ -674,7 +674,7 @@ async def test_compiled_entry_streams_model_chunks(runtime, tmp_path, model_sour
     assert type(model)._astream is not ScriptedModel._astream
     async with client_for(runtime, model) as (client, _):
         stream = sse(await client.post(
-            "/dataagent/stream", json=query("ask", thread=f"{model_source}-entry"),
+            "/api/v1/runs", json=query("ask", thread=f"{model_source}-entry"),
         ))
     _assert_model_stream_visible(stream)
 
@@ -685,12 +685,12 @@ async def test_concurrent_requests_with_one_run_id_get_one_409(runtime):
     second = query(thread="thread-dup-b", runId=first["runId"])
     async with client_for(runtime, model) as (client, _app):
         responses = await asyncio.gather(
-            client.post("/dataagent/stream", json=first),
-            client.post("/dataagent/stream", json=second),
+            client.post("/api/v1/runs", json=first),
+            client.post("/api/v1/runs", json=second),
         )
         # A finished run frees its runId.
         third = query(thread="thread-dup-c", runId=first["runId"])
-        reused = await client.post("/dataagent/stream", json=third)
+        reused = await client.post("/api/v1/runs", json=third)
     assert sorted(response.status_code for response in responses) == [200, 409]
     assert reused.status_code == 200
 

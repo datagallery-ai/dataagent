@@ -63,12 +63,13 @@ class SubagentServices:
     configured); factories consume it without owning its lifecycle.
     ``outputs_dir`` is the current session's output directory (None outside a
     session), where factories may write result files the parent agent can read.
+    ``run_hooks`` are this plugin's ``plugins.config.<id>.run_hooks``, compiled in
+    declaration order; the factory applies them at its workflow boundary.
     """
 
     get_model: Callable[[str], BaseChatModel]
     semantic_client: SemanticServiceClient | None = None
     outputs_dir: Path | None = None
-    context: Any = None
     run_hooks: tuple[RunHook, ...] = ()
 
 
@@ -87,10 +88,11 @@ def _compiled_child(
     loader: PythonLoader,
     plugin_params: dict[str, dict[str, Any]] | None,
     services: SubagentServices,
+    context,
     run_hook_entries,
 ) -> dict[str, Any]:
     params = deepcopy((plugin_params or {}).get(plugin_id) or {})
-    configured_hooks = params.pop("hooks", None)
+    configured_hooks = params.pop("run_hooks", None)
     if configured_hooks and plugin_id not in run_hook_entries:
         raise ValueError(
             f"Workflow Hooks for {plugin_id!r} require source bindings from prepare_runtime()"
@@ -100,7 +102,7 @@ def _compiled_child(
         run_hooks=compile_run_hooks(
             run_hook_entries.get(plugin_id, ()),
             loader,
-            services.context,
+            context,
         ),
     )
     factory = loader.load(root, spec.entrypoint)
@@ -152,7 +154,6 @@ def materialize_subagents(
         services = SubagentServices(
             get_model=model_resolver or _unresolvable_model,
             semantic_client=semantic_client,
-            context=context,
             outputs_dir=outputs_dir,
         )
     else:
@@ -168,6 +169,7 @@ def materialize_subagents(
                     loader=loader,
                     plugin_params=plugin_params,
                     services=services,
+                    context=context,
                     run_hook_entries=run_hook_entries,
                 )
             )
@@ -183,7 +185,7 @@ def materialize_subagents(
         child = {
             "name": spec.name,
             "description": spec.description,
-            "system_prompt": contained_path(root, spec.system_prompt).read_text(encoding="utf-8"),
+            "system_prompt": contained_path(root, spec.system_prompt_file).read_text(encoding="utf-8"),
             "skills": (
                 list(skill_sources)
                 if spec.skills is None

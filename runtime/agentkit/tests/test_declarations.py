@@ -42,7 +42,7 @@ def test_tool_declaration_keeps_native_arguments_and_defaults_to_all_agents():
     [
         (AgentSettings, {}),
         (PluginSpec, {"id": "example"}),
-        (SubAgentSpec, {"name": "example", "description": "Example", "system_prompt": "Help"}),
+        (SubAgentSpec, {"name": "example", "description": "Example", "system_prompt_file": "Help"}),
     ],
 )
 def test_grouped_hooks_share_the_same_internal_declaration(model, base):
@@ -77,3 +77,33 @@ def test_grouped_hooks_share_the_same_internal_declaration(model, base):
 def test_invalid_grouped_hooks_fail_explicitly(hooks):
     with pytest.raises(ValueError):
         AgentSettings.model_validate({"hooks": hooks})
+
+
+@pytest.mark.parametrize("model,data,hint", [
+    (PluginSpec, {"schema_version": 2, "id": "old"}, "system_prompt_file"),
+    (SubAgentSpec, {"schema_version": 2, "name": "child", "description": "x", "system_prompt_file": "p.md"},
+     "Set schema_version to 1"),
+])
+def test_unsupported_schema_version_says_how_to_upgrade(model, data, hint):
+    with pytest.raises(ValidationError) as caught:
+        model.model_validate(data)
+    message = str(caught.value)
+    assert "is not supported" in message and hint in message
+
+
+def test_config_json_version_says_how_to_upgrade():
+    from dataagent.settings import Settings
+
+    with pytest.raises(ValidationError) as caught:
+        Settings.model_validate({"schema_version": 2, "models": {}})
+    assert "a2a.remote_agents" in str(caught.value)
+
+
+def test_old_field_names_are_rejected():
+    for model, data in [
+        (PluginSpec, {"id": "old", "system_prompt": "p.md"}),
+        (PluginSpec, {"id": "old", "config": "defaults.json"}),
+        (SubAgentSpec, {"name": "child", "description": "x", "system_prompt": "p.md"}),
+    ]:
+        with pytest.raises(ValidationError):
+            model.model_validate(data)

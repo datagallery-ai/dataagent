@@ -11,6 +11,10 @@ from dataagent import (
 from dataagent.host import extension_revision, refresh_extensions
 
 
+class ExtensionReloadError(RuntimeError):
+    """Changed extensions failed to load. A server fault, not a client conflict."""
+
+
 class SessionAgents:
     """Only preparation is serialized; active streams keep their own graph reference."""
 
@@ -63,7 +67,7 @@ class SessionAgents:
                     semantic_client=self.semantic_client,
                 )
                 if changed and extension_revision(candidate) != revision:
-                    raise ValueError(
+                    raise ExtensionReloadError(
                         "Extensions changed during loading; retry after installation finishes"
                     )
             except Exception as error:
@@ -72,7 +76,7 @@ class SessionAgents:
                 message = safe_error(
                     error, (*self.runtime.redaction_secrets, *candidate.redaction_secrets)
                 )["message"]
-                raise ValueError(f"Extension reload failed: {message}") from None
+                raise ExtensionReloadError(f"Extension reload failed: {message}") from None
             if changed:
                 self.cache.clear()
                 self.runtime, self.mcp_tools, self.revision = candidate, tools, revision

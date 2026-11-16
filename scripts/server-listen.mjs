@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const HOME_CONFIG_TEMPLATE = fileURLToPath(
@@ -16,11 +16,16 @@ export function httpOrigin(host, port) {
   return `http://${shown}:${port}`;
 }
 
-function homeDir(env) {
-  if (Object.prototype.hasOwnProperty.call(env, "DATAAGENT_HOME")) {
-    return env.DATAAGENT_HOME?.trim() || null;
-  }
-  return join(homedir(), ".dataagent");
+/**
+ * Home, same rule as the backend (`home_path`): a blank DATAAGENT_HOME means unset
+ * and gives ~/.dataagent; `~` expands; a relative value uses the process directory.
+ */
+export function resolveHome(env = process.env) {
+  const raw = env.DATAAGENT_HOME?.trim() || join(homedir(), ".dataagent");
+  const expanded = raw === "~" || raw.startsWith("~/")
+    ? join(homedir(), raw.slice(raw === "~" ? 1 : 2))
+    : raw;
+  return isAbsolute(expanded) ? expanded : resolve(process.cwd(), expanded);
 }
 
 function readServerSection(file) {
@@ -69,9 +74,7 @@ function readExplicitListen(file) {
 export function readServerListen(env = process.env, configPath) {
   const explicit = typeof configPath === "string" ? configPath.trim() : "";
   if (explicit) return readExplicitListen(explicit);
-  const home = homeDir(env);
-  const base = home ? readServerSection(join(home, "config.json")) : {};
-  return listenFromServer(base);
+  return listenFromServer(readServerSection(join(resolveHome(env), "config.json")));
 }
 
 function isPlainObject(value) {
@@ -100,9 +103,7 @@ function freshHomeConfig() {
  * Unreadable JSON is left untouched.
  */
 export function writeServerListen(env, listen) {
-  const home = env.DATAAGENT_HOME?.trim();
-  if (!home) throw new Error("DATAAGENT_HOME is required to write server.host and server.port");
-  const file = join(home, "config.json");
+  const file = join(resolveHome(env), "config.json");
   mkdirSync(dirname(file), { recursive: true });
   let doc;
   if (!existsSync(file)) {

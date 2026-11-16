@@ -1,6 +1,6 @@
 # Python SDK
 
-SDK 与 REST 使用同一套准备和装配。只有一条路径：`prepare_runtime` 得到 Runtime，`create_agent` 创建 Agent，再调用 Agent。默认不创建 Home 目录。
+SDK 与 REST 使用同一套准备和装配。只有一条路径：`prepare_runtime` 得到 PreparedRuntime，`create_agent` 创建 Agent，再调用 Agent。默认不创建 Home 目录。
 
 公开名称见 [Python API](../reference/python-api.md)。`dataagent.lowlevel.build_graph` 等低层接口只在需要自己管理 LangGraph 图时使用，本文不涉及。
 
@@ -17,11 +17,11 @@ async with create_agent(runtime, checkpointer=checkpointer) as agent:
     )
 ```
 
-`prepare_runtime` 返回不可变的 Runtime：设置、路径、扩展位置和启动报告。默认 `init_home=False`。Home 不存在时，只是没有用户配置层。需要模板目录时传入 `init_home=True`。
+`prepare_runtime` 返回不可变的 PreparedRuntime：设置、路径、扩展位置和启动报告。默认 `init_home=False`。Home 不存在时，只是没有用户配置层。需要模板目录时传入 `init_home=True`。
 
 调用方拥有 checkpointer 和这次运行的 `config`。`thread_id` 放在 `config["configurable"]`，它决定使用哪个会话。
 
-`create_agent` 返回 `Agent`。它会立即检查配置（入口、插件声明、MCP、Hook、语义客户端），出错时直接报错，不创建会话目录。预检只读取声明和说明文件，不导入插件 Python；SDK 会话构图阶段才在构建锁内执行插件加载。同一用户、配置和插件版本下，一个 SDK 实例服务多个会话。每个会话首次使用时创建原生图并缓存，backend 和插件输出路径固定。缓存最多保留 32 个空闲会话图，超出时淘汰最久未用的；对话状态在 checkpointer 中，不受淘汰影响。模型客户端共享；每个会话使用独立的 `ModelContext`；会话图上的 tracer 按 run ID 分别导出轨迹，结束后清理调用记录。
+`create_agent` 返回 `Agent`。它会立即检查配置（入口、插件声明、MCP、Hook、语义客户端），出错时直接报错，不创建会话目录。预检只读取声明和说明文件，不导入插件 Python；SDK 会话构图阶段才在构建锁内执行插件加载。同一用户、配置和插件版本下，一个 SDK 实例服务多个会话。每个会话首次使用时创建原生图并缓存，backend 和插件输出路径固定。缓存最多保留 32 个空闲会话图，超出时淘汰最久未用的；对话状态在 checkpointer 中，不受淘汰影响。模型客户端共享；每个会话使用独立的 `AgentContext`；会话图上的 tracer 按 run ID 分别导出轨迹，结束后清理调用记录。
 
 配置了 MCP 时，先加载工具再创建 Agent：
 
@@ -99,9 +99,9 @@ Python 工具通过原生 `ToolRuntime` 使用已配置的模型，不必自己�
 
 ```python
 from langchain.tools import ToolRuntime
-from dataagent import ModelContext
+from dataagent import AgentContext
 
-async def summarize(text: str, runtime: ToolRuntime[ModelContext]) -> str:
+async def summarize(text: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Summarize text using the configured fast model."""
     model = runtime.context.get_model("fast")
     return (await model.ainvoke(text, config=runtime.config)).text

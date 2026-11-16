@@ -75,7 +75,7 @@ One control plane, two presentations, Home layout, and workspaces.
 
 <div class="df-card" markdown>
 ### Integrate APIs
-Call `POST /dataagent/stream` and the session routes on the control plane.
+Call `POST /api/v1/runs` and the session routes on the control plane.
 
 [View API reference](en/reference/rest-api.md){ .df-card-action }
 </div>

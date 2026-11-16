@@ -2,7 +2,7 @@
 
 本文说明如何把 AgentKit 连接到已经运行的语义服务。服务由外部部署，本仓库只包含客户端。
 
-客户端独立于插件注册。配置了 `semantic` 之后，REST 在进程生命周期里创建一个客户端，并放进每个 Agent 的 `ModelContext`。SDK 的 `create_agent` 在未传入客户端时自己创建，并在 `close()` 时关闭。
+客户端独立于插件注册。配置了 `semantic` 之后，REST 在进程生命周期里创建一个客户端，并放进每个 Agent 的 `AgentContext`。SDK 的 `create_agent` 在未传入客户端时自己创建，并在 `close()` 时关闭。
 
 ## 配置
 
@@ -12,7 +12,7 @@
     "base_url": "https://semantic.example.com",
     "username": "$env{SEMANTIC_USERNAME}",
     "password": "$env{SEMANTIC_PASSWORD}",
-    "timeout": 30,
+    "timeout_seconds": 30,
     "tls": {
       "verify_server": true,
       "ca_file": "certs/ca.pem",
@@ -27,7 +27,7 @@
 
 - `base_url` 不能为空白。客户端会规范成服务根，请求打到 `/api/semantic/v1/...`
 - `username` 和 `password` 必须同时出现或同时省略。出现时使用 HTTP Basic
-- `timeout` 默认 30 秒，必须是正的有限数
+- `timeout_seconds` 默认 30 秒，必须是正的有限数
 - TLS 文件路径相对声明它们的配置文件目录，支持 `~/`
 
 ## TLS
@@ -42,9 +42,9 @@
 
 ```python
 from langchain.tools import ToolRuntime
-from dataagent import ModelContext
+from dataagent import AgentContext
 
-def lookup(query: str, runtime: ToolRuntime[ModelContext]) -> str:
+def lookup(query: str, runtime: ToolRuntime[AgentContext]) -> str:
     """Retrieve semantic metadata for a natural-language query."""
     client = runtime.context.semantic_client
     if client is None:
@@ -78,8 +78,10 @@ def lookup(query: str, runtime: ToolRuntime[ModelContext]) -> str:
 
 `with_scenario(scenario)` 返回共用同一连接的客户端视图，它的请求带上场景请求头。
 
-列标识使用 `db.table.column`。`get_columns_sample_values` 的 `sample_count` 范围是 0 到 100。
+列标识使用 `db.table.column`。`get_columns_sample_values` 的 `sample_count` 范围是 0 到 100，只能按关键字传。
 
-也可以 `SemanticServiceClient.from_settings(runtime.settings.semantic)` 自己建客户端。这样你拥有它的 `close()`。
+参数约定：定位参数从大到小（库、表、关键词或查询）；条数一律是关键字参数 `limit`，线上仍发 `topK` 或 `limit`。`max_depth`、`sample_count` 也只能按关键字传。
+
+也可以 `SemanticServiceClient.from_settings(runtime.settings.semantic)` 自己建客户端。这样你拥有它的 `close()`。直接用 `SemanticServiceClient(base_url, ...)` 构造时默认校验服务端证书（`verify=True`）；`from_settings` 按配置的 `tls` 决定。
 
 Basic 凭据和它的 Base64 形式进入诊断脱敏列表。日志不应打出原始密钥。

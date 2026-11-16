@@ -43,7 +43,7 @@ from .data.business_twin_business_id_selector import (
 from .data.business_twin_dimension_metadata import BUSINESS_TWIN_DIMENSION_METADATA
 
 if TYPE_CHECKING:
-    from dataagent.semantic_client import SemanticServiceClient
+    from dataagent import SemanticServiceClient
 
 
 def _scenario_error(message: str, detail: str = "") -> DataAgentError:

@@ -7,21 +7,27 @@ LangChain imports; the only package dependency is dataagent.declarations.
 from collections.abc import Mapping
 from pathlib import Path
 from types import MappingProxyType
-from typing import Literal
+from typing import Annotated, Literal
 
-from pydantic import Field, JsonValue, SecretStr, field_serializer, field_validator, model_validator
+from pydantic import (
+    BeforeValidator,
+    Field,
+    JsonValue,
+    SecretStr,
+    field_serializer,
+    field_validator,
+    model_validator,
+)
 
 from dataagent.declarations import (
-    RESOURCE_ID_PATTERN,
+    NAME_PATTERN,
+    OPAQUE_ID_PATTERN,
     HookSpec,
     StrictModel,
     json_containers,
     normalize_hooks,
+    supported_version,
 )
-
-
-class ModelSelection(StrictModel):
-    default: str = "primary"
 
 
 class Limits(StrictModel):
@@ -38,13 +44,13 @@ class LoopDetectionSettings(StrictModel):
 class WorkspaceSettings(StrictModel):
     """A configured read-only input. Writable inputs are rejected in this version."""
 
-    name: str = Field(pattern=r"^[A-Za-z0-9][A-Za-z0-9_-]{0,127}$")
+    name: str = Field(pattern=f"^{OPAQUE_ID_PATTERN}$")
     path: Path
     read_only: Literal[True] = True
 
 
 class AgentSettings(StrictModel):
-    model: ModelSelection = Field(default_factory=ModelSelection)
+    model: str = Field(default="primary", min_length=1)  # A key of models, not a provider model name.
     limits: Limits = Field(default_factory=Limits)
     loop_detection: LoopDetectionSettings = Field(default_factory=LoopDetectionSettings)
     hooks: tuple[HookSpec, ...] = ()  # Independent registrations accumulate across config layers.
@@ -52,7 +58,7 @@ class AgentSettings(StrictModel):
     # New sessions use <output_root>/<user>/<session>; None means <home>/outputs.
     output_root: Path | None = None
     # Compiled subagent used as the whole graph. None keeps the Deep Agents root.
-    entry: str | None = Field(default=None, pattern=f"^{RESOURCE_ID_PATTERN}$")
+    entry: str | None = Field(default=None, pattern=f"^{NAME_PATTERN}$")
 
     @field_validator("hooks", mode="before")
     @classmethod
@@ -105,7 +111,7 @@ class PluginSettings(StrictModel):
 class A2AAgentSettings(StrictModel):
     """One remote agent this process can call. The tool name is ``a2a__<id>``."""
 
-    id: str = Field(pattern=r"^[A-Za-z][A-Za-z0-9_-]{0,63}$")
+    id: str = Field(pattern=f"^{NAME_PATTERN}$")
     url: str = Field(min_length=1)
     description: str = ""
     auth_token: SecretStr | None = Field(default=None, repr=False)
@@ -114,20 +120,20 @@ class A2AAgentSettings(StrictModel):
     @model_validator(mode="after")
     def http_url(self):
         if not self.url.startswith(("http://", "https://")):
-            raise ValueError("a2a.agents.url must start with http:// or https://")
+            raise ValueError("a2a.remote_agents.url must start with http:// or https://")
         return self
 
 
 class A2ASettings(StrictModel):
     """Remote agents compiled into the graph. An empty list adds no tools."""
 
-    agents: tuple[A2AAgentSettings, ...] = ()
+    remote_agents: tuple[A2AAgentSettings, ...] = ()
 
     @model_validator(mode="after")
     def unique_agents(self):
-        names = [item.id for item in self.agents]
+        names = [item.id for item in self.remote_agents]
         if len(set(names)) != len(names):
-            raise ValueError("a2a.agents contains duplicate ids")
+            raise ValueError("a2a.remote_agents contains duplicate ids")
         return self
 
 
@@ -171,7 +177,7 @@ class SemanticSettings(StrictModel):
     base_url: str = Field(min_length=1)
     username: str | None = Field(default=None, min_length=1, repr=False)
     password: SecretStr | None = Field(default=None, min_length=1)
-    timeout: float = Field(default=30, gt=0, allow_inf_nan=False)
+    timeout_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
     tls: SemanticTLSSettings = Field(default_factory=SemanticTLSSettings)
 
     @model_validator(mode="after")
@@ -185,7 +191,15 @@ class SemanticSettings(StrictModel):
 
 
 class Settings(StrictModel):
-    schema_version: Literal[3] = 3
+    # Layer models copy field metadata, so version hints survive partial validation.
+    schema_version: Annotated[
+        Literal[4],
+        BeforeValidator(supported_version(
+            "config.json", 4,
+            "Version 4 makes dataagent.model a string and renames a2a.agents to "
+            "a2a.remote_agents and semantic.timeout to semantic.timeout_seconds.",
+        )),
+    ] = 4
     dataagent: AgentSettings = Field(default_factory=AgentSettings)
     models: Mapping[str, ModelSettings]
     plugins: PluginSettings = Field(default_factory=PluginSettings)
@@ -199,8 +213,8 @@ class Settings(StrictModel):
 
     @model_validator(mode="after")
     def selected_model_exists(self):
-        if self.dataagent.model.default not in self.models:
-            raise ValueError("dataagent.model.default does not name a configured model")
+        if self.dataagent.model not in self.models:
+            raise ValueError("dataagent.model does not name a configured model")
         object.__setattr__(self, "models", MappingProxyType(dict(self.models)))
         return self
 
@@ -208,7 +222,6 @@ class Settings(StrictModel):
 SECTION_MODELS = frozenset(
     {
         AgentSettings,
-        ModelSelection,
         Limits,
         LoopDetectionSettings,
         PluginSettings,

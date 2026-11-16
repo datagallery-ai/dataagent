@@ -12,7 +12,7 @@
 # ============================================================================
 """Configured native models and process-local dependencies for ToolRuntime.context.
 
-Agent supplies ModelContext through native invocation arguments, never through
+Agent supplies AgentContext through native invocation arguments, never through
 messages, checkpoint state or client-supplied configuration. No global client cache.
 """
 
@@ -26,7 +26,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_openai import ChatOpenAI
 from pydantic import BaseModel, PrivateAttr
 
-from dataagent.bootstrap import Runtime
+from dataagent.bootstrap import PreparedRuntime
 from dataagent.bootstrap.config_files import expand_env, validate_against
 from dataagent.bootstrap.environment import selected_env_path
 from dataagent.bootstrap.paths import SessionPaths
@@ -34,10 +34,10 @@ from dataagent.semantic_client import SemanticServiceClient
 from dataagent.settings import ModelSettings
 
 
-def build_model(runtime: Runtime, name: str | None = None) -> BaseChatModel:
+def build_model(runtime: PreparedRuntime, name: str | None = None) -> BaseChatModel:
     """Build an unbound native chat model by configured alias; never silently fall back."""
     settings = runtime.settings
-    alias = settings.dataagent.model.default if name is None else name
+    alias = settings.dataagent.model if name is None else name
     if alias not in settings.models:
         raise ValueError(f"Unknown model alias: {alias!r}")
     config = settings.models.get(alias)
@@ -73,7 +73,7 @@ def build_model(runtime: Runtime, name: str | None = None) -> BaseChatModel:
     )
 
 
-class ModelContext(BaseModel):
+class AgentContext(BaseModel):
     """Native model and semantic access shared by one Agent graph and its subagents.
 
     get_model() selects the product default; get_model("fast") selects models.fast.
@@ -83,7 +83,7 @@ class ModelContext(BaseModel):
     The semantic client is borrowed from the SDK handle or REST host that owns it.
     """
 
-    _runtime: Runtime = PrivateAttr()
+    _runtime: PreparedRuntime = PrivateAttr()
     _session: SessionPaths = PrivateAttr()
     _models: dict[str, BaseChatModel] = PrivateAttr(default_factory=dict)
     _lock: AbstractContextManager = PrivateAttr(default_factory=Lock)
@@ -92,7 +92,7 @@ class ModelContext(BaseModel):
 
     def __init__(
         self,
-        runtime: Runtime,
+        runtime: PreparedRuntime,
         *,
         model: BaseChatModel | None = None,
         semantic_client: SemanticServiceClient | None = None,
@@ -104,7 +104,7 @@ class ModelContext(BaseModel):
         self._session = session or runtime.paths.for_session("sdk")
         self._semantic_client = semantic_client
         if model is not None:
-            self._models[runtime.settings.dataagent.model.default] = model
+            self._models[runtime.settings.dataagent.model] = model
 
     @property
     def home(self) -> Path:
@@ -116,7 +116,7 @@ class ModelContext(BaseModel):
         """Return the immutable session paths bound to this Agent handle."""
         return self._session
 
-    def for_session(self, session: SessionPaths) -> "ModelContext":
+    def for_session(self, session: SessionPaths) -> "AgentContext":
         """Select session paths while sharing model clients, their lock and services."""
         context = self.model_copy()
         context._session = session
@@ -156,7 +156,7 @@ class ModelContext(BaseModel):
 
     def get_model(self, name: str | None = None) -> BaseChatModel:
         """Return the configured, unbound model without changing Agent model selection."""
-        alias = self._runtime.settings.dataagent.model.default if name is None else name
+        alias = self._runtime.settings.dataagent.model if name is None else name
         with self._lock:
             if alias not in self._models:
                 self._models[alias] = build_model(self._runtime, alias)

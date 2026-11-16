@@ -24,7 +24,7 @@ http://127.0.0.1:3000/data-tasks
 
 Do not start at `/login`. The control plane has no registration or login routes. `GET /api/v1/me` returns the process `--user`.
 
-The browser calls same-origin `/dataagent/stream` and `/api/v1/*`. Next forwards them using `server.host` and `server.port` from `config.json`, default `http://127.0.0.1:8790`.
+The browser calls same-origin `/api/v1/runs` and `/api/v1/*`. Next forwards them using `server.host` and `server.port` from `config.json`, default `http://127.0.0.1:8790`.
 
 Readiness:
 
@@ -35,9 +35,9 @@ curl http://127.0.0.1:8790/ready
 
 ## Ask
 
-Type a question on `/data-tasks`. The turn goes to `POST /dataagent/stream`. The control plane keeps history by `threadId`. The model, plugins, and workspaces are whatever the process loaded at startup. The page cannot change them.
+Type a question on `/data-tasks`. The turn goes to `POST /api/v1/runs`. The control plane keeps history by `threadId`. The model, plugins, and workspaces are whatever the process loaded at startup. The page cannot change them.
 
-The session list, the session document, and cancel use the control plane paths: `GET /sessions`, `GET /sessions/{threadId}`, and `POST /runs/{runId}/cancel`. Web and TUI call those same paths. A browser request hits the web process first, which forwards that path unchanged.
+The session list, the session document, and cancel use the control plane paths: `GET /api/v1/sessions`, `GET /api/v1/sessions/{threadId}`, and `POST /api/v1/runs/{runId}/cancel`. Web and TUI call those same paths. A browser request hits the web process first, which forwards that path unchanged.
 
 If the page still shows forms for datasources, knowledge bases, model profiles, or file assets, those requests hit missing routes and return 404. Edit Home `config.json` and restart the control plane. See [Configuration](../reference/configuration-api.md).
 

@@ -33,7 +33,7 @@ from typing import Any
 
 from loguru import logger
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 
 # Reused, do not redeclare.
 from utils.dataops_log_utils import (
@@ -89,7 +89,7 @@ async def dataops_probe_table(
     partition_filter: str | None = None,
     sample_size: int = _DEFAULT_SAMPLE_SIZE,
     timeout_sec: int = _DEFAULT_TIMEOUT_SEC,
-    context: ModelContext,
+    context: AgentContext,
 ) -> dict[str, Any]:
     """对单表拉 LIMIT sample_size 行样例数据.
 
@@ -356,7 +356,7 @@ async def _probe_integration(
     common: dict[str, Any],
     timeout_sec: int,
     start: float,
-    context: ModelContext,
+    context: AgentContext,
     auto_partition_filter: str | None = None,
 ) -> dict[str, Any]:
 

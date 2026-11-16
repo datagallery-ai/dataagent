@@ -1,6 +1,6 @@
 """Prepared startup results shared by Agent assembly and hosts; no live execution state.
 
-Runtime groups effective settings, filesystem paths, extension locations and a startup
+PreparedRuntime groups effective settings, filesystem paths, extension locations and a startup
 report. Each has one purpose; model display and host policy values derive from settings.
 """
 
@@ -15,8 +15,8 @@ from dataagent.settings import Settings
 
 
 @dataclass(frozen=True)
-class Runtime:
-    """The output of `prepare_runtime`, not LangGraph Runtime or checkpointed Agent state.
+class PreparedRuntime:
+    """The output of `prepare_runtime`, not LangGraph PreparedRuntime or checkpointed Agent state.
 
     settings: what to configure; paths: where runtime data lives; extensions: where
     to load declarations; report: which configuration and plugin sources participated;
@@ -33,7 +33,7 @@ class Runtime:
 
     @property
     def model_name(self) -> str:
-        return self.settings.models[self.settings.dataagent.model.default].name
+        return self.settings.models[self.settings.dataagent.model].name
 
     @property
     def redaction_secrets(self) -> tuple[str, ...]:
@@ -60,7 +60,7 @@ class Runtime:
             secrets.extend(connection.get("args", ()))
             if connection.get("url"):
                 secrets.append(connection["url"])
-        for agent in self.settings.a2a.agents:
+        for agent in self.settings.a2a.remote_agents:
             secrets.append(str(agent.url))
             if agent.auth_token is not None:
                 secrets.append(agent.auth_token.get_secret_value())

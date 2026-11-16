@@ -71,6 +71,8 @@ class Sessions:
                 )
             """)
             await self.db.execute("UPDATE sessions SET status='interrupted' WHERE status='running'")
+            # Rows written before the status was renamed; one value, one meaning.
+            await self.db.execute("UPDATE sessions SET status='completed' WHERE status='complete'")
             await self.db.commit()
         except BaseException:
             await self.db.close()
@@ -114,8 +116,8 @@ class Sessions:
             except sqlite3.IntegrityError:
                 await self.db.rollback()
                 raise ValueError(
-                    f"Session {thread_id} is not in profile {user_id}. "
-                    "Choose an existing session for this profile or start a new one."
+                    f"Session {thread_id} does not belong to user {user_id}. "
+                    "Choose one of this user's sessions or start a new one."
                 ) from None
 
     async def finish(self, user_id: str, thread_id: str, status: str, checkpoint_id: str | None = None):
@@ -147,11 +149,11 @@ class SessionTurn:
         await self.sessions.start(self.user_id, self.thread_id, run_id, text)
 
     async def complete(self, checkpoint_id: str) -> None:
-        self.status = "complete"
-        await self.sessions.finish(self.user_id, self.thread_id, "complete", checkpoint_id)
+        self.status = "completed"
+        await self.sessions.finish(self.user_id, self.thread_id, "completed", checkpoint_id)
 
     async def release(self) -> None:
-        if self.status != "complete":
+        if self.status != "completed":
             await self.sessions.finish(self.user_id, self.thread_id, self.status)
 
     async def settle(self, graph, *, complete: bool = False):

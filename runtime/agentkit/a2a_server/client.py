@@ -16,7 +16,9 @@ from a2a.types.a2a_pb2 import Message, Role, SendMessageRequest, Task, TaskState
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 
-_SAFE_ID = r"[A-Za-z][A-Za-z0-9_-]{0,63}"
+from dataagent.declarations import NAME_PATTERN
+from dataagent.errors import DataAgentError
+
 # Matches dataagent.limits.timeout_seconds. A remote DataAgent turn uses the same budget.
 DEFAULT_TIMEOUT = 180.0
 _INPUT_REQUIRED = "TASK_STATE_INPUT_REQUIRED"
@@ -32,10 +34,13 @@ class A2AResult:
     state: str
 
 
-class A2ACallError(RuntimeError):
+class A2ACallError(DataAgentError, RuntimeError):
     """The remote agent returned a failed or canceled task."""
 
     error_code = "TOOL_ERROR"
+
+    def __init__(self, message: str):
+        super().__init__(source="tool", component="a2a", fact=message)
 
 
 class A2ACaller:
@@ -141,8 +146,8 @@ def remote_agent_tool(
     The tool reads the local ``thread_id`` from the runnable config. Turns in
     one local thread share a remote context. Another local thread does not.
     """
-    if re.fullmatch(_SAFE_ID, agent_id) is None:
-        raise ValueError("A2A agent id must match [A-Za-z][A-Za-z0-9_-]{0,63}")
+    if re.fullmatch(NAME_PATTERN, agent_id) is None:
+        raise ValueError(f"A2A agent id must match {NAME_PATTERN}")
     caller = A2ACaller(
         base_url, auth_token=auth_token, timeout=timeout, http_client=http_client
     )
@@ -167,7 +172,7 @@ def remote_agent_tool(
 def load_a2a_tools(runtime) -> list[BaseTool]:
     """Build one tool per configured remote agent. No network call yet."""
     tools = []
-    for spec in runtime.settings.a2a.agents:
+    for spec in runtime.settings.a2a.remote_agents:
         token = None if spec.auth_token is None else spec.auth_token.get_secret_value()
         timeout = spec.timeout_seconds
         if timeout is None:

@@ -122,14 +122,14 @@ async def test_stdio_discovery_calls_errors_and_process_cleanup(tmp_path):
     })})
     shutil.copyfile(SERVER, home / "server.py")
     tools = await load_mcp_tools(runtime)
-    result = await invoke_tool(by_name(tools, "mcp__user__calc_add"), {"a": 2, "b": 3})
+    result = await invoke_tool(by_name(tools, "mcp__user__calc__add"), {"a": 2, "b": 3})
     assert isinstance(result, ToolMessage) and result.status == "success"
     assert "5" in str(result.content)
-    result = await invoke_tool(by_name(tools, "mcp__user__calc_context"))
+    result = await invoke_tool(by_name(tools, "mcp__user__calc__context"))
     assert str(home) in str(result.content) and "synthetic-env" in str(result.content)
     # A fresh native MCP session/process is used for each call.
     assert '"calls": 0' in str(result.content)
-    error = await invoke_tool(by_name(tools, "mcp__user__calc_fail"))
+    error = await invoke_tool(by_name(tools, "mcp__user__calc__fail"))
     assert error.status == "error" and "synthetic MCP tool failure" in str(error.content)
     pids = (tmp_path / "pids").read_text().splitlines()
     assert len(pids) == 4
@@ -143,12 +143,12 @@ async def test_sdk_requires_explicit_async_loading_then_uses_native_tools(tmp_pa
     with pytest.raises(ValueError, match="await load_mcp_tools"):
         build_graph(runtime, model=ScriptedModel(responses=[]))
     model = ScriptedModel(responses=[
-        call("mcp__user__calc_add", {"a": 4, "b": 5}), AIMessage(content="9"),
+        call("mcp__user__calc__add", {"a": 4, "b": 5}), AIMessage(content="9"),
     ])
     tools = await load_mcp_tools(runtime)
     result = await build_graph(runtime, model=model, mcp_tools=tools).ainvoke({"messages": [("user", "add")]})
     message = next(m for m in result["messages"] if isinstance(m, ToolMessage))
-    assert message.name == "mcp__user__calc_add" and message.status == "success"
+    assert message.name == "mcp__user__calc__add" and message.status == "success"
     assert "9" in str(message.content)
 
 
@@ -183,7 +183,7 @@ async def test_documented_local_example_is_runnable(tmp_path, monkeypatch):
     monkeypatch.setenv("MCP_PYTHON", sys.executable)
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path))
     tools = await load_mcp_tools(runtime)
-    result = await invoke_tool(by_name(tools, "mcp__user__math_add"), {"a": 12, "b": 30})
+    result = await invoke_tool(by_name(tools, "mcp__user__math__add"), {"a": 12, "b": 30})
     assert result.status == "success" and "42" in str(result.content)
 
 
@@ -216,13 +216,13 @@ def test_real_backend_discovers_mcp_before_ready_then_sigterm(tmp_path):
 
 async def test_rest_tool_error_and_session_restore_use_native_messages(tmp_path):
     runtime = prepare(tmp_path, {"calc": stdio()})
-    model = ScriptedModel(responses=[call("mcp__user__calc_fail", {}), AIMessage(content="Tool failed")])
+    model = ScriptedModel(responses=[call("mcp__user__calc__fail", {}), AIMessage(content="Tool failed")])
     async with client_for(runtime, model) as (client, app):
         discovered = app.state.agents.mcp_tools
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
         assert terminal(events) == ["RUN_FINISHED"]  # Model handled a tool-domain error.
         assert any(event["type"] == "TOOL_CALL_RESULT" for event in events)
-        restored = (await client.get("/sessions/thread-1")).json()["messages"]
+        restored = (await client.get("/api/v1/sessions/thread-1")).json()["data"]["messages"]
         error = next(item for item in restored if item["role"] == "tool")
         assert "synthetic MCP tool failure" in str(error["content"])
         assert app.state.agents.mcp_tools is discovered
@@ -237,7 +237,7 @@ async def test_discovery_failure_prevents_ready(tmp_path):
             transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8787",
         ) as client:
             health = await client.get("/healthz")
-            chat = await client.post("/dataagent/stream", json={})
+            chat = await client.post("/api/v1/runs", json={})
     assert health.status_code == 200
     assert health.json()["data"]["conversation"]["ready"] is False
     assert chat.status_code == 503
@@ -250,7 +250,7 @@ async def test_cancelled_tool_call_closes_stdio_process(tmp_path):
         "MCP_TEST_PIDS": str(tmp_path / "pids"), "MCP_TEST_TOOL_STARTED": str(started),
     })})
     tools = await load_mcp_tools(runtime)
-    task = asyncio.create_task(invoke_tool(by_name(tools, "mcp__user__calc_slow")))
+    task = asyncio.create_task(invoke_tool(by_name(tools, "mcp__user__calc__slow")))
     async with asyncio.timeout(10):
         # Cancel the actual tool call, not the peer's initialization handshake.
         while not started.exists():
@@ -265,9 +265,9 @@ async def test_cancelled_tool_call_closes_stdio_process(tmp_path):
 
 async def test_transport_failure_becomes_run_error(tmp_path):
     runtime = prepare(tmp_path, {"calc": stdio()})
-    model = ScriptedModel(responses=[call("mcp__user__calc_disconnect", {})])
+    model = ScriptedModel(responses=[call("mcp__user__calc__disconnect", {})])
     async with client_for(runtime, model) as (client, _):
-        assert terminal(sse(await client.post("/dataagent/stream", json=query()))) == ["RUN_ERROR"]
+        assert terminal(sse(await client.post("/api/v1/runs", json=query()))) == ["RUN_ERROR"]
         assert len(model.requests) == 1
 
 
@@ -304,25 +304,25 @@ async def test_plugin_subagent_allowlist_hooks_and_namespaces(tmp_path):
     )
     marker = tmp_path / "hook-called"
     config(plugin / "child.json", {
-        "name": "analyst", "description": "Use MCP", "system_prompt": "prompt.md",
-        "tools": ["mcp__analytics__calc_add"], "hooks": {"before_tool": [{
-            "entrypoint": "audit.py:before", "matcher": "mcp__analytics__calc_add",
+        "name": "analyst", "description": "Use MCP", "system_prompt_file": "prompt.md",
+        "tools": ["mcp__analytics__calc__add"], "hooks": {"before_tool": [{
+            "entrypoint": "audit.py:before", "matcher": "mcp__analytics__calc__add",
             "params": {"file": str(marker)},
         }]},
     })
     explicit = config(tmp_path / "override.json", {**MODEL, "plugins": {"enabled": ["analytics"]}})
     runtime = prepare(tmp_path, {"calc": stdio()}, config=explicit)
     tools = await load_mcp_tools(runtime)
-    assert by_name(tools, "mcp__user__calc_add") and by_name(tools, "mcp__analytics__calc_add")
+    assert by_name(tools, "mcp__user__calc__add") and by_name(tools, "mcp__analytics__calc__add")
     compiled = load_extensions(runtime, mcp_tools=tools)
-    assert [tool.name for tool in compiled["subagents"][0]["tools"]] == ["mcp__analytics__calc_add"]
+    assert [tool.name for tool in compiled["subagents"][0]["tools"]] == ["mcp__analytics__calc__add"]
     model = ScriptedModel(responses=[
         call("task", {"subagent_type": "analyst", "description": "Add 6 and 7"}),
-        call("mcp__analytics__calc_add", {"a": 6, "b": 7}),
+        call("mcp__analytics__calc__add", {"a": 6, "b": 7}),
         AIMessage(content="13"), AIMessage(content="13"),
     ])
     result = await build_graph(runtime, mcp_tools=tools, model=model).ainvoke({"messages": [("user", "delegate")]})
-    assert marker.read_text() == "mcp__analytics__calc_add"
+    assert marker.read_text() == "mcp__analytics__calc__add"
     assert result["messages"][-1].content == "13"
     # An explicit empty child list must not inherit MCP tools.
     child = json.loads((plugin / "child.json").read_text())
@@ -334,11 +334,11 @@ async def test_general_purpose_delegate_inherits_mcp_tools(tmp_path):
     runtime = prepare(tmp_path, {"calc": stdio()})
     model = ScriptedModel(responses=[
         call("task", {"subagent_type": "general-purpose", "description": "Add 1 and 2"}),
-        call("mcp__user__calc_add", {"a": 1, "b": 2}), AIMessage(content="3"), AIMessage(content="3"),
+        call("mcp__user__calc__add", {"a": 1, "b": 2}), AIMessage(content="3"), AIMessage(content="3"),
     ])
     graph = build_graph(runtime, model=model, mcp_tools=await load_mcp_tools(runtime))
     await graph.ainvoke({"messages": [("user", "delegate")]})
-    assert any(isinstance(message, ToolMessage) and message.name == "mcp__user__calc_add"
+    assert any(isinstance(message, ToolMessage) and message.name == "mcp__user__calc__add"
                for request in model.requests for message in request)
 
 
@@ -387,7 +387,7 @@ async def test_remote_transports_and_configured_headers(tmp_path, transport, end
             "headers": {"Authorization": "Bearer test-mcp-token"},
         }})
         tools = await load_mcp_tools(runtime)
-        result = await invoke_tool(by_name(tools, "mcp__user__calc_add"), {"a": 2, "b": 7})
+        result = await invoke_tool(by_name(tools, "mcp__user__calc__add"), {"a": 2, "b": 7})
         assert result.status == "success" and "9" in str(result.content)
     finally:
         stop_child(child)

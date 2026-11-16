@@ -3,11 +3,13 @@ import type { EvidenceRef } from "../evidence-ref";
 export type ApiErrorCode =
   | "BAD_REQUEST"
   | "CONFLICT"
+  | "CONVERSATION_UNAVAILABLE"
   | "DATASOURCE_TEST_FAILED"
   | "EMAIL_NOT_VERIFIED"
   | "FORBIDDEN"
   | "INTERNAL_ERROR"
   | "JOB_NOT_FOUND"
+  | "METHOD_NOT_ALLOWED"
   | "NOT_ENABLED"
   | "PARSE_FAILED"
   | "PROVIDER_CONFIG_MISSING"
@@ -524,7 +526,7 @@ export type NativeSessionDetail = {
   title: string;
   createdAt: string;
   updatedAt: string;
-  status: "running" | "complete" | "error" | "interrupted";
+  status: "running" | "completed" | "error" | "interrupted";
   hasCheckpoint: boolean;
   messages: Array<{ id?: string; role?: string; content?: unknown }>;
   notice: string | null;
@@ -685,8 +687,11 @@ export type SessionOutputFileDto = {
 /** UTF-8 text preview of a session output file (`GET /sessions/{id}/outputs/preview`). */
 export type SessionOutputPreviewDto = {
   type: "file";
+  /** Relative to the session outputs directory, same as the list. */
   path: string;
   content: string;
+  /** True when the file is larger than the 64 KiB preview. */
+  truncated: boolean;
 };
 
 export type ArtifactVersionDto = {

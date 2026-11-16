@@ -125,7 +125,7 @@ asyncio.run(main())
 ```
 
 **路径绑定与聊天历史分别管理：** `session_bindings` 表 保存输出目录；持久化 checkpointer 保存和恢复聊天状态。无论是否配置 checkpointer，会话的固定输出目录规则都生效。示例未配置 checkpointer，如需恢复聊天历史，另外向 `create_agent` 传入持久化 checkpointer。
-外部工具通过现有 `ToolRuntime[ModelContext]` 的 `runtime.context.session.outputs` 获取本轮产物目录。
+外部工具通过现有 `ToolRuntime[AgentContext]` 的 `runtime.context.session.outputs` 获取本轮产物目录。
 
 ## 4. 最小实现范围
 

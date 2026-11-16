@@ -40,11 +40,11 @@ def configured_hooks(runtime, tmp_path, *, child=None, events=EVENTS):
                  "params": {"output": str(output), "event": event, "scope": scope}}
                 for event in events]
 
-    spec = {"schema_version": 2, "id": "trace", "hooks": hooks("dataagent")}
+    spec = {"schema_version": 3, "id": "trace", "hooks": hooks("dataagent")}
     if child:
         (root / "child.md").write_text("Compute the delegated statistics with tools.")
         (root / "child.json").write_text(json.dumps({
-            "name": child, "description": "A statistics delegate", "system_prompt": "child.md",
+            "name": child, "description": "A statistics delegate", "system_prompt_file": "child.md",
             "tools": ["common__summarize_numbers"], "hooks": hooks(child),
         }))
         spec["subagents"] = ["child.json"]
@@ -236,3 +236,18 @@ def test_error_code_maps_known_errors_and_hides_class_names():
     for error, expected in cases.items():
         assert error_code(error) == expected, error
         assert expected in ERROR_CODES
+
+
+def test_public_errors_share_the_dataagent_base_and_keep_builtin_bases():
+    from a2a_server.client import A2ACallError
+    from dataagent import ConfigurationLoadError, DataAgentError, LoopDetectedError
+
+    cases = {
+        ConfigurationLoadError("bad file"): (ValueError, "config"),
+        LoopDetectedError("tool_cycle"): (RuntimeError, "constraint"),
+        A2ACallError("remote failed"): (RuntimeError, "tool"),
+    }
+    for error, (builtin, source) in cases.items():
+        assert isinstance(error, DataAgentError) and isinstance(error, builtin)
+        assert error.source == source and error.trace_id
+    assert str(ConfigurationLoadError("bad file")) == "bad file"

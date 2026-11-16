@@ -18,10 +18,10 @@ from loguru import logger
 from utils.data_task_ir import core
 from utils.data_task_ir.runtime import ir_enabled
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 
 
-async def read_ir(runtime: ToolRuntime[ModelContext]) -> str | ToolMessage:
+async def read_ir(runtime: ToolRuntime[AgentContext]) -> str | ToolMessage:
     """Read current DataTaskIR constraints before drafting DDL or fixing SQL.
 
     The consumer hook refreshes current inputs even without a plan. Never accept model-written

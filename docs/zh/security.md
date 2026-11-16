@@ -8,7 +8,7 @@
 
 密钥放在进程环境或 Home `.env`，配置里用 `$env{...}` 引用。日志和错误消息会替换运行时已知的密钥。Trace 里仍有系统提示、对话和工具结果。
 
-`POST /dataagent/stream` 不接受 `context`、`state` 或 `forwardedProps`。不要把密钥写进用户消息。
+`POST /api/v1/runs` 不接受 `context`、`state` 或 `forwardedProps`。不要把密钥写进用户消息。
 
 ## 身份和文件
 

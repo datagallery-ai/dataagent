@@ -24,10 +24,18 @@ _STATUS_CODES = {
     401: "UNAUTHORIZED",
     403: "FORBIDDEN",
     404: "RESOURCE_NOT_FOUND",
+    405: "METHOD_NOT_ALLOWED",
     409: "CONFLICT",
     415: "UNSUPPORTED_FILE_TYPE",
     422: "BAD_REQUEST",
     429: "RATE_LIMITED",
+}
+
+
+# Starlette's router raises these for unknown paths and wrong methods.
+_ROUTER_MESSAGES = {
+    (404, "Not Found"): "Route not found.",
+    (405, "Method Not Allowed"): "Method not allowed.",
 }
 
 
@@ -43,7 +51,8 @@ def register_error_handlers(app: FastAPI) -> None:
 
     @app.exception_handler(StarletteHTTPException)
     async def http_error(_request: Request, exc: StarletteHTTPException) -> JSONResponse:
-        response = error(error_code(exc.status_code), str(exc.detail), exc.status_code)
+        message = _ROUTER_MESSAGES.get((exc.status_code, exc.detail), str(exc.detail))
+        response = error(error_code(exc.status_code), message, exc.status_code)
         if exc.headers:
             response.headers.update(exc.headers)
         return response

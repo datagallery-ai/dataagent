@@ -13,7 +13,7 @@ import { terminalText } from "./utils/terminal-text.js";
 
 const header = `
 const identity = {protocol:'dataagent',instanceId:process.env.DATAAGENT_INSTANCE_ID};
-const ready = {...identity,type:'ready',runtimeUrl:'http://127.0.0.1:8790/dataagent/stream'};
+const ready = {...identity,type:'ready',runtimeUrl:'http://127.0.0.1:8790/api/v1/runs'};
 const emit = value => process.stdout.write(JSON.stringify(value)+'\\n');
 process.stdin.resume();
 process.stdin.on('end',()=>process.exit(0));
@@ -48,7 +48,7 @@ it("startup only forwards explicit paths, user and session without an interactiv
     assert.equal(captured.filter(arg => arg === "--workspace").length, 2);
     assert.equal(captured[captured.indexOf("--user") + 1], "alice");
     assert.equal(captured[captured.indexOf("--session") + 1], "saved");
-    assert.equal(backend.runtimeUrl, "http://127.0.0.1:8790/dataagent/stream");
+    assert.equal(backend.runtimeUrl, "http://127.0.0.1:8790/api/v1/runs");
   } finally { await backend.stop(); }
 });
 

@@ -21,7 +21,27 @@ function configPathFromArgs(args) {
   return configPath;
 }
 
+const VALUE_FLAGS = new Set(["--config", "--web-host", "--web-port"]);
+const SWITCHES = new Set(["--api", "--web"]);
+
+/** Reject what the stack would otherwise drop silently, such as --env-file or --user. */
+function checkArgs(args) {
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    if (arg === "--" || SWITCHES.has(arg)) continue;
+    if (VALUE_FLAGS.has(arg)) {
+      index += 1;
+      continue;
+    }
+    throw new Error(
+      `Unknown argument: ${arg}. Accepted: --config <path>, --web-host <host>, --web-port <port>, --api, --web. ` +
+        "For other backend options (--user, --workspace, --session, --env-file), run `uv run dataagent serve` directly.",
+    );
+  }
+}
+
 export function resolveStackRuntimeConfig(env = process.env, args = []) {
+  checkArgs(args);
   const configPath = configPathFromArgs(args);
   const listen = readServerListen(env, configPath);
   const web = webListen(args);

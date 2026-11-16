@@ -384,7 +384,7 @@ async def test_tool_loop_leaves_complete_model_spans_in_the_trace(runtime):
     responses = [call(*LOOP_CALL) for _ in range(10)]
     model = ScriptedModel(responses=responses)
     async with client_for(runtime, model) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=body))
+        events = sse(await client.post("/api/v1/runs", json=body))
         assert terminal(events) == ["RUN_ERROR"]
         assert events[-1]["code"] == "LOOP_DETECTED"
     # read_trace validates every span's start/end, parent links and OTLP schema.
@@ -417,7 +417,7 @@ async def test_http_stream_reports_one_error_for_root_and_compiled_entry(runtime
         runtime = _entry_runtime(runtime, tmp_path)
     model = RepeatingModel(responses=[])
     async with client_for(runtime, model) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
         assert terminal(events) == ["RUN_ERROR"]
         assert events[-1]["code"] == "LOOP_DETECTED"
         assert REPEAT not in events[-1]["message"]
@@ -431,7 +431,7 @@ async def test_http_stream_reports_one_error_for_root_and_compiled_entry(runtime
 async def test_http_stream_stops_repeated_prose_after_markdown_prefixes(runtime, prefix):
     model = RepeatingModel(responses=[], prefix=prefix)
     async with client_for(runtime, model) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["code"] == "LOOP_DETECTED"
     assert model.chunks_read < 20
@@ -561,7 +561,7 @@ async def test_compiled_entry_cannot_turn_a_detection_into_a_reply(runtime, tmp_
     }))
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path))
     async with client_for(runtime, RepeatingModel(responses=[])) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["code"] == "LOOP_DETECTED"
 

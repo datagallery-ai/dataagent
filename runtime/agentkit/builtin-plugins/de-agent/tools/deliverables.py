@@ -27,15 +27,14 @@ from utils.dataops_mcp import dataops_settings
 from utils.dataops_validate_tool import cleanup_temp_tables, dataops_validate_sql_with_log_analysis
 from utils.evidence import ArtifactPathError, model_evidence, output_file
 
-from dataagent.model_stream import collect_model_stream
-from dataagent.models import ModelContext
+from dataagent import AgentContext, collect_model_stream
 
 
 async def validate_deliverables(
     ddl_path: str,
     dml_path: str,
     query: str,
-    runtime: ToolRuntime[ModelContext],
+    runtime: ToolRuntime[AgentContext],
 ) -> dict:
     """Check explicit CREATE/INSERT files; quality observations are warnings, not proof of equivalence."""
     try:

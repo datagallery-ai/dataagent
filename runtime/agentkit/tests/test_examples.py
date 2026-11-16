@@ -17,7 +17,6 @@ from dataagent.settings import (
     AgentSettings,
     Limits,
     LoopDetectionSettings,
-    ModelSelection,
     ModelSettings,
     PluginSettings,
     Settings,
@@ -33,7 +32,6 @@ def test_full_config_example_explicitly_covers_all_settings_fields():
     sections = (
         (raw, Settings),
         (raw["dataagent"], AgentSettings),
-        (raw["dataagent"]["model"], ModelSelection),
         (raw["dataagent"]["limits"], Limits),
         (raw["dataagent"]["loop_detection"], LoopDetectionSettings),
         (raw["plugins"], PluginSettings),
@@ -95,7 +93,7 @@ async def test_tool_hook_denial_reaches_http_as_one_real_error(example_runtime):
                       extensions=replace(example_runtime.extensions, hooks=bindings))
     model = ScriptedModel(responses=[call("common__summarize_numbers", {"numbers": [1, 2]})])
     async with client_for(runtime, model) as (client, app):
-        events = sse(await client.post("/dataagent/stream", json=query("统计 1、2")))
+        events = sse(await client.post("/api/v1/runs", json=query("统计 1、2")))
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["code"] == "INTERNAL_ERROR"
     assert "blocked by the configured policy" in events[-1]["message"]

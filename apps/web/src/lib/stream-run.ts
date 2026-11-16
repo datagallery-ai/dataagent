@@ -1,8 +1,8 @@
 import type { Message, RunAgentInput } from "@ag-ui/core";
 
-export const STREAM_RUNTIME_PATH = "/dataagent/stream";
+export const STREAM_RUNTIME_PATH = "/api/v1/runs";
 
-/** Body accepted by `POST /dataagent/stream`: one new user text, no client-owned fields. */
+/** Body accepted by `POST /api/v1/runs`: one new user text, no client-owned fields. */
 export function toStreamRunInput(input: RunAgentInput): RunAgentInput {
   const user = [...(input.messages ?? [])].reverse().find((message) => message.role === "user");
   if (!user || typeof user.id !== "string" || user.id.length === 0) {

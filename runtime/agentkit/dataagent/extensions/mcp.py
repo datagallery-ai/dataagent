@@ -7,12 +7,12 @@ from datetime import timedelta
 from langchain_core.tools import BaseTool
 from langchain_mcp_adapters.client import MultiServerMCPClient
 
-from dataagent.bootstrap import Runtime
+from dataagent.bootstrap import PreparedRuntime
 from dataagent.diagnostics import safe_error
 from dataagent.extensions.loading import select_plugins
 
 
-async def load_mcp_tools(runtime: Runtime) -> list[BaseTool]:
+async def load_mcp_tools(runtime: PreparedRuntime) -> list[BaseTool]:
     """Load schemas once; returned native tools reconnect per invocation, without retries."""
     if not runtime.extensions.mcp_servers:
         return []
@@ -28,7 +28,7 @@ async def load_mcp_tools(runtime: Runtime) -> list[BaseTool]:
             connection.update(headers=dict(connection["headers"]), timeout=runtime.timeout_seconds,
                               sse_read_timeout=runtime.timeout_seconds)
         connections[name] = connection
-    client = MultiServerMCPClient(connections, tool_name_prefix=True)
+    client = MultiServerMCPClient(connections)
     tools = []
     # A single deadline fits inside the launcher's 30-second readiness budget.
     server = None
@@ -36,7 +36,12 @@ async def load_mcp_tools(runtime: Runtime) -> list[BaseTool]:
         async with asyncio.timeout(min(20, runtime.timeout_seconds)):
             for server in connections:
                 try:
-                    tools.extend(await client.get_tools(server_name=server))
+                    discovered = await client.get_tools(server_name=server)
+                    # Same separator as every other namespace: <server ID>__<tool>.
+                    # The adapter still calls the server with the original tool name.
+                    for found in discovered:
+                        found.name = f"{server}__{found.name}"
+                    tools.extend(discovered)
                 except Exception as error:
                     while isinstance(error, BaseExceptionGroup):
                         error = error.exceptions[0]

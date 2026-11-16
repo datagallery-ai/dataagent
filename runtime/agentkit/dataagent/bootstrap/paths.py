@@ -16,8 +16,10 @@ from dataclasses import dataclass, replace
 from importlib.resources import files
 from pathlib import Path
 
+from dataagent.declarations import OPAQUE_ID_PATTERN
+
 TEMPLATES = (("config.json", "config.json"), (".env", "env.example"))
-_OPAQUE_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,127}")
+_OPAQUE_ID = re.compile(OPAQUE_ID_PATTERN)
 
 
 def opaque_id(value: str, label: str) -> str:
@@ -264,7 +266,7 @@ def find_session_binding(
         return None
     binding = _parse_session_binding(root, payload, check_inputs=check_inputs)
     if (binding.user_id, binding.thread_id) != (root.parent.parent.name, root.name):
-        raise ValueError("Session binding does not match this profile")
+        raise ValueError("Session binding does not match this user")
     return binding
 
 
@@ -274,7 +276,7 @@ def _write_session_binding(
 ) -> None:
     """Atomically check and register ownership within one Home's binding table."""
     if (user_id, thread_id) != (session.root.parent.parent.name, session.root.name):
-        raise ValueError("Session binding does not match this profile")
+        raise ValueError("Session binding does not match this user")
     database = _binding_db(session.root)
     ensure_private_dir(database.parent)
     with closing(sqlite3.connect(database, timeout=5)) as connection, connection:

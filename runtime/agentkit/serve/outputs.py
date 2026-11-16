@@ -76,6 +76,5 @@ def preview_output(root: Path, relative: str) -> dict:
         content = codecs.getincrementaldecoder("utf-8")().decode(data[:PREVIEW_BYTES], final=not truncated)
     except (UnicodeDecodeError, ValueError):
         raise HTTPException(415, "Preview supports UTF-8 text only; open the file locally") from None
-    if truncated:
-        content += "\n\n[Preview truncated at 64 KiB; open the file locally for full content.]"
-    return {"type": "file", "path": f"/output/{relative}", "content": content}
+    # Same relative path as list_outputs; content is file text only.
+    return {"type": "file", "path": relative, "content": content, "truncated": truncated}

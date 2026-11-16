@@ -169,7 +169,7 @@ async def test_rest_assembly_and_turns_register_each_binding_once(runtime, bindi
     async with client_for(runtime, ScriptedModel(responses=[AIMessage(content="done")] * 2)) as (client, app):
         binding_sql.clear()
         for text in ("first", "again"):
-            response = await client.post("/dataagent/stream", json=query(text, "task"))
+            response = await client.post("/api/v1/runs", json=query(text, "task"))
             assert terminal(sse(response)) == ["RUN_FINISHED"]
         assert binding_sql.count("BEGIN IMMEDIATE") == 1
         assert sum("INSERT INTO session_bindings" in sql for sql in binding_sql) == 1

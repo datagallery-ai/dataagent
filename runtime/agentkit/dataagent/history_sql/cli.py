@@ -1,4 +1,4 @@
-"""Prepare a history SQL snapshot using AgentKit Home/Agent configuration."""
+"""`dataagent history-sql`: prepare a history SQL snapshot from the selected configuration."""
 
 import argparse
 import json
@@ -18,17 +18,20 @@ from dataagent.history_sql.downloader import (
 from dataagent.semantic_client import SemanticServiceClient
 
 
-def main(argv=None) -> int:
-    parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", help="AgentKit Agent JSON configuration")
+def add_arguments(parser: argparse.ArgumentParser) -> None:
+    """Options of `dataagent history-sql`; --config and --env-file mean the same as for serve."""
+    parser.add_argument("--config", help="Use this file instead of Home config.json")
+    parser.add_argument("--env-file", help="Environment file resolved by the backend")
     parser.add_argument("--output-dir", help="Absolute corpus directory override")
     parser.add_argument("--compare-dir")
     parser.add_argument("--page-size", type=int, default=200)
     parser.add_argument("--if-enabled", action="store_true", help="Skip when history_sql is disabled")
     parser.add_argument("--no-lock", action="store_true", help="Do not chmod the prepared snapshot read-only")
-    args = parser.parse_args(argv)
+
+
+def run(args: argparse.Namespace) -> int:
     try:
-        runtime = prepare_runtime(LaunchOptions(config=args.config))
+        runtime = prepare_runtime(LaunchOptions(config=args.config, env_file=args.env_file))
         options = runtime.settings.plugins.config.get("de-agent", {}).get("history_sql", {})
         if args.if_enabled and not enabled(options):
             print(json.dumps({"status": "disabled", "written": 0}))
@@ -65,6 +68,3 @@ def main(argv=None) -> int:
         print(f"History SQL download failed [{details['code']}]: {details['message']}", file=sys.stderr)
         return 1
 
-
-if __name__ == "__main__":
-    raise SystemExit(main())

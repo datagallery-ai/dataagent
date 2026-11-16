@@ -17,7 +17,7 @@ import {
   type OpenChildStep,
 } from "./stream-run";
 
-/** CopilotKit renderer pointed at `/dataagent/stream` with the TUI request contract. */
+/** CopilotKit renderer pointed at `/api/v1/runs` with the TUI request contract. */
 export class StreamHttpAgent extends HttpAgent {
   constructor(config: Omit<HttpAgentConfig, "url"> = {}) {
     super({ ...config, url: STREAM_RUNTIME_PATH });

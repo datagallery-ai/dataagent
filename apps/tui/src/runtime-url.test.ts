@@ -5,28 +5,28 @@ import { isLoopbackHostname, validateRuntimeUrl } from "./runtime-url.js";
 describe("validateRuntimeUrl", () => {
   it("allows loopback HTTP and normalizes path/query/hash", () => {
     const result = validateRuntimeUrl(
-      "http://127.0.0.1:8787/dataagent/stream/?x=1#frag",
+      "http://127.0.0.1:8787/api/v1/runs/?x=1#frag",
     );
     assert.deepEqual(result, {
       ok: true,
-      url: "http://127.0.0.1:8787/dataagent/stream",
+      url: "http://127.0.0.1:8787/api/v1/runs",
     });
   });
 
   it("allows localhost HTTP and remote HTTPS", () => {
-    assert.equal(validateRuntimeUrl("http://localhost:8787/dataagent/stream").ok, true);
+    assert.equal(validateRuntimeUrl("http://localhost:8787/api/v1/runs").ok, true);
     assert.equal(
-      validateRuntimeUrl("https://api.example.com/deploy/dataagent/stream/").ok,
+      validateRuntimeUrl("https://api.example.com/deploy/api/v1/runs/").ok,
       true,
     );
     assert.equal(
-      (validateRuntimeUrl("https://api.example.com/deploy/dataagent/stream/") as { url: string }).url,
-      "https://api.example.com/deploy/dataagent/stream",
+      (validateRuntimeUrl("https://api.example.com/deploy/api/v1/runs/") as { url: string }).url,
+      "https://api.example.com/deploy/api/v1/runs",
     );
   });
 
   it("rejects non-loopback plaintext HTTP", () => {
-    const result = validateRuntimeUrl("http://api.example.com/dataagent/stream");
+    const result = validateRuntimeUrl("http://api.example.com/api/v1/runs");
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.match(result.reason, /HTTPS/i);
@@ -34,7 +34,7 @@ describe("validateRuntimeUrl", () => {
   });
 
   it("rejects URL credentials", () => {
-    const result = validateRuntimeUrl("https://user:pass@example.com/dataagent/stream");
+    const result = validateRuntimeUrl("https://user:pass@example.com/api/v1/runs");
     assert.equal(result.ok, false);
     if (!result.ok) {
       assert.match(result.reason, /credentials/i);
@@ -42,7 +42,7 @@ describe("validateRuntimeUrl", () => {
   });
 
   it("rejects non-http(s) schemes", () => {
-    const result = validateRuntimeUrl("ftp://127.0.0.1/dataagent/stream");
+    const result = validateRuntimeUrl("ftp://127.0.0.1/api/v1/runs");
     assert.equal(result.ok, false);
   });
 });

@@ -18,7 +18,7 @@ from pathlib import Path
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.types import Command
 
-from dataagent.models import ModelContext
+from dataagent import AgentContext
 from utils.data_task_ir.runtime import ir_state
 from utils.evidence import _without_diagnostics, read_evidence
 
@@ -64,7 +64,7 @@ def tool_succeeded(request, result) -> bool:
 
 
 
-def collect_evidence(context: ModelContext, state: dict) -> list[dict]:
+def collect_evidence(context: AgentContext, state: dict) -> list[dict]:
     """Read semantic evidence files and successful document results in native history."""
     evidence = []
     cache = ir_state(context) if hasattr(context, "get_plugin_state") else {}

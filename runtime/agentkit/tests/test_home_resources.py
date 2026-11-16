@@ -274,7 +274,7 @@ async def test_accumulated_hooks_keep_native_before_and_after_order(tmp_path, tr
 
         async with client_for(runtime, model) as (client, app):
             assert terminal(
-                sse(await client.post("/dataagent/stream", json=query("Sum numbers")))
+                sse(await client.post("/api/v1/runs", json=query("Sum numbers")))
             ) == ["RUN_FINISHED"]
     phases = (
         "before_agent",

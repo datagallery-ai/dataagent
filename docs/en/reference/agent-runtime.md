@@ -3,7 +3,7 @@
 This page shows an integrator how to send one turn. It does not describe the Web layout or the runtime graph. Web and TUI send each turn to the same control plane.
 
 ```text
-POST /dataagent/stream
+POST /api/v1/runs
 ```
 
 The default address is `http://127.0.0.1:8790`. Success is `text/event-stream` with `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
@@ -33,12 +33,12 @@ The body is one AG-UI input. Extra fields are rejected. The server keeps history
 | `tools`, `context`, `forwardedProps` | Required and empty (`[]`, `[]`, `{}`) |
 | `resume`, `parentRunId` | Not accepted |
 
-There is no `run_config`, and no per-request choice of datasource, knowledge base, or model profile. The model, plugins, and workspaces come from the configuration loaded when the control plane started. Web and TUI both use `/dataagent/stream`.
+There is no `run_config`, and no per-request choice of datasource, knowledge base, or model profile. The model, plugins, and workspaces come from the configuration loaded when the control plane started. Web and TUI both use `/api/v1/runs`.
 
 ## Cancel and resume
 
 ```text
-POST /runs/<runId>/cancel
+POST /api/v1/runs/<runId>/cancel
 ```
 
 Success is 204; the event stream then ends with `RUN_ERROR` whose `code` is `CANCELLED`, which clients should show as stopped. 404 when that run is not executing.

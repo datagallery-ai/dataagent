@@ -91,7 +91,7 @@
 
 | 展示 | 怎么接上 |
 | --- | --- |
-| Web | `npm run start:web` 或 `npm run start`。浏览器打开 `http://127.0.0.1:3000/data-tasks`。Next 把 `/dataagent/stream` 和 `/api/v1/*` 转到同一个控制面 |
-| TUI | `npm run start:tui`。没有控制面就拉起一个，已经在听就连上。对话走 `POST /dataagent/stream` |
+| Web | `npm run start:web` 或 `npm run start`。浏览器打开 `http://127.0.0.1:3000/data-tasks`。Next 把 `/api/v1/runs` 和 `/api/v1/*` 转到同一个控制面 |
+| TUI | `npm run start:tui`。没有控制面就拉起一个，已经在听就连上。对话走 `POST /api/v1/runs` |
 
 两边共用会话索引、Checkpoint 和 `outputs/`。Python SDK 可以不经 HTTP，直接 `prepare_runtime`。改模型、监听地址、Home、工作区或 `dataagent.entry` 后要重启这个进程。

@@ -17,7 +17,7 @@ from pydantic import SecretStr
 from test_api import client_for, query, sse, terminal
 from test_traces import attributes, read_trace, spans
 
-from dataagent import LaunchOptions, ModelContext, create_agent, prepare_runtime
+from dataagent import AgentContext, LaunchOptions, create_agent, prepare_runtime
 from dataagent.agent import load_extensions
 from dataagent.lowlevel import build_graph
 from dataagent.models import build_model
@@ -57,18 +57,18 @@ def test_native_model_configuration_and_unknown_alias(tool_runtime):
 def test_model_cache_default_selection_and_scope(tool_runtime):
     settings = tool_runtime.settings.model_copy(update={
         "dataagent": tool_runtime.settings.dataagent.model_copy(update={
-            "model": tool_runtime.settings.dataagent.model.model_copy(update={"default": "fast"}),
+            "model": "fast",
         }),
     })
     tool_runtime = replace(tool_runtime, settings=settings)
     default = ScriptedModel(responses=[])
     other = ScriptedModel(responses=[])
-    context = ModelContext(tool_runtime, model=default)
+    context = AgentContext(tool_runtime, model=default)
     with patch("dataagent.models.build_model", return_value=other) as create:
         assert context.get_model() is context.get_model("fast") is default
         assert context.get_model("primary") is context.get_model("primary") is other
         create.assert_called_once_with(tool_runtime, "primary")
-        assert ModelContext(tool_runtime).get_model() is other
+        assert AgentContext(tool_runtime).get_model() is other
         assert create.call_count == 2  # A new configuration scope has its own cache.
     assert "secondary-private-value" not in repr(context)
     assert context.model_dump() == {}
@@ -76,7 +76,7 @@ def test_model_cache_default_selection_and_scope(tool_runtime):
 
 
 def test_concurrent_calls_construct_one_client(tool_runtime):
-    context = ModelContext(tool_runtime)
+    context = AgentContext(tool_runtime)
     model = ScriptedModel(responses=[])
     with patch("dataagent.models.build_model", return_value=model) as create:
         with ThreadPoolExecutor(max_workers=8) as pool:
@@ -142,7 +142,7 @@ def test_secondary_environment_is_lazy_and_uses_startup_snapshot(runtime, monkey
     # Neither later file changes nor process environment changes affect this runtime.
     monkeypatch.setenv("TOOL_KEY", "changed-secret")
     (home / ".env").write_text("TOOL_KEY=changed-file\n")
-    context = ModelContext(prepared)
+    context = AgentContext(prepared)
     with patch("dataagent.models.ChatOpenAI") as create:
         context.get_model("fast")
         assert create.call_args.kwargs["api_key"].get_secret_value() == "process-secret"
@@ -157,7 +157,7 @@ def test_secondary_environment_is_lazy_and_uses_startup_snapshot(runtime, monkey
 async def test_raw_graph_remains_native_and_accepts_explicit_context(tool_runtime):
     from langgraph.graph.state import CompiledStateGraph
 
-    context = ModelContext(tool_runtime, model=ScriptedModel(responses=agent_responses(False)))
+    context = AgentContext(tool_runtime, model=ScriptedModel(responses=agent_responses(False)))
     graph = build_graph(tool_runtime, context=context)
     assert isinstance(graph, CompiledStateGraph)
     assert "messages" in graph.get_output_jsonschema()["properties"]
@@ -175,7 +175,7 @@ async def test_session_contexts_do_not_share_model_clients(tool_runtime):
             # Separate sessions must own separate contexts even with identical config.
             for thread in ("first", "second"):
                 body = {**query(), "threadId": thread}
-                assert terminal(sse(await client.post("/dataagent/stream", json=body))) == ["RUN_FINISHED"]
+                assert terminal(sse(await client.post("/api/v1/runs", json=body))) == ["RUN_FINISHED"]
             first, second = app.state.agents.cache.values()
             assert first.context is not second.context
             assert first.context.get_model("fast") is helpers[0]
@@ -210,7 +210,7 @@ async def test_concurrent_sdk_agents_keep_their_own_context(tool_runtime):
 @pytest.mark.parametrize("stream", [False, True])
 def test_native_sync_tool_uses_configured_default_model(tool_runtime, stream):
     @tool
-    def summarize_sync(text: str, runtime: ToolRuntime[ModelContext]) -> str:
+    def summarize_sync(text: str, runtime: ToolRuntime[AgentContext]) -> str:
         """Summarize text with the default model."""
         return runtime.context.get_model().invoke(text, config=runtime.config).text
 
@@ -234,7 +234,7 @@ def test_model_is_native_and_supports_structured_output(tool_runtime):
     class Summary(BaseModel):
         text: str
 
-    model = ModelContext(tool_runtime).get_model("fast")
+    model = AgentContext(tool_runtime).get_model("fast")
     assert isinstance(model, ChatOpenAI)
     assert model.model_name == "fast-model"
     assert model.with_structured_output(Summary) is not None
@@ -279,7 +279,7 @@ async def test_http_preserves_owned_context_without_tracing_nested_model(tool_ru
         async with client_for(tool_runtime, model) as (client, app):
             for _ in range(2):
                 body = query()
-                response = await client.post("/dataagent/stream", json=body)
+                response = await client.post("/api/v1/runs", json=body)
                 assert terminal(sse(response)) == ["RUN_FINISHED"]
             assert helper.cursor == 2
             create.assert_called_once_with(tool_runtime, "fast")
@@ -288,7 +288,7 @@ async def test_http_preserves_owned_context_without_tracing_nested_model(tool_ru
             assert graph.context.get_model("fast") is helper
             state = await app.state.checkpointer.aget_tuple({"configurable": {"thread_id": body["threadId"]}})
             persisted = repr((state.checkpoint, state.metadata, state.config))
-            assert "ModelContext" not in persisted and "secondary-private-value" not in persisted
+            assert "AgentContext" not in persisted and "secondary-private-value" not in persisted
     records = spans(read_trace(tool_runtime, body))
     by_id = {item["spanId"]: item for item in records}
     nested_models = [item for item in records if attributes(item).get("langsmith.span.kind") == "llm"
@@ -305,7 +305,7 @@ async def test_http_unknown_alias_is_real_error_without_fallback(tool_runtime):
     tool_runtime = replace(tool_runtime, settings=settings)
     model = ScriptedModel(responses=agent_responses(False))
     async with client_for(tool_runtime, model) as (client, _):
-        events = sse(await client.post("/dataagent/stream", json=query()))
+        events = sse(await client.post("/api/v1/runs", json=query()))
     assert terminal(events) == ["RUN_ERROR"]
     assert "Unknown model alias: 'fast'" in events[-1]["message"]
     assert model.cursor == 1
@@ -320,7 +320,7 @@ async def test_secondary_model_errors_are_redacted(tool_runtime):
     with patch("dataagent.models.build_model", return_value=FailingModel(responses=[])):
         async with client_for(tool_runtime, model) as (client, _):
             body = query()
-            response = await client.post("/dataagent/stream", json=body)
+            response = await client.post("/api/v1/runs", json=body)
     assert terminal(sse(response)) == ["RUN_ERROR"]
     assert "secondary-private-value" not in response.text
     assert "secondary-private-value" not in json.dumps(read_trace(tool_runtime, body))
@@ -345,7 +345,7 @@ async def test_http_deadline_cancels_internal_model(tool_runtime):
     }))
     with patch("dataagent.models.build_model", return_value=SlowModel(responses=[])):
         async with client_for(tool_runtime, ScriptedModel(responses=agent_responses(False))) as (client, _):
-            events = sse(await client.post("/dataagent/stream", json=query()))
+            events = sse(await client.post("/api/v1/runs", json=query()))
     assert entered.is_set() and cancelled.is_set()
     assert terminal(events) == ["RUN_ERROR"]
     assert events[-1]["code"] == "TIMEOUT"
@@ -361,7 +361,7 @@ async def test_sdk_checkpoint_resume_rebuilds_owned_context_not_serialized_clien
             await graph.ainvoke({"messages": [("user", "summarize")]}, config)
     state = await graph.graph_for("resume-models").aget_state(config)
     assert len([m for m in state.values["messages"] if m.type == "human"]) == 2
-    assert "ModelContext" not in repr(await saver.aget_tuple(config))
+    assert "AgentContext" not in repr(await saver.aget_tuple(config))
 
 
 async def test_internal_model_cancellation_propagates(tool_runtime):

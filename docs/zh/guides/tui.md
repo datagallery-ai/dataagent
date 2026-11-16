@@ -4,7 +4,7 @@
 
 ## 启动方式
 
-直接启动时，TUI 按 `config.json` 连接 `/dataagent/stream`：没有控制面就拉起 `dataagent serve`，已经在跑就连上。旧的登录和 CopilotKit 客户端已经删除。
+直接启动时，TUI 按 `config.json` 连接 `/api/v1/runs`：没有控制面就拉起 `dataagent serve`，已经在跑就连上。旧的登录和 CopilotKit 客户端已经删除。
 
 ```bash
 npm run start:tui
@@ -44,7 +44,7 @@ TUI 默认停留在 Chat。使用 `/outputs` 可以像 `/resume` 一样打开独
 | --- | --- | --- |
 | `/help` | 查看可用命令。 | `/help` |
 | `/clear` | 开始新对话。已保存的会话仍留在磁盘上。 | `/clear` |
-| `/stop` | 停止当前这一轮。调用 `POST /runs/{runId}/cancel`，然后断开本地流。会话留在原线程。 | `/stop` |
+| `/stop` | 停止当前这一轮。调用 `POST /api/v1/runs/{runId}/cancel`，然后断开本地流。会话留在原线程。 | `/stop` |
 | `/outputs` | 打开当前会话的产出页。 | `/outputs` |
 | `/resume` | 打开会话列表。 | `/resume` |
 | `/resume list` | 打开会话列表。 | `/resume list` |
@@ -70,9 +70,9 @@ TUI 默认停留在 Chat。使用 `/outputs` 可以像 `/resume` 一样打开独
 
 ## 运行行为
 
-TUI 把自然语言输入发到控制面的 `/dataagent/stream`，与 Web 共用会话列表。会话产出可通过 `/outputs` 查看。
+TUI 把自然语言输入发到控制面的 `/api/v1/runs`，与 Web 共用会话列表。会话产出可通过 `/outputs` 查看。
 
-`/resume` 向流地址所在源（`http://<server.host>:<server.port>`）发送 `GET /sessions`，不带登录凭证。恢复留在服务返回的 `threadId` 上。`/stop` 使用和网页相同的取消接口。
+`/resume` 向流地址所在源（`http://<server.host>:<server.port>`）发送 `GET /api/v1/sessions`，不带登录凭证。恢复留在服务返回的 `threadId` 上。`/stop` 使用和网页相同的取消接口。
 
 ## 典型流程
 
@@ -103,7 +103,7 @@ TUI 把自然语言输入发到控制面的 `/dataagent/stream`，与 Web 共用
 - 无法连接：直接 `npm run start:tui`。它连 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；那里没有控制面时会拉起一个。已经用另一份 `--config` 启动的控制面，用 `--runtime-url` 连接。`./deploy.sh` 管的栈用 `./deploy.sh tui`，它走启动时记下的 API 地址。
 - 只想连接、不要拉起：用 `--runtime-url`。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 - 模型无响应：检查根目录 `.env` 中的 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。
-- 会话无法恢复：确认流地址所在源（`http://<server.host>:<server.port>`）上的 `GET /sessions` 可访问。TUI 调用该接口时不带登录凭证。
+- 会话无法恢复：确认流地址所在源（`http://<server.host>:<server.port>`）上的 `GET /api/v1/sessions` 可访问。TUI 调用该接口时不带登录凭证。
 - 命令没有效果：运行 `/help` 查看当前注册命令，再检查命令提示区的错误信息。
 
 继续阅读：[Web 工作台指南](web-workbench.md)。

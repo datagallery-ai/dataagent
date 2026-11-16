@@ -1,7 +1,8 @@
 {
+  "schema_version": 1,
   "name": "general-purpose",
   "description": "Handle focused research, file inspection, data analysis and artifact creation using the enabled tools and skills.",
-  "system_prompt": "prompts/general-purpose.md",
+  "system_prompt_file": "prompts/general-purpose.md",
   "hooks": [
     {
       "event": "before_agent",

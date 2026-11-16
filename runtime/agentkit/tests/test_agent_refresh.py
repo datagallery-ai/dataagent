@@ -25,7 +25,7 @@ def home_config(runtime, value):
 
 
 async def ask(client, text="hello", thread="thread-1"):
-    response = await client.post("/dataagent/stream", json=query(text, thread))
+    response = await client.post("/api/v1/runs", json=query(text, thread))
     assert terminal(sse(response)) == ["RUN_FINISHED"]
     return response
 
@@ -38,7 +38,7 @@ async def test_same_session_reuses_graph_and_history_other_sessions_do_not(runti
             await ask(client, "second")
             assert build.call_count == 1
             assert [m.content for m in model.requests[1] if isinstance(m, HumanMessage)] == ["first", "second"]
-            assert (await client.get("/sessions/thread-1")).status_code == 200
+            assert (await client.get("/api/v1/sessions/thread-1")).status_code == 200
             assert build.call_count == 1
             await ask(client, "isolated", "thread-2")
             assert build.call_count == 2
@@ -131,12 +131,12 @@ async def test_reload_failure_preserves_previous_session_and_retries_after_fix(r
         previous = app.state.agents.revision
         graph = next(iter(app.state.agents.cache.values()))
         home_config(runtime, {"plugins": {"enabled": ["missing-plugin"]}})
-        response = await client.post("/dataagent/stream", json=query("rejected"))
-        assert response.status_code == 409 and "Extension reload failed" in response.text
+        response = await client.post("/api/v1/runs", json=query("rejected"))
+        assert response.status_code == 500 and "Extension reload failed" in response.text
         assert app.state.agents.revision == previous
         assert next(iter(app.state.agents.cache.values())) is graph
-        restored = (await client.get("/sessions/thread-1")).json()
-        assert restored["status"] == "complete"
+        restored = (await client.get("/api/v1/sessions/thread-1")).json()["data"]
+        assert restored["status"] == "completed"
         home_config(runtime, {"plugins": {"enabled": ["common"]}})
         await ask(client, "recovered")
         assert [m.content for m in model.requests[-1] if isinstance(m, HumanMessage)] == ["hello", "recovered"]
@@ -144,7 +144,7 @@ async def test_reload_failure_preserves_previous_session_and_retries_after_fix(r
 
 async def test_mcp_install_reuses_discovery_until_connection_changes(runtime):
     model = ScriptedModel(responses=[
-        AIMessage(content="initial"), call("mcp__user__calc_add", {"a": 1, "b": 2}),
+        AIMessage(content="initial"), call("mcp__user__calc__add", {"a": 1, "b": 2}),
         AIMessage(content="three"), AIMessage(content="unchanged"), AIMessage(content="removed"),
     ])
     discover = AsyncMock(wraps=agents.load_mcp_tools)
@@ -160,7 +160,7 @@ async def test_mcp_install_reuses_discovery_until_connection_changes(runtime):
             path.write_text('{"mcpServers": {}}')
             await ask(client)
             assert discover.await_count == 2
-            assert "mcp__user__calc_add" not in model.tool_schemas[-1]
+            assert "mcp__user__calc__add" not in model.tool_schemas[-1]
 
 
 async def test_explicit_env_file_is_preserved_and_host_settings_are_not_hot_changed(runtime, tmp_path):
@@ -204,7 +204,7 @@ async def test_active_run_keeps_graph_while_another_session_refreshes(runtime):
             skill(runtime.paths.home / "skills", "new-skill")
             await ask(client, "new run", "new")
             assert "new-skill" in str(model.requests[0][0].content)
-            conflict = await client.post("/dataagent/stream", json=query(thread="old"))
+            conflict = await client.post("/api/v1/runs", json=query(thread="old"))
             assert conflict.status_code == 409
         finally:
             release.set()
@@ -247,8 +247,8 @@ async def test_mcp_reload_failure_does_not_publish_tools_or_expose_new_credentia
             "headers": {"Authorization": "synthetic-new-secret"},
         }}}))
         with patch.object(agents, "load_mcp_tools", AsyncMock(side_effect=ValueError("bad synthetic-new-secret"))):
-            response = await client.post("/dataagent/stream", json=query("rejected"))
-        assert response.status_code == 409 and "Extension reload failed" in response.text
+            response = await client.post("/api/v1/runs", json=query("rejected"))
+        assert response.status_code == 500 and "Extension reload failed" in response.text
         assert "synthetic-new-secret" not in response.text
         assert app.state.agents.runtime is previous
         assert app.state.agents.mcp_tools is tools
@@ -268,7 +268,7 @@ async def test_cancelling_reload_releases_preparation_lock_and_session_busy_flag
         path = runtime.paths.home / ".mcp.json"
         path.write_text(json.dumps({"mcpServers": {"calc": stdio()}}))
         with patch.object(agents, "load_mcp_tools", wait_for_discovery):
-            request = asyncio.create_task(client.post("/dataagent/stream", json=query("cancelled")))
+            request = asyncio.create_task(client.post("/api/v1/runs", json=query("cancelled")))
             try:
                 await asyncio.wait_for(entered.wait(), 5)
             finally:
@@ -308,12 +308,12 @@ async def test_refresh_keeps_compiled_entry(runtime, tmp_path):
     model = ScriptedModel(responses=[])
     with patch.object(agents, "create_agent", wraps=agents.create_agent) as build:
         async with client_for(runtime, model) as (client, app):
-            first = await client.post("/dataagent/stream", json=query("hello"))
+            first = await client.post("/api/v1/runs", json=query("hello"))
             assert terminal(sse(first)) == ["RUN_FINISHED"] and "from-entry" in first.text
             home_config(runtime, {
                 "plugins": {"enabled": ["direct"]}, "dataagent": {"entry": "switched"},
             })
-            second = await client.post("/dataagent/stream", json=query("again"))
+            second = await client.post("/api/v1/runs", json=query("again"))
             assert terminal(sse(second)) == ["RUN_FINISHED"] and "from-entry" in second.text
             assert build.call_count == 2
             published = app.state.agents.runtime

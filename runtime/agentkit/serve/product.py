@@ -10,15 +10,13 @@ from serve.envelopes import error, success
 
 
 def is_conversation_path(path: str) -> bool:
-    """True for agent routes that require a live engine."""
-    if path in {
-        "/dataagent/stream",
-        "/sessions",
-        "/.well-known/agent-card.json",
-        "/a2a/jsonrpc",
-    }:
+    """True for agent routes that require a live engine.
+
+    The Agent Card is static discovery data, so it stays available while the engine starts.
+    """
+    if path in {"/api/v1/runs", "/api/v1/sessions", "/a2a/jsonrpc"}:
         return True
-    return path.startswith(("/dataagent/stream/", "/sessions/"))
+    return path.startswith(("/api/v1/runs/", "/api/v1/sessions/"))
 
 
 def conversation_status(app: FastAPI) -> dict:
@@ -36,10 +34,12 @@ def register_product_routes(app: FastAPI) -> None:
     """Register /healthz, /ready, and /api/v1 routes. Conversation routes stay separate."""
 
     @app.get("/healthz")
+    @app.head("/healthz", include_in_schema=False)
     async def healthz() -> JSONResponse:
         return success({"status": "ok", "conversation": conversation_status(app)})
 
     @app.get("/ready")
+    @app.head("/ready", include_in_schema=False)
     async def ready() -> JSONResponse:
         conversation = conversation_status(app)
         if not conversation.get("ready"):
@@ -54,22 +54,13 @@ def register_product_routes(app: FastAPI) -> None:
             "workspace": {"id": "local", "name": "Local"},
         })
 
-    @app.post("/runs/{run_id}/cancel")
+    @app.post("/api/v1/runs/{run_id}/cancel")
     async def cancel_run(run_id: str) -> Response:
         from serve.app import cancel_active_run
 
         if not cancel_active_run(app, run_id):
             return error("RESOURCE_NOT_FOUND", "Run is not active.", 404)
         return Response(status_code=204)
-
-
-def register_not_found(app: FastAPI) -> None:
-    """Catch-all registered after real routes so unknown paths use the error envelope."""
-
-    @app.api_route("/{path:path}", methods=["GET", "POST", "PATCH", "PUT", "DELETE"])
-    async def not_found(path: str) -> JSONResponse:
-        del path
-        return error("RESOURCE_NOT_FOUND", "Route not found.", 404)
 
 
 class ConversationReadyGuard:

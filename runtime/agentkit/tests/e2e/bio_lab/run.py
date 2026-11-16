@@ -51,7 +51,7 @@ def select_cases(fixtures, group, numbers=None):
 
 def config_for(db, semantic_url=None):
     config = {
-        "schema_version": 3,
+        "schema_version": 4,
         "models": {
             "primary": {
                 "provider": "openai",
@@ -61,7 +61,7 @@ def config_for(db, semantic_url=None):
                 "temperature": 0,
             }
         },
-        "dataagent": {"model": {"default": "primary"}},
+        "dataagent": {"model": "primary"},
         "plugins": {
             "enabled": ["nl2sql", "data-qa"],
             "config": {
@@ -87,7 +87,7 @@ def config_for(db, semantic_url=None):
         },
     }
     if semantic_url:
-        config["semantic"] = {"base_url": semantic_url, "timeout": 180}
+        config["semantic"] = {"base_url": semantic_url, "timeout_seconds": 180}
     return config
 
 

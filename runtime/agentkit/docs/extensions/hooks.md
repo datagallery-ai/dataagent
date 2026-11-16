@@ -10,7 +10,7 @@ Hook 是一个普通 Python 函数，挂在六个生命周期点上。拒绝有�
 
 ```json
 {
-  "schema_version": 3,
+  "schema_version": 4,
   "dataagent": {
     "hooks": {
       "before_model": [
@@ -92,7 +92,7 @@ Hook 位于工具错误处理之外，所以 Hook 里的异常不会被转换成
   "plugins": {
     "config": {
       "nl2sql": {
-        "hooks": {
+        "run_hooks": {
           "before_run": [{"entrypoint": "hooks/nl2sql.py:prepare_input"}],
           "after_run": [{"entrypoint": "hooks/nl2sql.py:finish_output"}]
         }

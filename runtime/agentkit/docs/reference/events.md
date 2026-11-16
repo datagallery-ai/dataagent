@@ -1,6 +1,6 @@
 # 事件
 
-`POST /dataagent/stream` 使用 AG-UI SSE。编码来自 `ag_ui.encoder.EventEncoder`。适配器是 `ag_ui_langgraph`，名称为 `dataagent`，`emit_raw_events` 为 false，`subagent_visibility` 为 `attributed`。
+`POST /api/v1/runs` 使用 AG-UI SSE。编码来自 `ag_ui.encoder.EventEncoder`。适配器是 `ag_ui_langgraph`，名称为 `dataagent`，`emit_raw_events` 为 false，`subagent_visibility` 为 `attributed`。
 
 服务自己发送权威的开始和结束事件。适配器发出的 `RUN_STARTED`、`MESSAGES_SNAPSHOT` 和 `STATE_SNAPSHOT` 会被丢掉，避免把恢复用的旧 Checkpoint 再快照一次。
 
@@ -24,7 +24,7 @@
 | `code` | 含义 |
 | --- | --- |
 | `TIMEOUT` | 超过 `dataagent.limits.timeout_seconds`，或模型请求超时 |
-| `CANCELLED` | 客户端调用了 `POST /runs/{runId}/cancel` |
+| `CANCELLED` | 客户端调用了 `POST /api/v1/runs/{runId}/cancel` |
 | `LOOP_DETECTED` | 循环检测终止了本轮 |
 | `LIMIT_EXCEEDED` | 超过 `model_calls_per_agent` 或 `tool_calls_per_agent` |
 | `INCOMPLETE_STREAM` | 上游没有终止事件，或终止事件之后还有事件 |
@@ -43,7 +43,7 @@
 
 | 终止 | 会话状态 | 客户端 |
 | --- | --- | --- |
-| `RUN_FINISHED` | `complete`，并记下新的 Checkpoint | 用最后的 `MESSAGES_SNAPSHOT` 作为该轮消息。可以显示 `durationMs` |
+| `RUN_FINISHED` | `completed`，并记下新的 Checkpoint | 用最后的 `MESSAGES_SNAPSHOT` 作为该轮消息。可以显示 `durationMs` |
 | `RUN_ERROR` | `error`。图里已经有消息时，索引指向这一轮到达的 Checkpoint | 保留已显示的部分输出和错误码。不要用同一个 `runId` 重放。下一轮留在同一线程 |
 | `RUN_ERROR`，`code` 为 `CANCELLED` | `interrupted` | 显式取消。按“已停止”显示，不按失败显示。有 Checkpoint 就从它继续，否则读该线程最新图状态。不新开线程 |
 | 连接断开，没有终止事件 | `interrupted` | 存储结果和取消相同 |
