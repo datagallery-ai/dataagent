@@ -48,6 +48,7 @@ class _WordRootRecord:
     row_number: int
     values: dict[str, str]
     english_name: str
+    abbreviation: str
     chinese_description: str
     is_special: bool
     compiled_pattern: re.Pattern[str] | None
@@ -74,9 +75,9 @@ async def validate_word_root(
 ) -> dict[str, Any]:
     """Check an English name against a configured CSV word-root table.
 
-    Exact normalized matches and special-root regular expressions are evaluated
-    locally. For unresolved names, the configured LLM ranks candidates from the
-    full table in one request.
+    Exact normalized matches against the English name or abbreviation, and
+    special-root regular expressions, are evaluated locally. For unresolved
+    names, the configured LLM ranks candidates from the full table in one request.
 
     Args:
         english_name: English name to validate.
@@ -107,24 +108,11 @@ async def validate_word_root(
         logger.warning("Word-root CSV is missing; skipping validation: {}", exc)
         return _validation_skipped_result()
     llm_call_params = _llm_call_params(config)
+    match_result = _local_match_result(table, english_name)
+    if match_result is not None:
+        return match_result
+
     normalized_name = _normalize_name(english_name)
-
-    exact_matches = [
-        record for record in table.records
-        if not record.is_special and _normalize_name(record.english_name) == normalized_name
-    ]
-    if exact_matches:
-        return _matched_result("exact", exact_matches)
-
-    regex_matches = [
-        record for record in table.records
-        if record.is_special
-        and record.compiled_pattern is not None
-        and record.compiled_pattern.fullmatch(english_name)
-    ]
-    if regex_matches:
-        return _matched_result("regex", regex_matches)
-
     cache_key = _candidate_cache_key(
         table=table,
         english_name=normalized_name,
@@ -180,10 +168,10 @@ async def validate_word_roots(
     """Validate a batch of proposed word roots against the configured table.
 
     Each input item requires ``english_name`` and may contain ``chinese_description``.
-    Exact and special-regex checks are local. Unresolved items are sent to the
-    model in groups, with the full table included once per request. Duplicate
-    items are processed once and their results are expanded back to original
-    input order.
+    Exact English-name, abbreviation, and special-regex checks are local.
+    Unresolved items are sent to the model in groups, with the full table
+    included once per request. Duplicate items are processed once and their
+    results are expanded back to original input order.
 
     Args:
         items: Non-empty list of objects with non-empty ``english_name`` strings and
@@ -348,6 +336,11 @@ async def validate_word_roots(
 
 
 def _local_match_result(table: _WordRootTable, english_name: str) -> dict[str, Any] | None:
+    """Match against English name, abbreviation, then special-root regex.
+
+    Abbreviation hits count as successful validation (``match_type="abbreviation"``).
+    Empty abbreviations are ignored. Special roots are only matched via regex.
+    """
     normalized_name = _normalize_name(english_name)
     exact_matches = [
         record for record in table.records
@@ -355,6 +348,15 @@ def _local_match_result(table: _WordRootTable, english_name: str) -> dict[str, A
     ]
     if exact_matches:
         return _matched_result("exact", exact_matches)
+
+    abbreviation_matches = [
+        record for record in table.records
+        if not record.is_special
+        and record.abbreviation
+        and _normalize_name(record.abbreviation) == normalized_name
+    ]
+    if abbreviation_matches:
+        return _matched_result("abbreviation", abbreviation_matches)
 
     regex_matches = [
         record for record in table.records
@@ -474,6 +476,7 @@ def _load_word_root_table_cached(
     for row_number, raw_row in enumerate(reader, start=2):
         values = {str(key): str(value or "") for key, value in raw_row.items() if key is not None}
         english = values.get(english_column, "").strip()
+        abbreviation = values.get(abbreviation_column, "").strip()
         chinese_name = values.get(chinese_name_column, "").strip()
         description = values.get(description_column, "").strip()
         candidate_description = "；".join(
@@ -494,6 +497,7 @@ def _load_word_root_table_cached(
             row_number=row_number,
             values=values,
             english_name=english,
+            abbreviation=abbreviation,
             chinese_description=candidate_description,
             is_special=is_special,
             compiled_pattern=pattern,

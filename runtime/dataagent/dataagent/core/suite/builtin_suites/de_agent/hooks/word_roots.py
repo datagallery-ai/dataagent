@@ -101,7 +101,7 @@ async def _validate_root_batch(
             error_msg = "词根校验返回结果异常：结果英文名与输入不一致。"
         elif type(result.get("found")) is not bool:
             error_msg = "词根校验返回结果异常：结果缺少有效的 found。"
-        elif result["found"] and result.get("match_type") not in ("exact", "regex"):
+        elif result["found"] and result.get("match_type") not in ("exact", "abbreviation", "regex"):
             error_msg = "词根校验返回结果异常：命中结果缺少有效的 match_type。"
         if error_msg:
             return None, f"词根 {index} ({root})：{error_msg}"
@@ -127,7 +127,7 @@ async def validate_identifier_word_roots(
             integer; omit or pass None to use the underlying validator's default.
 
     Returns:
-        pass: True only when every root has an exact or regex match.
+        pass: True only when every root has an exact, abbreviation, or regex match.
         names: Results in input order, each with name, pass and failed_roots.
             Failed root indices refer to positions within that name.
         error_msg: Parameter, service or response error; empty after a completed
