@@ -28,6 +28,11 @@ from .business_twin_business_id_catalog import (
     METRIC_FIELDS,
 )
 
+_HIGH_RAIL_RULES = BUSINESS_RULES["high_rail"]
+_HIGH_RAIL_RIDE_METRICS = frozenset(_HIGH_RAIL_RULES["ride_metrics"])
+_HIGH_RAIL_RIDE_DIMENSIONS = frozenset(_HIGH_RAIL_RULES["ride_dimensions"])
+_HIGH_RAIL_USER_METRICS = frozenset(_HIGH_RAIL_RULES["user_metrics"])
+_HIGH_RAIL_GROUPED_DIMENSIONS = frozenset(_HIGH_RAIL_RULES["grouped_user_dimensions"])
 _PRB_TRIGGER_METRICS = frozenset(BUSINESS_RULES["prb"]["trigger_metrics"])
 _ASSURANCE_TRIGGER_METRICS = frozenset(BUSINESS_RULES["assurance_scale"]["trigger_metrics"])
 _MOS_TRIGGER_METRICS = frozenset(BUSINESS_RULES["mos_analysis"]["trigger_metrics"])
@@ -35,6 +40,9 @@ _MOS_TRIGGER_DIMENSIONS = frozenset(BUSINESS_RULES["mos_analysis"]["trigger_dime
 _ORDINARY_RULES = BUSINESS_RULES["ordinary_experience"]
 _ORDINARY_EXTENDED_METRICS = frozenset(_ORDINARY_RULES["extended_metrics"])
 _ORDINARY_LOAD_DIMENSIONS = frozenset(_ORDINARY_RULES["load_dimensions"])
+_CRH_GEO_RULES = BUSINESS_RULES["crh_geo"]
+_CRH_GEO_TRIGGER_DIMENSIONS = frozenset(_CRH_GEO_RULES["trigger_dimensions"])
+_CRH_GEO_BUSINESS_IDS = frozenset(_CRH_GEO_RULES["business_ids"])
 _WILDCARD_METRIC_FIELDS = tuple(field for field in METRIC_FIELDS if "*" in field)
 _GRANULARITY_FIELD_TO_VALUE = {
     "15min_granularity": "15min",
@@ -46,6 +54,7 @@ _GRANULARITY_FIELD_TO_VALUE = {
 @dataclass(frozen=True)
 class BusinessTwinExtraction:
     """Canonical columns extracted from a question plus the business ID they route to."""
+
     business_id: str
     metrics: frozenset[str]
     dimensions: frozenset[str]
@@ -108,6 +117,11 @@ def _preference_groups(extraction: Mapping[str, Any]) -> list[Sequence[str]]:
     if metrics & _MOS_TRIGGER_METRICS or dimensions & _MOS_TRIGGER_DIMENSIONS:
         groups.append(_route_by_dimension(dimensions, mos["routes"]))
 
+    # 高铁体验：crh_group 是唯一的字段级高铁信号（guarantee_group 通用业务也携带，不作触发），
+    # 指标含乘坐/用户数以外的体验指标时，按 experience_routes 顺序在池内消歧（用户视角优先）。
+    if "crh_group" in dimensions and metrics - _HIGH_RAIL_RIDE_METRICS - _HIGH_RAIL_USER_METRICS:
+        groups.append(_HIGH_RAIL_RULES["experience_routes"])
+
     if metrics & _ORDINARY_EXTENDED_METRICS:
         if "default5qi_group" in dimensions:
             groups.append(_ORDINARY_RULES["default5qi_routes"])
@@ -145,11 +159,22 @@ def _business_id_order(business_id: str) -> int:
     return int(match.group())
 
 
+def _candidate_schemas(dimensions: frozenset[str]) -> Mapping[str, Any]:
+    """Return the business schemas eligible for scoring."""
+    if dimensions & _CRH_GEO_TRIGGER_DIMENSIONS:
+        return {
+            business_id: schema
+            for business_id, schema in BUSINESS_SCHEMAS.items()
+            if business_id in _CRH_GEO_BUSINESS_IDS
+        }
+    return BUSINESS_SCHEMAS
+
+
 def _select_business_id(extraction: Mapping[str, Any]) -> str:
     metrics: frozenset[str] = extraction["metrics"]
     dimensions: frozenset[str] = extraction["dimensions"]
     scores: list[dict[str, Any]] = []
-    for business_id, schema in BUSINESS_SCHEMAS.items():
+    for business_id, schema in _candidate_schemas(dimensions).items():
         matched_metrics = metrics & schema["metrics"]
         missing_metrics = metrics - schema["metrics"]
         matched_dimensions = dimensions & schema["dimensions"]

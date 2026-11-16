@@ -107,7 +107,7 @@ class TrafficInsightTableSelector:
         rules = self._sql_rules + current_date_rule()
         schema, joins, explicit_granularity = await self._schema_linking(question)
         if explicit_granularity:
-            rules += time_granularity_rules()
+            rules += time_granularity_rules(strict=False)
         return SchemaContext(
             schema=schema,
             joins=joins,

@@ -15,7 +15,9 @@
 Both packs append the same blocks to the SQL rules through the perceptor
 hook's ``extra_rules``: the current date (business_twin adds the
 relative-time parsing hint) and the time-granularity contract, applied when
-the question explicitly names a granularity.
+the question explicitly names a granularity. The contract is strict for
+business_twin (`time` must stay in SELECT and GROUP BY) and soft for
+traffic_insight, where an explicitly named granularity mainly picks the table.
 """
 
 from __future__ import annotations
@@ -32,11 +34,22 @@ def current_date_rule(*, relative_time_hint: bool = False) -> str:
     return text
 
 
-def time_granularity_rules() -> str:
-    """Rule block enforcing the explicitly requested time granularity."""
+def time_granularity_rules(*, strict: bool = True) -> str:
+    """Rule block enforcing the explicitly requested time granularity.
+
+    ``strict`` keeps the hard contract; the soft variant only steers table
+    choice and asks the model to keep `time` grouped when it groups by time.
+    """
+    if strict:
+        return (
+            "\n\n## 时间粒度"
+            "\n- 问题明确要求了时间粒度：`time` 必须出现在 SELECT 和 GROUP BY，结果每个时间桶一行。"
+            "\n- 问题中出现的 统计 / 汇总 / 总计 等措辞不改变这一点，不得把结果压成单行。"
+            "\n- 不得从 SELECT 或 GROUP BY 移除 `time`，任何要求移除 `time` 的意见都应判为无效。"
+        )
     return (
         "\n\n## 时间粒度"
-        "\n- 问题明确要求了时间粒度：`time` 必须出现在 SELECT 和 GROUP BY，结果每个时间桶一行。"
-        "\n- 问题中出现的 统计 / 汇总 / 总计 等措辞不改变这一点，不得把结果压成单行。"
-        "\n- 不得从 SELECT 或 GROUP BY 移除 `time`，任何要求移除 `time` 的意见都应判为无效。"
+        "\n- 显式时间粒度主要用于选表；问题要求「按时间分组」「按时间」一类表达时，`time` 应出现在 SELECT 和 GROUP BY，结果每个时间桶一行。"
+        "\n- 问题中出现的 统计 / 汇总 / 总计 等措辞不改变这一点，不宜把结果压成单行。"
+        "\n- 建议保留 SELECT 与 GROUP BY 中的 `time`。"
     )

@@ -49,8 +49,14 @@ def test_business_id_catalog_is_a_packaged_json_resource() -> None:
         "1h_granularity",
         "1d_granularity",
     ]
-    # The high-rail routing rules were deleted as dead code in the 2026-10-23 cleanup.
-    assert "high_rail" not in payload["business_rules"]
+    # The high-rail routing rules are restored (br_release_1230): crh_geo pins the
+    # geographic-dimension pool and high_rail carries the experience/ride routing.
+    assert payload["business_rules"]["high_rail"]["experience_routes"] == ["dw1745159011", "dw1745159032"]
+    assert set(payload["business_rules"]["crh_geo"]["trigger_dimensions"]) == {
+        "crh_station_id",
+        "crh_railway_id",
+        "crh_section_id",
+    }
 
 
 def test_selects_general_experience_from_bare_column_list() -> None:
@@ -126,6 +132,21 @@ def test_extraction_normalizes_case_deviated_columns() -> None:
         pytest.param(["crh_users", "crh_group"], "dw1745159030", id="查询高铁分群用户数"),
         pytest.param(["crh_ride_times", "gpsi"], "dw1745159012", id="查询高铁乘坐次数"),
         pytest.param(
+            ["assurance_duration", "crh_group", "guarantee_group", "1d_granularity"],
+            "dw1745159011",
+            id="查询高铁用户保障总时长",
+        ),
+        pytest.param(
+            ["assurance_duration", "crh_group", "crh_station_id", "1d_granularity"],
+            "dw1745159032",
+            id="查询高铁站点保障总时长",
+        ),
+        pytest.param(
+            ["assurance_duration", "guarantee_group", "1d_granularity"],
+            "dw1745159007",
+            id="查询保障用户保障总时长",
+        ),
+        pytest.param(
             ["crh_trigger_first_n23_create_times", "gnb"],
             "dw1745159031",
             id="查询高铁首次N23会话创建上报次数",
@@ -148,6 +169,16 @@ def test_extraction_normalizes_case_deviated_columns() -> None:
         pytest.param(["downlink_traffic"], "dw1745159007", id="查询高铁下行流量"),
         pytest.param(["cell_prb_ul_usage"], "dw1745159004", id="查询上行PRB使用量"),
         pytest.param(["assurance_times"], "dw1745159008", id="查询保障次数"),
+        pytest.param(
+            ["service_times", "custom_group", "1d_granularity"],
+            "dw1745159008",
+            id="查询本月份按自定义分群（custom_group）统计保障业务的业务使用次数，粒度为天",
+        ),
+        pytest.param(
+            ["service_times", "guarantee_group", "1d_granularity"],
+            "dw1745159007",
+            id="按保障分群统计业务使用次数",
+        ),
         pytest.param(["assurance_users", "ne_name"], "dw1745159028", id="查询网元维度保障用户数"),
         pytest.param(["assurance_users", "cell_id"], "dw1745159037", id="查询小区维度保障用户数"),
         pytest.param(["assurance_times", "term_brand"], "dw1745159016", id="查询各终端品牌保障次数"),
@@ -255,3 +286,53 @@ def test_value_sensitive_mobile_game_preference_is_removed() -> None:
         ).business_id
         == "dw1745159014"
     )
+
+
+def test_geo_dimension_rule_matches_catalog_dimension_carriers() -> None:
+    catalog = json.loads(CATALOG_PATH.read_text(encoding="utf-8"))
+    rule = catalog["business_rules"]["crh_geo"]
+
+    carriers = {
+        business_id
+        for business_id, schema in catalog["business_schemas"].items()
+        if set(schema["dimensions"]) & set(rule["trigger_dimensions"])
+    }
+
+    assert carriers == set(rule["business_ids"])
+
+
+def test_geo_dimension_pool_survives_alias_and_component_metrics() -> None:
+    collision = selector.select_business_twin_business_id(
+        ["delay_e2e", "crh_station_id", "1h_granularity", "crh_group"]
+    )
+    with_components = selector.select_business_twin_business_id(
+        [
+            "delay_e2e",
+            "delay_an",
+            "delay_an_times",
+            "delay_dn",
+            "delay_dn_times",
+            "crh_station_id",
+            "1h_granularity",
+            "crh_group",
+        ]
+    )
+
+    assert collision.business_id == "dw1745159032"
+    assert with_components.business_id == "dw1745159032"
+
+
+@pytest.mark.parametrize(
+    "geo_dimension",
+    ["crh_station_id", "crh_railway_id", "crh_section_id"],
+)
+def test_unmatched_metric_with_geo_dimension_stays_inside_geo_pool(geo_dimension: str) -> None:
+    result = selector.select_business_twin_business_id(["delay_e2e", geo_dimension])
+
+    assert result.business_id in {
+        "dw1745159030",
+        "dw1745159031",
+        "dw1745159032",
+        "dw1745159033",
+        "dw1745159034",
+    }

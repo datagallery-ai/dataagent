@@ -124,9 +124,10 @@ All time filters:
 - time stores Unix epoch seconds and represents bucket start.
 - All time filters are half-open: time >= start_epoch AND time < end_epoch.
 - Every time boundary must be EXTRACT(EPOCH FROM timestamp_expression)::bigint.
+- The timestamp_expression inside EXTRACT(EPOCH FROM ...) MUST be timestamptz (timestamp WITH time zone). NEVER build boundaries from CURRENT_DATE, date-typed values, or arithmetic on a date: CURRENT_DATE - INTERVAL '...' and date_trunc('day', CURRENT_DATE) produce a timestamp WITHOUT time zone, whose epoch is computed as if the wall-clock value were UTC — in a UTC+8 session every boundary shifts by 8 hours and the queried data range is wrong. Anchor calendar boundaries on NOW() instead: EXTRACT(EPOCH FROM date_trunc('day', NOW()))::bigint is CORRECT; EXTRACT(EPOCH FROM date_trunc('day', CURRENT_DATE))::bigint is WRONG.
 - Never compare time directly with timestamp expressions such as NOW() or date_trunc(...).
 - Never use <= as upper time boundary.
-- Use date_trunc(..., NOW()) for calendar boundaries.
+- Use date_trunc(..., NOW()) for calendar boundaries. Never replace NOW() with CURRENT_DATE or any date-typed expression.
 - Use INTERVAL inside timestamp expressions.
 - Do not use numeric epoch arithmetic to construct time-window boundaries or to shift one period's raw timestamp onto another period. Type B3 may subtract its own period start epoch only to calculate `bucket_index`.
 - Do not use MAX(time) as time anchor.
@@ -145,7 +146,8 @@ Ordinary current windows:
 Absolute date/time windows:
 - Always use a half-open interval: time >= start_epoch AND time < end_epoch.
 - If the year is omitted, use the current calendar year.
-- A date-only range includes the entire end date. Example: “6月16日到6月21日” means [June 16 00:00, June 22 00:00).
+- A date-only range includes the entire end date. Wording like “X日到Y日”, “X日至Y日”, “从X日到Y日”, or English “from X to Y” — any range whose end side carries no clock time — follows this rule. Example: “6月16日到6月21日” means [June 16 00:00, June 22 00:00).
+- For a date-only range, the SQL upper boundary MUST be the next day's 00:00 (end date + 1 day): “6月16日到6月21日” → time < June 22 00:00. This next-midnight upper boundary is the standard half-open implementation of “include the entire end date”: it is CORRECT and must never be reported as covering one extra day beyond the requested end date, nor “fixed” to the end date's own 00:00 — an upper boundary at the end date's own 00:00 (time < June 21 00:00) silently drops the entire end date and is WRONG.
 - A range with explicit clock times uses those exact boundaries. Example: “6月16日8点到12点” means [June 16 08:00, June 16 12:00).
 - Never replace an explicit date/time range with a recent-N window or round it according to table granularity.
 - Interpret all absolute date/time boundaries in the current PostgreSQL session TimeZone.
@@ -153,6 +155,7 @@ Absolute date/time windows:
 
 Complete historical windows:
 - 昨天: start_timestamp = date_trunc('day', NOW()) - INTERVAL '1 day', end_timestamp = date_trunc('day', NOW())
+- 前N天 (e.g. 前两天, 前三天, N >= 2): start_timestamp = date_trunc('day', NOW()) - INTERVAL 'N days', end_timestamp = date_trunc('day', NOW()). The window is the N complete calendar days before today (..., 前天, 昨天); the upper boundary is today's 00:00, NOT NOW(). 前N天 is NOT 最近N天: 最近N天 (e.g. 最近两天) is the rolling window [NOW() - INTERVAL 'N days', NOW()).
 - 上周: start_timestamp = date_trunc('week', NOW()) - INTERVAL '1 week', end_timestamp = date_trunc('week', NOW())
 - 上个月: start_timestamp = date_trunc('month', NOW()) - INTERVAL '1 month', end_timestamp = date_trunc('month', NOW())
 
@@ -209,5 +212,7 @@ Comparison examples:
 - If a column has `relation_formula` in its description, use that formula to compute the metric.
 - When returning dimension members that are filtered, ranked, or ordered by a metric, SELECT must include both the involved dimensions and the computed metric value. Reuse exactly the same aggregate or formula expression in SELECT and HAVING/ORDER BY; do not return only the dimensions. If the user explicitly asks only for the count of qualifying members, return the count only.
 - **MANDATORY: All division operations MUST use NUMERIC arithmetic. Integer division is NOT allowed. Always cast at least one operand (prefer the numerator) to NUMERIC, e.g., `SUM(metric)::numeric / NULLIF(...)`.**
+- Every division denominator MUST be wrapped in NULLIF(denominator, 0): write `SUM(a)::numeric / NULLIF(SUM(b), 0)`, never `x / y` — aggregate denominators can be zero.
+- `CAST(x AS DECIMAL)`, `CAST(x AS NUMERIC)`, and `x::numeric` are equivalent spellings of the same numeric cast, and `CURRENT_TIMESTAMP` is the same function as `NOW()`. These spelling differences are valid and must never be reported as issues.
 - **STRICTLY FORBIDDEN: Chinese aliases are NOT allowed in generated SQL. All aliases MUST use ASCII characters and English naming. Violations will be rejected.**
 
