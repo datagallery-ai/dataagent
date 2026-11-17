@@ -15,6 +15,9 @@ Sources, per stage (markers are authoritative; this script does not re-derive ga
   * step2_2 -- ``step2_2_feature_gate.json`` (all 2a~2l), ``gate_data_verified_2_2.txt``,
     derivation/contract/plan presence
   * step2_3 -- ``gate_data_verified_2_3.txt``, ``step2_3_cleaning_report.json``
+  * step2_3b -- ``progress_step2_3b.txt`` (marker presence = stage active),
+    ``semantic_apply.json`` gate 段（Spearman 门槛已运行、CSV 语义列与门槛结果一致、
+    契约 semantic_features 片段已合并且 feature_count 一致）
   * step2_4 -- ``gate_data_verified_2_4.txt``, ``step2_4_wide_userfiltered.csv``,
     ``step2_4_user_filter_report.json``; CSV 表头列名唯一，且 header SHA256
     （``sha256("\\x1f".join(header))``）与契约 ``wide_csv_header_sha256`` 逐位比对
@@ -142,6 +145,90 @@ def check_step2_3(check: Checklist, out_dir: Path) -> None:
             check.add("step2_3", "DROP 决策全部命中真实宽表列", not orphan, ", ".join(orphan[:5]))
 
 
+def check_step2_3b(check: Checklist, out_dir: Path) -> None:
+    """step2_3b（语义先验特征）：marker 存在才视为启用；门禁结论不重推，只核对产物链。"""
+    marker = out_dir / "progress_step2_3b.txt"
+    if not marker.is_file():
+        check.note("step2_3b", "语义特征阶段", "未启用（无 progress_step2_3b.txt），按原流程跳过")
+        return
+
+    check.add("step2_3b", "progress_step2_3b.txt", True, marker.read_text(encoding="utf-8").strip())
+    _check_present(check, "step2_3b", out_dir / "semantic_apply.json", "semantic_apply.json")
+    _check_present(check, "step2_3b", out_dir / "step2_3b_semantic_features.sql", "step2_3b_semantic_features.sql")
+    _check_present(check, "step2_3b", out_dir / "step2_3b_contract_fragment.json", "step2_3b_contract_fragment.json")
+    _check_present(check, "step2_3b", out_dir / "step2_3b_semantic_features.md", "step2_3b_semantic_features.md")
+    check.note("step2_3b", "仓内布尔门禁（行数/主键/列数/语义列）", "由 step2_3b gate 已判定，此处不重推")
+
+    apply_payload = _read_json(out_dir / "semantic_apply.json") or {}
+    gate = apply_payload.get("gate") if isinstance(apply_payload.get("gate"), dict) else {}
+    csv_path = out_dir / "step2_4_wide_userfiltered.csv"
+    if not csv_path.is_file():
+        check.note("step2_3b", "Spearman 门槛", "step2_4 CSV 尚未导出，门槛未到执行时机")
+        return
+    if not gate:
+        check.add(
+            "step2_3b",
+            "spearman-gate 已运行（semantic_apply.json gate 段）",
+            False,
+            "CSV 已导出但 gate 段缺失；正常由 step2_5_driver.py finalize 自动执行 spearman-gate——"
+            "请重跑 finalize，若仍失败请检查 progress_step2_3b.txt 与 CSV 状态",
+        )
+        return
+
+    kept = {str(name) for name in gate.get("kept") or []}
+    dropped = {str(item.get("feature")) for item in gate.get("dropped") or [] if isinstance(item, dict)}
+    enabled = {str(name) for name in apply_payload.get("enabled_features") or []}
+    check.add("step2_3b", "门槛报告产物", (out_dir / "step2_3b_gate_report.json").is_file(), "缺少 step2_3b_gate_report.json")
+    try:
+        with csv_path.open("r", encoding="utf-8-sig", newline="") as stream:
+            header = next(csv.reader(stream), None) or []
+    except (OSError, csv.Error):
+        header = []
+    csv_sem = {name for name in header if str(name).startswith("sem_")}
+    leaked = sorted(csv_sem & dropped)
+    missing = sorted(kept - csv_sem)
+    problems = []
+    if leaked:
+        problems.append("被剔除仍存在：" + ", ".join(leaked[:5]))
+    if missing:
+        problems.append("门槛保留列未出现在 CSV：" + ", ".join(missing[:5]))
+    if problems:
+        problems.append("请确认 step2_4 以 step2_3b_wide_semantic 为输入后重跑 prepare/export")
+    check.add(
+        "step2_3b",
+        "CSV 语义列与门槛结果一致（无被剔除列、保留列全部在场）",
+        not problems,
+        "；".join(problems),
+    )
+    if enabled and not (kept | dropped):
+        check.add(
+            "step2_3b",
+            "门槛实际考察过语义列（kept/dropped 非空）",
+            False,
+            f"启用语义特征 {len(enabled)} 个但门槛未见到任何 sem_ 列：CSV 很可能由 step2_3_wide_cleaned 导出"
+            "（prepare 先于 step2_3b gate 执行、或 --input-table 指错表）；请以 step2_3b_wide_semantic 为输入"
+            "重跑 step2_4 prepare/export，并从 generate 重开整个 step2_3b（spearman-gate 禁止重复执行）",
+        )
+    contract = _read_json(out_dir / "step2_2_deployment_feature_contract.json") or {}
+    semantic_section = contract.get("semantic_features")
+    if kept:
+        expected_count = len(kept)
+        merged = int(semantic_section.get("feature_count") or 0) if isinstance(semantic_section, dict) else 0
+        check.add(
+            "step2_3b",
+            "契约已合并语义片段（feature_count 一致）",
+            merged == expected_count,
+            f"gate 保留 {expected_count}，契约 merged={merged}；先跑 merge-contract",
+        )
+    else:
+        if not enabled:
+            check.note("step2_3b", "契约合并", "未启用任何语义特征，merge-contract 按设计跳过")
+        elif dropped:
+            check.note("step2_3b", "契约合并", "语义特征全部被门槛剔除，merge-contract 按设计跳过")
+        else:
+            check.note("step2_3b", "契约合并", "门槛未见到任何语义列（见上一项失败），契约无从合并")
+
+
 def check_step2_4(check: Checklist, out_dir: Path) -> None:
     has_marker = _check_present(check, "step2_4", out_dir / "gate_data_verified_2_4.txt", "门禁标记")
     csv_path = out_dir / "step2_4_wide_userfiltered.csv"
@@ -267,6 +354,7 @@ def main() -> None:
     check_step2_1(check, out_dir)
     check_step2_2(check, out_dir)
     check_step2_3(check, out_dir)
+    check_step2_3b(check, out_dir)
     check_step2_4(check, out_dir)
     if args.require_receipt:
         check_receipt(check, out_dir)

@@ -86,10 +86,10 @@ CHECK_COLLECT = (
 
 SAVE_NOTE_HARD_RULES = (
     "落盘指引："
-    "① ≤32KB 小结果：把 collect 响应写临时文件（如 tmp_terms_<i>.json）后 "
-    "save-collect --source <tmp> --out raw_terms_<i>.json --extract-rows；"
-    "也可对已落盘临时文件用 save-collect --batch；"
-    "② >32KB 大结果：save-collect --source tool-results/<id>.txt 或 --latest；"
+    "① 标准：collect 后立即 save-collect --job <job_id> --out raw_terms_<i>.json "
+    "--extract-rows（读 jobs/<job_id>/result.json，平台已持久化全量结果，"
+    "不依赖结果大小，禁止把 collect 响应内容重打成临时文件）；"
+    "② 备选：>32KB 大结果 --source tool-results/<id>.txt 或 --latest；"
     "③ 给可读文件就能落盘；守卫报缺失时只补 save-collect，勿重 submit。"
 )
 
@@ -98,7 +98,7 @@ TERM_IDEMPOTENT_NOTE = (
     "禁止对对应 step2_2_term_query_*.sql 重复 submit/poll/collect；"
     "提交前 ls raw_terms_*.json 或 check-collect --manifest step2_2_run.json --expect-rows；"
     "仅缺失项才提交；缺文件时只补 save-collect，不重提交；"
-    "同一 job 落盘失败重交>2 次必须换方法（tool-results 直落 / 标准临时 json），禁止死循环。"
+    "同一 job 落盘失败重交>2 次必须换方法（--job 与 --source tool-results/… 互换 / ls jobs/ 核对 result.json），禁止死循环。"
 )
 
 

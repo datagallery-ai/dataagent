@@ -71,6 +71,12 @@ MARKER = "gate_data_verified_2_4.txt"
 WIDE_CSV = "step2_4_wide_userfiltered.csv"
 BATCH_FILE = "step2_4_export_batch_{index:04d}.sql"
 
+# step2_4 的输入宽表：默认 step2_3_wide_cleaned；step2_3b（语义特征）生效时切换为
+# step2_3b_wide_semantic（以 progress_step2_3b.txt 为准，由 step2_3b gate 写出）。
+BASE_INPUT_TABLE = "step2_3_wide_cleaned"
+SEMANTIC_TABLE = "step2_3b_wide_semantic"
+SEMANTIC_MARKER = "progress_step2_3b.txt"
+
 # Batch SELECT template. ``LIMIT``/``OFFSET`` are formatted in, the role placeholders are
 # bound from schema_resolution.json exactly like the other step2_4 templates.
 BATCH_SQL = (
@@ -101,13 +107,24 @@ def _assert_expanded(path: Path, text: str) -> None:
         raise SystemExit(f"{path} 仍含未替换占位符 {angle.group(0)}")
 
 
-def _bind(text: str, schema: dict[str, Any], data_source: dict[str, Any]) -> str:
-    """Replace ``{{role}}`` / ``<role>`` on non-comment lines, then the catalog placeholders."""
+def _bind(
+    text: str,
+    schema: dict[str, Any],
+    data_source: dict[str, Any],
+    extra: dict[str, str] | None = None,
+) -> str:
+    """Replace ``{{role}}`` / ``<role>`` on non-comment lines, then the catalog placeholders.
+
+    *extra* carries driver-computed values that are not schema roles (e.g. the resolved
+    ``input_table``), taking precedence over same-named schema keys.
+    """
     replacements: dict[str, str] = {}
     for key, value in schema.items():
         text_value = str(value or "").strip()
         if text_value:
             replacements[key] = text_value
+    if extra:
+        replacements.update({key: str(value) for key, value in extra.items()})
     if not str(replacements.get("output_database") or "").strip():
         raise SystemExit("schema_resolution.output_database 为空，无法填充 {{output_database}}")
 
@@ -159,6 +176,25 @@ def _role_columns(schema: dict[str, Any]) -> dict[str, str]:
     return roles
 
 
+def _resolve_input_table(out_dir: Path, override: str | None = None) -> str:
+    """step2_4 的输入宽表：--input-table 优先；否则按 progress_step2_3b.txt 自动判定。"""
+    if override:
+        return override
+    if (out_dir / SEMANTIC_MARKER).is_file():
+        return SEMANTIC_TABLE
+    return BASE_INPUT_TABLE
+
+
+def _manifest_input_table(out_dir: Path) -> str:
+    """读回 prepare 记录的输入宽表名（gate 报错信息用）；读不到时退回默认值。"""
+    try:
+        payload = json.loads((out_dir / MANIFEST).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError):
+        return BASE_INPUT_TABLE
+    value = str(payload.get("input_table") or "").strip() if isinstance(payload, dict) else ""
+    return value or BASE_INPUT_TABLE
+
+
 def _prepare(args: argparse.Namespace) -> None:
     out_dir: Path = args.out_dir
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -166,20 +202,27 @@ def _prepare(args: argparse.Namespace) -> None:
     schema = _read_json(args.schema)
     _role_columns(schema)
     data_source = load_data_source(out_dir)
+    input_table = _resolve_input_table(out_dir, args.input_table)
+    extra = {"input_table": input_table}
 
-    _write(out_dir / CLEANING_SQL, _bind(CLEANING_TEMPLATE.read_text(encoding="utf-8"), schema, data_source), CLEANING_SQL)
-    _write(out_dir / STATS_SQL, _bind(STATS_TEMPLATE.read_text(encoding="utf-8"), schema, data_source), STATS_SQL)
+    _write(
+        out_dir / CLEANING_SQL,
+        _bind(CLEANING_TEMPLATE.read_text(encoding="utf-8"), schema, data_source, extra),
+        CLEANING_SQL,
+    )
+    _write(out_dir / STATS_SQL, _bind(STATS_TEMPLATE.read_text(encoding="utf-8"), schema, data_source, extra), STATS_SQL)
     _write(
         out_dir / COLUMNS_SQL,
-        _bind(COLUMNS_TEMPLATE.read_text(encoding="utf-8"), schema, data_source),
+        _bind(COLUMNS_TEMPLATE.read_text(encoding="utf-8"), schema, data_source, extra),
         COLUMNS_SQL,
     )
-    _write(out_dir / COUNT_SQL, _bind(COUNT_TEMPLATE.read_text(encoding="utf-8"), schema, data_source), COUNT_SQL)
+    _write(out_dir / COUNT_SQL, _bind(COUNT_TEMPLATE.read_text(encoding="utf-8"), schema, data_source, extra), COUNT_SQL)
 
     manifest = {
         "step": "step2_4",
         "stage": "prepare",
         "generated_at": datetime.now(timezone.utc).isoformat(),
+        "input_table": input_table,
         "jobs": [
             {"name": "step2_4_wide_userfiltered", "command_file": CLEANING_SQL, "collect_as": None},
             {"name": "step2_4_stats_validation", "command_file": STATS_SQL, "collect_as": RAW_STATS},
@@ -287,7 +330,7 @@ def _gate(args: argparse.Namespace) -> None:
     if column_reconciled is not True:
         errors.append(
             "column_reconciled 必须为 true（step2_4_wide_userfiltered 列数必须等于 "
-            f"step2_3_wide_cleaned），实际 {columns.get('column_reconciled')!r}"
+            f"{_manifest_input_table(out_dir)}），实际 {columns.get('column_reconciled')!r}"
         )
 
     if errors:
@@ -468,8 +511,8 @@ def _append_csv(args: argparse.Namespace) -> None:
                 raise SystemExit(
                     f"{path} 中没有可识别的结果行（兼容 {{columns, rows}} 与扁平 rows 列表）；"
                     "可能是截断预览或未走 save-collect。请用 "
-                    "step2_driver_common.py save-collect --source <tool-results/id.txt> "
-                    f"--out {path.name} 重新落盘后重试"
+                    "step2_driver_common.py save-collect --job <job_id> "
+                    f"--out {path.name} 重新落盘后重试（或 --source <tool-results/id.txt>）"
                 )
 
     if not header_written:
@@ -496,6 +539,12 @@ def main() -> None:
     prepare = sub.add_parser("prepare", help="bind the cleaning + two validation SQL and write the manifest")
     prepare.add_argument("--schema", type=Path, default=Path("schema_resolution.json"))
     prepare.add_argument("--out-dir", type=Path, default=Path("."))
+    prepare.add_argument(
+        "--input-table",
+        default=None,
+        help="输入宽表名；缺省按 progress_step2_3b.txt 自动判定"
+        f"（存在则为 {SEMANTIC_TABLE}，否则 {BASE_INPUT_TABLE}）",
+    )
     prepare.set_defaults(func=_prepare)
 
     gate = sub.add_parser("gate", help="decide the step2_4 gate and write the filter report + marker")

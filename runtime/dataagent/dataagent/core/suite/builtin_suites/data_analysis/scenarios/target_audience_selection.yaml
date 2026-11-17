@@ -12,6 +12,8 @@ steps:
       Step order: step2_0 (schema_resolution.json + source data & column profiling) →
       step2_1 (1:1 merge into wide table) → step2_2 (feature cleaning with audit report) →
       step2_3 (aggregation, derivation, high-cardinality handling, list field splitting) →
+      step2_3b (semantic prior features; only when the task instruction provides a
+      semantic_feature_config) →
       step2_4 (user filtering, export step2_4_wide_userfiltered.csv) → step2_5 (write receipt.json
       with schema_resolution.json + step2_3_feature_derivation.md + step2_4_wide_userfiltered.csv). Read sampling handoff
       (output_meta.json + delivery tables) from the previous step.

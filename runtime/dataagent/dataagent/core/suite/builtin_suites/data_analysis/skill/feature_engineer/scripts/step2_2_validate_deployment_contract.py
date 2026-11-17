@@ -22,6 +22,9 @@ from step2_2_city_tier_sql import raw_city_columns  # noqa: E402
 ALLOWED_PLAN_KINDS = {"entity", "user_aggregation", "scalar"}
 ALLOWED_JOIN_TYPES = {"LEFT", "INNER", "CROSS"}
 ALLOWED_NULL_POLICIES = {"preserve", "fill"}
+# 运行时参数白名单：{{target}}（NL2SQL 用 step1_sample_stats.json.target 替换）与
+# {{target_game}}（step2_3b 语义特征片段带入，NL2SQL 用 step1_sample_stats.json.target_game 替换）。
+ALLOWED_PARAMETERS = {"target", "target_game"}
 QUALIFIED_COLUMN_PATTERN = re.compile(
     r"(?<![A-Za-z0-9_])`?([A-Za-z_][A-Za-z0-9_]*)`?\s*\.\s*"
     r"`?([A-Za-z_][A-Za-z0-9_]*)`?"
@@ -240,7 +243,7 @@ def validate_contract(
                 )
             expression_fields.append(("entity_key_expression", key_expression))
         for field_name, value in expression_fields:
-            unknown_parameters = _parameters(value) - {"target"}
+            unknown_parameters = _parameters(value) - ALLOWED_PARAMETERS
             if unknown_parameters:
                 errors.append(
                     f"relation_plans.{plan_id}.{field_name}: unsupported parameters "
@@ -276,7 +279,7 @@ def validate_contract(
         expression = str(raw_feature.get("expression") or "").strip()
         if not expression:
             errors.append(f"features.{feature}: expression is required")
-        unknown_parameters = _parameters(expression) - {"target"}
+        unknown_parameters = _parameters(expression) - ALLOWED_PARAMETERS
         if unknown_parameters:
             errors.append(
                 f"features.{feature}: unsupported parameters "

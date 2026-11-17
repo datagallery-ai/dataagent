@@ -1,6 +1,6 @@
 -- step2_4: 用户清洗（`<warehouse>`）
 -- 过滤 <age> / <gender> 为空或空字符串的用户
--- 输入: step2_3_wide_cleaned
+-- 输入: {{input_table}}（默认 step2_3_wide_cleaned；step2_3b 生效时为 step2_3b_wide_semantic）
 -- 输出: step2_4_wide_userfiltered
 -- 本模板只由 step2_4_driver.py prepare 展开绑定，禁止手工替换占位符。
 
@@ -10,7 +10,7 @@ ORDER BY <user_id>
 SETTINGS allow_nullable_key = 1
 AS
 SELECT *
-FROM {{output_database}}.step2_3_wide_cleaned
+FROM {{output_database}}.{{input_table}}
 WHERE <age> IS NOT NULL
   AND toString(<age>) != ''
   AND <gender> IS NOT NULL

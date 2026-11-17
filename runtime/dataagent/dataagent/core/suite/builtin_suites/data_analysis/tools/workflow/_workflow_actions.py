@@ -538,6 +538,15 @@ def _dispatch_task(
 ) -> str:
     base = override_task or str(current_step.get("target") or "").strip()
     lines = [base]
+    user_query = str(status.get("user_query") or "").strip()
+    if user_query:
+        lines.extend(
+            [
+                "",
+                "Original user instruction for this workflow (runtime parameters are taken verbatim from this text):",
+                user_query,
+            ]
+        )
     if _is_initial_step(status, current_step):
         input_refs = [str(item).strip() for item in status.get("input_refs", []) if str(item).strip()]
         if input_refs:
