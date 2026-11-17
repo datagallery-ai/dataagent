@@ -29,10 +29,14 @@
 - stdout 整段保留，stderr 先整段 ``strip`` 再按行加 ``[stderr]``。两边用换行拼接。
 - 截断按字符数、用 ``>``，说明接在切片后面，不占额度。然后才给非零退出码 ``rstrip``。
 - 超时丢掉已经写出的内容，退出码字段是 124。文案看调用方有没有传 ``timeout=``。
+- 超时收尾是整棵进程树：``start_new_session`` 让 ``sh`` 自成进程组长，
+  超时用 ``killpg`` 把组长和它拉起的全部子进程一并 SIGKILL。
 - ``SystemExit`` 和 ``KeyboardInterrupt`` 继续往外抛。
 """
 
+import contextlib
 import os
+import signal
 import subprocess
 import sys
 import uuid
@@ -107,6 +111,27 @@ def _failure_message(exc: BaseException) -> str:
     return f"Error executing command ({type(exc).__name__}): {exc}"
 
 
+def _kill_process_tree(proc: subprocess.Popen) -> None:
+    """超时收尾：结束 ``sh`` 以及它拉起的全部子进程，然后终止。"""
+    if sys.platform == "win32":
+        subprocess.run(
+            ["taskkill", "/F", "/T", "/PID", str(proc.pid)],
+            capture_output=True,
+            check=False,
+        )
+    else:
+        try:
+            os.killpg(proc.pid, signal.SIGKILL)
+        except OSError:
+            with contextlib.suppress(OSError):
+                proc.kill()
+    try:
+        proc.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        with contextlib.suppress(OSError):
+            proc.kill()
+
+
 _CMD_HINT = (
     "\n\n[Hint] This shell is cmd.exe on Windows. Use dir/type, &/&& for chaining; "
     "bash syntax (ls, find, 2>/dev/null, ;) is not supported."
@@ -152,12 +177,11 @@ class LocalShellBackend(FilesystemBackend, SandboxBackendProtocol):
         chosen = self._default_timeout if timeout is None else timeout
         _reject_nonpositive_timeout(chosen)
         launch = {
-            "check": False,
             "shell": True,
-            "capture_output": True,
+            "stdout": subprocess.PIPE,
+            "stderr": subprocess.PIPE,
             "stdin": subprocess.DEVNULL,
             "text": True,
-            "timeout": chosen,
             "env": self._command_env,
             "cwd": str(self.cwd),
             "start_new_session": sys.platform != "win32",
@@ -166,12 +190,10 @@ class LocalShellBackend(FilesystemBackend, SandboxBackendProtocol):
         if sys.platform == "win32":
             launch["creationflags"] = subprocess.CREATE_NO_WINDOW
         try:
-            completed = subprocess.run(command, **launch)
-            merged = _merge_streams(completed.stdout, completed.stderr)
-            shown, truncated = _clip_output(merged, self._output_limit)
-            shown = _attach_exit_line(shown, completed.returncode)
-            shown = _maybe_append_cmd_hint(shown, completed.returncode)
+            proc = subprocess.Popen(command, **launch)
+            stdout, stderr = proc.communicate(timeout=chosen)
         except subprocess.TimeoutExpired:
+            _kill_process_tree(proc)
             return ExecuteResponse(
                 output=_timeout_message(chosen, timeout is not None),
                 exit_code=124,
@@ -179,4 +201,8 @@ class LocalShellBackend(FilesystemBackend, SandboxBackendProtocol):
             )
         except Exception as exc:
             return ExecuteResponse(output=_failure_message(exc), exit_code=1, truncated=False)
-        return ExecuteResponse(output=shown, exit_code=completed.returncode, truncated=truncated)
+        merged = _merge_streams(stdout, stderr)
+        shown, truncated = _clip_output(merged, self._output_limit)
+        shown = _attach_exit_line(shown, proc.returncode)
+        shown = _maybe_append_cmd_hint(shown, proc.returncode)
+        return ExecuteResponse(output=shown, exit_code=proc.returncode, truncated=truncated)
