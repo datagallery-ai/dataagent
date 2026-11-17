@@ -2,6 +2,16 @@
 
 先看进程打出的那一行 `DataAgent: ...`。密钥会被替换后再显示。后端文件日志在 `<home>/runtime/logs/backend.log`，单文件约 5 MB，保留 3 个轮转文件。
 
+## A2A 报障
+
+先保存响应头 `X-Request-ID` 和任务号。任务失败时读取 `metadata.dataagent.error.code`、`stage`、`message`；HTTP 200 也可能是失败 Task。任务查询和取消不会改变创建请求的 `metadata.dataagent.requestId`。
+
+在 `<home>/runtime/logs/backend.log` 及其轮转文件中搜索这个请求号或任务号。`a2a.execution.failed` 给出失败阶段、错误分类和栈帧位置；`a2a.trace.saved` 给出对应原生运行号与 trace 文件。输入校验失败不会创建图 trace，只能查入口或执行拒绝日志。
+
+`checkpoint_settle` 表示图执行后的 checkpoint 保存阶段；先修复存储问题，不要只凭成功的图 trace 判断整个任务成功。`a2a.checkpoint.failed`、`a2a.cleanup.failed` 是附加诊断，不会用清理错误替换原始模型或工具错误。
+
+默认匿名、同团队共享访问，无法从日志确定真实访问者。内存 Task 在服务重启后不可查询，但会话和 checkpoint 仍可续接；旧调用关联在日志保留期内可检索。本服务没有自动重试或执行去重，错误码不能单独作为安全重试依据。
+
 ## 启动
 
 | 现象 | 处理 |

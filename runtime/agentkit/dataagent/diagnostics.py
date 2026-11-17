@@ -1,5 +1,7 @@
 """Credential-redacting, terminal-safe error rendering used by every layer and host."""
 
+import json
+import logging
 import re
 
 _ANSI = re.compile(r"\x1b\[[0-?]*[ -/]*[@-~]|\x1b\][^\x07]*(?:\x07|\x1b\\)")
@@ -76,3 +78,21 @@ def safe_error(error: BaseException, secrets: tuple[str, ...] = ()) -> dict[str,
     message = re.sub(r"(?i)(bearer\s+)\S+", r"\1[REDACTED]", message)
     message = _CONTROL.sub("", _ANSI.sub("", message))
     return {"code": error_code(error), "message": message[:1500]}
+
+
+def safe_log_fields(value, secrets: tuple[str, ...] = ()):
+    """Redact individual diagnostic fields without truncating the whole event."""
+    if isinstance(value, str):
+        return safe_error(RuntimeError(value), secrets)["message"] if value else ""
+    if isinstance(value, dict):
+        return {key: safe_log_fields(item, secrets) for key, item in value.items()}
+    if isinstance(value, (tuple, list)):
+        return [safe_log_fields(item, secrets) for item in value]
+    return value
+
+
+def log_event(logger, event: str, *, secrets, level=logging.INFO, **fields) -> None:
+    """Keep correlation fields readable by both logging handlers and test/host consumers."""
+    payload = safe_log_fields({"event": event, **fields}, secrets)
+    logger.log(level, "%s", json.dumps(payload, ensure_ascii=False),
+               extra={"dataagent_event": payload})

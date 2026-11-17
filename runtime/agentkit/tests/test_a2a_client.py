@@ -44,6 +44,49 @@ async def test_failed_task_raises(runtime):
             await caller.send("hello")
 
 
+async def test_remote_diagnostics_and_injected_client_auth_are_preserved(runtime):
+    async with serving(runtime, ScriptedModel(responses=[]), auth_token="peer-token") as http:
+        caller = A2ACaller("http://127.0.0.1:9999", auth_token="peer-token", http_client=http)
+        with pytest.raises(A2ACallError) as caught:
+            await caller.send("hello")
+    error = caught.value
+    assert error.error_code == "TOOL_ERROR"  # Local tool classification remains compatible.
+    assert error.remote_code == "INTERNAL_ERROR"
+    assert error.request_id and error.task_id and error.context_id and error.root_run_id
+
+
+async def test_injected_http_client_keeps_its_timeout_settings(runtime):
+    timeouts = []
+
+    async def observe(request):
+        timeouts.append(request.extensions["timeout"])
+
+    async with serving(runtime, ScriptedModel(responses=[AIMessage(content="ok")])) as http:
+        http.timeout = httpx.Timeout(0.3, read=0.7)
+        http.event_hooks["request"].append(observe)
+        result = await A2ACaller("http://127.0.0.1:9999", timeout=180, http_client=http).send("hello")
+    assert result.text == "ok"
+    assert len(timeouts) >= 2  # Discovery and SendMessage both use the injected client.
+    assert all(value["read"] == 0.7 and value["connect"] == 0.3 for value in timeouts)
+
+
+async def test_old_peer_without_diagnostic_metadata_still_works():
+    from a2a.helpers import new_task
+    from a2a.types.a2a_pb2 import SendMessageResponse, TaskState
+
+    def respond(_message):
+        return SendMessageResponse(task=new_task(
+            "old-task", "old-context", TaskState.TASK_STATE_FAILED,
+        ))
+
+    async with peer(respond) as http:
+        with pytest.raises(A2ACallError) as caught:
+            await A2ACaller("http://127.0.0.1:9999", http_client=http).send("hello")
+    assert caught.value.remote_code is None
+    assert caught.value.request_id is None
+    assert caught.value.task_id == "old-task"
+
+
 async def test_blank_message_is_rejected_locally():
     caller = A2ACaller("http://127.0.0.1:9999")
     with pytest.raises(ValueError, match="must not be blank"):

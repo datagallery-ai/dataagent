@@ -19,7 +19,7 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 
-from dataagent.diagnostics import safe_error
+from dataagent.diagnostics import log_event, safe_error
 from dataagent.extensions.trace_exporter import LocalFileExporter, RedactingSpanExporter
 
 logger = logging.getLogger(__name__)
@@ -199,23 +199,57 @@ class LocalLangChainTracer(LangChainTracer):
             parent = self.run_map.get(str(parent.parent_run_id))
 
     def _persist_run(self, run: RunTree) -> None:
-        # BaseTracer calls this BEFORE the native root PATCH callback. Wait until
-        # _update_run_single below to flush, rather than writing an incomplete file.
-        pass
+        # agenerate() can skip on_llm_error when its gather is cancelled. Close
+        # existing model runs before the root PATCH; file commit still happens
+        # in _update_run_single, after all patches have been flushed.
+        if not run.error or run.end_time is None:
+            return
+        pending = list(run.child_runs)
+        while pending:
+            child = pending.pop()
+            pending.extend(child.child_runs)
+            if (child.run_type != "llm" or child.end_time is not None
+                    or child.extra.get("__disabled")):
+                continue
+            try:
+                child.end(
+                    end_time=run.end_time,
+                    error="Model wait interrupted locally when parent execution ended; "
+                          "provider outcome unknown.",
+                )
+                super()._update_run_single(child)
+            except Exception as error:
+                logger.warning("TRACE_SAVE_ERROR run=%s model_run=%s message=%s", run.id, child.id,
+                               safe_error(error, self.secrets)["message"])
 
     def _update_run_single(self, run: RunTree) -> None:
         super()._update_run_single(run)
         if run.parent_run_id is not None:
             return
+        metadata = (run.extra or {}).get("metadata") or {}
+        correlation = {
+            "request_id": metadata.get("dataagent_request_id"),
+            "task_id": metadata.get("dataagent_a2a_task_id"),
+            "message_id": metadata.get("dataagent_a2a_message_id"),
+            "context_id": metadata.get("thread_id"),
+            "root_run_id": metadata.get("dataagent_root_run_id"),
+            "native_run_id": str(run.id), "trace_id": str(run.trace_id),
+        }
         try:
             if run.extra.get("__disabled"):
                 return
             self.client.flush()
             self.provider.force_flush()
             self.exporter.finish(str(run.trace_id), str(run.id))
+            if correlation["task_id"]:
+                log_event(logger, "a2a.trace.saved", secrets=self.secrets, **correlation,
+                          trace_file=str(self.directory / f"{run.id}.json"))
         except Exception as error:
             logger.warning("TRACE_SAVE_ERROR run=%s message=%s", run.id,
                            safe_error(error, self.secrets)["message"])
+            if correlation["task_id"]:
+                log_event(logger, "a2a.trace.failed", secrets=self.secrets, level=logging.WARNING,
+                          **correlation, **safe_error(error, self.secrets))
         finally:
             pending = [run]
             while pending:

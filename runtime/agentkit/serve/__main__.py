@@ -7,6 +7,7 @@ import os
 import socket
 import sys
 import threading
+from dataclasses import replace
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from uuid import uuid4
@@ -72,7 +73,11 @@ def configure_logging(runtime: PreparedRuntime | None):
 
         class SafeFormatter(logging.Formatter):
             def format(self, record):
-                return safe_error(RuntimeError(super().format(record)), secrets)["message"]
+                formatted = super().format(record)
+                # log_event redacts fields before serialization; do not truncate its JSON envelope.
+                if hasattr(record, "dataagent_event"):
+                    return formatted
+                return safe_error(RuntimeError(formatted), secrets)["message"]
 
         file_handler = RotatingFileHandler(
             runtime.paths.state_dir / "logs" / "backend.log",
@@ -235,6 +240,7 @@ def serve_a2a(runtime: PreparedRuntime, args) -> int:
 
     host = args.host or runtime.settings.server.host
     port = args.port or runtime.settings.server.port
+    runtime = replace(runtime, a2a_auth_token=args.auth_token or runtime.a2a_auth_token)
     check_port(host, port)
     configure_logging(runtime)
     logging.getLogger("dataagent.a2a").info("A2A JSON-RPC %s%s", http_origin(host, port), JSONRPC_PATH)
