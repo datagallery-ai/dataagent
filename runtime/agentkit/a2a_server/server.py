@@ -2,7 +2,9 @@
 
 import asyncio
 import hmac
+import logging
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from uuid import uuid4
 
 from a2a.server.agent_execution import AgentExecutor
@@ -21,6 +23,15 @@ from starlette.routing import Route
 
 from a2a_server.agent_card import JSONRPC_PATH, build_agent_card
 from a2a_server.agent_executor import AgentKitExecutor
+from a2a_server.request_context import (
+    A2AAuditMiddleware,
+    A2ARejection,
+    audit,
+    current_request,
+    exception_fields,
+    instrument_rpc,
+    route_path,
+)
 from a2a_server.task_store import create_task_store
 from dataagent.bootstrap import PreparedRuntime
 from dataagent.settings import ServerSettings
@@ -38,22 +49,32 @@ def _reserve(busy, user_id: str, thread_id: str):
         return None, None
     key = (user_id, thread_id)
     if key in busy:
-        raise ValueError("A run is already active for this session")
+        raise A2ARejection("A run is already active for this session", "CONFLICT")
     busy.add(key)
     return busy, key
 
 
-async def _stop(turn, graph, *, error: bool = False) -> None:
+async def _stop(turn, graph, *, error: bool = False, secrets=()) -> None:
     """Record a cancelled or failed turn, then release it."""
     if turn is None:
         return
     if error:
         turn.status = "error"
-    if graph is not None:
-        from serve.app import _settle
-
-        await _settle(turn, graph)
-    await turn.release()
+    try:
+        if graph is not None:
+            latest = await turn.settle(graph)
+            checkpoint_id = (latest.config or {}).get("configurable", {}).get("checkpoint_id")
+            audit("a2a.checkpoint.saved" if checkpoint_id else "a2a.checkpoint.unchanged",
+                  secrets=secrets, checkpoint_id=checkpoint_id, complete=False)
+    except Exception as cleanup_error:
+        audit("a2a.checkpoint.failed", secrets=secrets, level=logging.ERROR,
+              **exception_fields(cleanup_error, secrets))
+    finally:
+        try:
+            await turn.release()
+        except Exception as cleanup_error:
+            audit("a2a.cleanup.failed", secrets=secrets, level=logging.ERROR,
+                  **exception_fields(cleanup_error, secrets))
 
 
 class AgentHost:
@@ -65,6 +86,9 @@ class AgentHost:
 
     async def reply(self, thread_id: str, text: str):
         """Run one turn on the shared session index and checkpoint."""
+        invocation = current_request.get()
+        if invocation:
+            invocation.stage = "session_prepare"
         if self.app is None or getattr(self.app.state, "agents", None) is None:
             raise RuntimeError("A2A server is not ready")
         user_id = self.runtime.paths.user_id
@@ -79,34 +103,50 @@ class AgentHost:
             graph = handle.graph
             if graph.config and "recursion_limit" in graph.config:
                 config["recursion_limit"] = graph.config["recursion_limit"]
+            if invocation:
+                invocation.stage = "agent_invoke"
             async with asyncio.timeout(self.runtime.timeout_seconds):
                 result = await handle.ainvoke({"messages": [HumanMessage(content=text)]}, config)
             if turn is not None:
-                await turn.settle(graph, complete=True)
+                if invocation:
+                    invocation.stage = "checkpoint_settle"
+                latest = await turn.settle(graph, complete=True)
+                audit("a2a.checkpoint.saved", secrets=self.runtime.redaction_secrets,
+                      checkpoint_id_before=invocation.checkpoint_before if invocation else None,
+                      checkpoint_id=latest.config["configurable"].get("checkpoint_id"), complete=True)
             return result
         except asyncio.CancelledError:
-            await _stop(turn, graph)
+            await _stop(turn, graph, secrets=self.runtime.redaction_secrets)
             raise
         except Exception:
-            await _stop(turn, graph, error=True)
+            await _stop(turn, graph, error=True, secrets=self.runtime.redaction_secrets)
             raise
         finally:
             if busy is not None:
                 busy.discard(key)
 
     async def _prepare(self, thread_id: str, text: str, user_id: str):
-        run_id = str(uuid4())
+        invocation = current_request.get()
+        run_id = invocation.root_run_id if invocation and invocation.root_run_id else str(uuid4())
+        if invocation:
+            invocation.root_run_id = run_id
         config = {
             "configurable": {"thread_id": thread_id},
-            "metadata": {"dataagent_root_run_id": run_id},
+            "metadata": invocation.graph_metadata() if invocation else {
+                "dataagent_root_run_id": run_id,
+            },
         }
         sessions = getattr(self.app.state, "sessions", None)
         if sessions is None:
             return None, config
         owner = await sessions.owner(thread_id)
         if owner is not None and owner != user_id:
-            raise ValueError(_FOREIGN_SESSION.format(thread_id=thread_id, user_id=user_id))
+            raise A2ARejection(
+                _FOREIGN_SESSION.format(thread_id=thread_id, user_id=user_id), "FORBIDDEN",
+            )
         row = await sessions.get(user_id, thread_id)
+        if invocation:
+            invocation.checkpoint_before = row.get("last_checkpoint_id") if row else None
         config["configurable"] = continuation_configurable(thread_id, row)
         turn = SessionTurn(sessions, user_id, thread_id)
         await turn.start(run_id, text)
@@ -119,13 +159,7 @@ def _route_path(scope) -> str:
     Strip ``root_path`` only on a path-segment boundary: with ``root_path="/a"``,
     ``/a2a/jsonrpc`` stays as is and ``/a/a2a/jsonrpc`` becomes ``/a2a/jsonrpc``.
     """
-    path, root = scope.get("path", ""), scope.get("root_path", "")
-    if root and path.startswith(root):
-        if path == root:
-            return ""
-        if path[len(root)] == "/":
-            return path[len(root):]
-    return path
+    return route_path(scope)
 
 
 class BearerGuard:
@@ -143,6 +177,7 @@ class BearerGuard:
         if scope["type"] == "http" and _route_path(scope) in self.paths:
             supplied = dict(scope.get("headers") or ()).get(b"authorization", b"")
             if not hmac.compare_digest(supplied, self.expected):
+                audit("a2a.request.rejected", error_code="UNAUTHORIZED", stage="authentication")
                 response = JSONResponse(
                     status_code=401,
                     content={
@@ -200,7 +235,9 @@ def build_a2a_routes(
         task_store=task_store or create_task_store(),
         agent_card=card,
     )
-    return [*routes, *create_jsonrpc_routes(handler, rpc_url=JSONRPC_PATH)]
+    rpc_routes = create_jsonrpc_routes(handler, rpc_url=JSONRPC_PATH)
+    return [*routes, *(Route(route.path, endpoint=instrument_rpc(route.endpoint), methods=["POST"])
+                      for route in rpc_routes)]
 
 
 def register_a2a_routes(
@@ -236,6 +273,10 @@ def create_a2a_server(
     """
     if not host:
         raise ValueError("Host must be specified")
+    # The explicit CLI token must be redacted by graph traces and operator logs too.
+    if auth_token:
+        runtime = replace(runtime, a2a_auth_token=auth_token)
+    instance_id = str(uuid4())
 
     @asynccontextmanager
     async def lifespan(app: Starlette):
@@ -244,12 +285,14 @@ def create_a2a_server(
         async with conversation_lifespan(app, runtime, model=model):
             yield
 
-    middleware = []
+    middleware = [Middleware(A2AAuditMiddleware, instance_id=instance_id,
+                             user_id=runtime.paths.user_id, secrets=runtime.redaction_secrets)]
     if auth_token:
         middleware.append(
             Middleware(BearerGuard, token=auth_token, paths=frozenset({JSONRPC_PATH}))
         )
     app = Starlette(lifespan=lifespan, middleware=middleware)
+    app.state.conversation_instance_id = instance_id
     register_a2a_routes(
         app, runtime, host=host, port=port, executor=executor, task_store=task_store,
     )

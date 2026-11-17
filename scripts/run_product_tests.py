@@ -45,6 +45,7 @@ COMPONENTS = ("agentkit", "api", "web", "tui", "deploy")
 DEFAULT_COMPONENTS = ("agentkit", "api", "web", "tui")
 TIERS = ("ut", "st", "test")
 ST_FILES = (
+    ROOT / "runtime" / "agentkit" / "tests" / "test_a2a_e2e.py",
     ROOT / "runtime" / "agentkit" / "tests" / "test_product_e2e.py",
     ROOT / "runtime" / "agentkit" / "tests" / "test_home_startup.py",
     ROOT / "runtime" / "agentkit" / "tests" / "test_tui_cursor.py",

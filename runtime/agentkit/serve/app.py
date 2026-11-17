@@ -643,6 +643,13 @@ def create_app(runtime: PreparedRuntime | None, *, instance_id: str | None = Non
         app.add_middleware(
             BearerGuard, token=runtime.a2a_auth_token, paths=frozenset({JSONRPC_PATH}),
         )
+    from a2a_server.request_context import A2AAuditMiddleware
+
+    app.add_middleware(
+        A2AAuditMiddleware, instance_id=identity,
+        user_id=runtime.paths.user_id if runtime else "default",
+        secrets=runtime.redaction_secrets if runtime else (),
+    )
     register_error_handlers(app)
     register_product_routes(app)
     if runtime is not None:

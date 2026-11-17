@@ -135,21 +135,35 @@ async def test_trace_preserves_subagent_model_tool_tree_and_redacts(runtime):
 
 @pytest.mark.parametrize("timeout", [False, True])
 async def test_error_or_timeout_still_saves_native_trace(runtime, timeout):
+    entered = asyncio.Event()
+
     class WaitingModel(ScriptedModel):
         async def _agenerate(self, *args, **kwargs):
+            entered.set()
             await asyncio.Event().wait()
 
     if timeout:
         runtime = replace(runtime, settings=runtime.settings.model_copy(update={
             "dataagent": runtime.settings.dataagent.model_copy(update={
-                "limits": runtime.settings.dataagent.limits.model_copy(update={"timeout_seconds": 0.1}),
+                # Leave room for adapter/session setup: this test needs a running graph to trace.
+                "limits": runtime.settings.dataagent.limits.model_copy(update={"timeout_seconds": 1}),
             }),
         }))
     model = WaitingModel(responses=[]) if timeout else ScriptedModel(responses=[])
     body = query()
     async with client_for(runtime, model) as (client, _):
         assert terminal(sse(await client.post("/api/v1/runs", json=body))) == ["RUN_ERROR"]
-    assert root(read_trace(runtime, body))["status"]["code"] == 2
+    if timeout:
+        assert entered.is_set(), "Timeout must interrupt graph execution, not adapter startup"
+    data = read_trace(runtime, body)
+    assert root(data)["status"]["code"] == 2
+    model_span, = [s for s in spans(data) if attributes(s).get("langsmith.span.kind") == "llm"]
+    assert model_span["status"]["code"] == 2
+    if timeout:
+        assert "interrupted locally" in model_span["status"]["message"]
+        assert model_span["endTimeUnixNano"] == root(data)["endTimeUnixNano"]
+        assert json.loads(attributes(model_span).get("gen_ai.completion", "{}")) == {}
+        assert not any(k.startswith("gen_ai.usage.") for k in attributes(model_span))
 
 
 async def test_traces_are_isolated_across_concurrent_sessions_and_turns(runtime):
@@ -236,7 +250,149 @@ async def test_sdk_failure_and_cancel_save_trace_and_release_collection(runtime,
         await task
     assert_collector_empty(graph)
     path, = runtime.paths.for_session("sdk").traces.glob("*.json")
+    data = validate_file(path)
+    assert root(data)["status"]["code"] == 2
+    model_span, = [s for s in spans(data) if attributes(s).get("langsmith.span.kind") == "llm"]
+    assert model_span["status"]["code"] == 2
+    if cancelled:
+        assert "interrupted locally" in model_span["status"]["message"]
+        assert model_span["endTimeUnixNano"] == root(data)["endTimeUnixNano"]
+        assert json.loads(attributes(model_span).get("gen_ai.completion", "{}")) == {}
+        assert not any(k.startswith("gen_ai.usage.") for k in attributes(model_span))
+
+
+async def test_cancel_closes_only_its_own_model_run_and_preserves_native_ids(runtime):
+    entered = {text: asyncio.Event() for text in ("cancel-only", "finish-only")}
+    release = asyncio.Event()
+
+    class WaitingModel(ScriptedModel):
+        async def _agenerate(self, messages, *args, **kwargs):
+            entered[messages[-1].content].set()
+            await release.wait()
+            return await super()._agenerate(messages, *args, **kwargs)
+
+    graph = build_graph(runtime, model=WaitingModel(responses=[AIMessage(content="finished")]))
+    collector = next(c for c in graph.config["callbacks"] if isinstance(c, LocalLangChainTracer))
+    tasks = [asyncio.create_task(graph.ainvoke({"messages": [("user", text)]})) for text in entered]
+    try:
+        await asyncio.wait_for(asyncio.gather(*(e.wait() for e in entered.values())), 5)
+        models = {text: next(r for r in collector.run_map.values()
+                             if r.run_type == "llm" and text in json.dumps(r.inputs))
+                  for text in entered}
+        tasks[0].cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await tasks[0]
+        assert models["cancel-only"].end_time is not None
+        assert models["finish-only"].end_time is None
+        release.set()
+        await tasks[1]
+    finally:
+        release.set()
+        for task in tasks:
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+    assert_collector_empty(graph)
+    files = list(runtime.paths.for_session("sdk").traces.glob("*.json"))
+    assert len(files) == 2
+    for file in files:
+        data = validate_file(file)
+        model_span, = [s for s in spans(data) if attributes(s).get("langsmith.span.kind") == "llm"]
+        cancelled = "cancel-only" in attributes(model_span)["gen_ai.prompt"]
+        native = models["cancel-only" if cancelled else "finish-only"]
+        assert attributes(model_span)["langsmith.metadata.dataagent_run_id"] == str(native.id)
+        assert model_span["status"]["code"] == (2 if cancelled else 1)
+        assert native.parent_run_id is not None
+
+
+async def test_model_close_failure_keeps_cancelled_root_and_redacts_log(runtime, monkeypatch, caplog):
+    from langsmith import RunTree
+
+    entered = asyncio.Event()
+
+    class WaitingModel(ScriptedModel):
+        async def _agenerate(self, *args, **kwargs):
+            entered.set()
+            await asyncio.Event().wait()
+
+    original = RunTree.end
+
+    def fail_model_end(run, **kwargs):
+        if run.run_type == "llm":
+            raise OSError("model close failed test-secret")
+        return original(run, **kwargs)
+
+    monkeypatch.setattr(RunTree, "end", fail_model_end)
+    graph = build_graph(runtime, model=WaitingModel(responses=[]))
+    task = asyncio.create_task(graph.ainvoke({"messages": [("user", "hi")]}))
+    await asyncio.wait_for(entered.wait(), 5)
+    task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert_collector_empty(graph)
+    path, = runtime.paths.for_session("sdk").traces.glob("*.json")
     assert root(validate_file(path))["status"]["code"] == 2
+    assert "TRACE_SAVE_ERROR" in caplog.text
+    assert "model close failed" in caplog.text and "test-secret" not in caplog.text
+
+
+async def test_cancel_before_model_start_does_not_create_a_model_span(tmp_path):
+    from langchain_core.runnables import RunnableLambda
+
+    entered = asyncio.Event()
+
+    async def wait(_):
+        entered.set()
+        await asyncio.Event().wait()
+
+    tracer = LocalLangChainTracer(tmp_path)
+    graph = RunnableLambda(wait).with_config(callbacks=[tracer])
+    task = asyncio.create_task(graph.ainvoke("before model"))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert_collector_empty(graph)
+    path, = tmp_path.glob("*.json")
+    data = validate_file(path)
+    assert root(data)["status"]["code"] == 2
+    assert not any(attributes(s).get("langsmith.span.kind") == "llm" for s in spans(data))
+
+
+async def test_cancelled_subagent_model_keeps_its_native_parent(runtime):
+    entered = asyncio.Event()
+
+    class WaitingModel(ScriptedModel):
+        async def _agenerate(self, *args, **kwargs):
+            if self.cursor == 0:
+                return await super()._agenerate(*args, **kwargs)
+            entered.set()
+            await asyncio.Event().wait()
+
+    model = WaitingModel(responses=[call("task", {
+        "subagent_type": "general-purpose", "description": "Wait for this test",
+    })])
+    graph = build_graph(runtime, model=model)
+    tracer = next(c for c in graph.config["callbacks"] if isinstance(c, LocalLangChainTracer))
+    task = asyncio.create_task(graph.ainvoke({"messages": [("user", "delegate")]}))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        pending, = [r for r in tracer.run_map.values() if r.run_type == "llm"]
+        native_id, parent_id = str(pending.id), str(pending.parent_run_id)
+    finally:
+        task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+    assert_collector_empty(graph)
+    path, = runtime.paths.for_session("sdk").traces.glob("*.json")
+    data = validate_file(path)
+    models = [s for s in spans(data) if attributes(s).get("langsmith.span.kind") == "llm"]
+    assert len(models) == 2
+    interrupted, = [s for s in models
+                   if attributes(s)["langsmith.metadata.dataagent_run_id"] == native_id]
+    assert attributes(interrupted)["langsmith.metadata.dataagent_parent_run_id"] == parent_id
+    assert "interrupted locally" in interrupted["status"]["message"]
+    assert sorted(s["status"]["code"] for s in models) == [1, 2]
 
 
 @pytest.mark.parametrize("enabled", [False, "local", True])
@@ -490,6 +646,76 @@ def _otlp_capture_server():
     thread.start()
     endpoint = f"http://127.0.0.1:{port}/v1/traces"
     return endpoint, received, server.shutdown
+
+
+@pytest.mark.parametrize("inside_tool", [False, True])
+async def test_cancelled_models_reach_both_sinks_and_keep_tool_filter(tmp_path, inside_tool):
+    from langchain_core.runnables import RunnableConfig, RunnableLambda
+    from langchain_core.tools import tool
+
+    entered = asyncio.Event()
+
+    class WaitingModel(ScriptedModel):
+        async def _agenerate(self, *args, **kwargs):
+            if self.cursor == 0:
+                return await super()._agenerate(*args, **kwargs)
+            entered.set()
+            await asyncio.Event().wait()
+
+    model = WaitingModel(responses=[AIMessage(content="done test-secret")])
+
+    async def two_calls(text, config: RunnableConfig):
+        await model.ainvoke(text, config)
+        await model.ainvoke(text, config)
+
+    endpoint, received, shutdown = _otlp_capture_server()
+    tracer = LocalLangChainTracer(tmp_path, secrets=("test-secret",), agent_names=("dataagent",),
+                                  otlp_endpoint=endpoint, otlp_headers={})
+    if inside_tool:
+        helper = tool(two_calls, description="Call the helper model twice.")
+
+        async def invoke_tool(text, config: RunnableConfig):
+            return await helper.ainvoke({"text": text}, config)
+
+        graph = RunnableLambda(invoke_tool)
+    else:
+        graph = RunnableLambda(two_calls)
+    graph = graph.with_config(callbacks=[tracer], run_name="dataagent")
+    task = asyncio.create_task(graph.ainvoke("input test-secret"))
+    try:
+        await asyncio.wait_for(entered.wait(), 5)
+        pending_model, = [r for r in tracer.run_map.values() if r.run_type == "llm"]
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        assert_collector_empty(graph)
+        path, = tmp_path.glob("*.json")
+        data = validate_file(path)
+        local = [s for s in spans(data) if attributes(s).get("langsmith.span.kind") == "llm"]
+        remote = []
+        for _, body, _ in received:
+            request = ExportTraceServiceRequest.FromString(body)
+            remote.extend(s for r in request.resource_spans for scope in r.scope_spans for s in scope.spans
+                          if any(a.key == "langsmith.span.kind" and a.value.string_value == "llm"
+                                 for a in s.attributes))
+        assert len(local) == len(remote) == (0 if inside_tool else 2)
+        if not inside_tool:
+            closed, = [s for s in local if attributes(s)["langsmith.metadata.dataagent_run_id"] == str(pending_model.id)]
+            assert closed["status"]["code"] == 2
+            assert closed["endTimeUnixNano"] == root(data)["endTimeUnixNano"]
+            assert sorted(s["status"]["code"] for s in local) == [1, 2]
+            interrupted_remote, = [s for s in remote
+                                   if any(a.key == "langsmith.metadata.dataagent_run_id"
+                                          and a.value.string_value == str(pending_model.id) for a in s.attributes)]
+            assert any(a.key == "langsmith.metadata.dataagent_error"
+                       and "interrupted locally" in a.value.string_value for a in interrupted_remote.attributes)
+        assert "test-secret" not in path.read_text()
+        assert all(b"test-secret" not in body for _, body, _ in received)
+    finally:
+        if not task.done():
+            task.cancel()
+        await asyncio.gather(task, return_exceptions=True)
+        shutdown()
 
 
 @pytest.mark.parametrize("model_error", [False, True])

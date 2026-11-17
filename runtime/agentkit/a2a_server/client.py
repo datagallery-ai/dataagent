@@ -10,9 +10,10 @@ import re
 from dataclasses import dataclass
 
 import httpx
-from a2a.client import ClientConfig, create_client
+from a2a.client import ClientCallContext, ClientConfig, create_client
 from a2a.helpers import get_message_text, new_text_message
 from a2a.types.a2a_pb2 import Message, Role, SendMessageRequest, Task, TaskState
+from google.protobuf.json_format import MessageToDict
 from langchain_core.runnables import RunnableConfig
 from langchain_core.tools import BaseTool, StructuredTool
 
@@ -32,6 +33,8 @@ class A2AResult:
     context_id: str
     task_id: str
     state: str
+    request_id: str | None = None
+    root_run_id: str | None = None
 
 
 class A2ACallError(DataAgentError, RuntimeError):
@@ -39,8 +42,15 @@ class A2ACallError(DataAgentError, RuntimeError):
 
     error_code = "TOOL_ERROR"
 
-    def __init__(self, message: str):
+    def __init__(self, message: str, *, remote_code: str | None = None,
+                 request_id: str | None = None, task_id: str | None = None,
+                 context_id: str | None = None, root_run_id: str | None = None):
         super().__init__(source="tool", component="a2a", fact=message)
+        self.remote_code = remote_code
+        self.request_id = request_id
+        self.task_id = task_id
+        self.context_id = context_id
+        self.root_run_id = root_run_id
 
 
 class A2ACaller:
@@ -117,7 +127,8 @@ class A2ACaller:
             )
             task = None
             message = None
-            async for response in client.send_message(request):
+            call_context = ClientCallContext(service_parameters=headers)
+            async for response in client.send_message(request, context=call_context):
                 if response.HasField("task"):
                     task = response.task
                 elif response.HasField("message"):
@@ -190,10 +201,26 @@ def load_a2a_tools(runtime) -> list[BaseTool]:
 def _result(task: Task) -> A2AResult:
     state = TaskState.Name(task.status.state)
     text = _task_text(task)
+    metadata = MessageToDict(task.metadata).get("dataagent", {})
+    if not isinstance(metadata, dict):
+        metadata = {}
+
+    def string_value(key):
+        value = metadata.get(key)
+        return value if isinstance(value, str) else None
+
+    request_id, root_run_id = string_value("requestId"), string_value("rootRunId")
     if state in {"TASK_STATE_FAILED", "TASK_STATE_CANCELED", "TASK_STATE_REJECTED"}:
-        raise A2ACallError(text or state)
+        error = metadata.get("error")
+        code = error.get("code") if isinstance(error, dict) else None
+        raise A2ACallError(
+            text or state, remote_code=code if isinstance(code, str) else None,
+            request_id=request_id, root_run_id=root_run_id,
+            task_id=task.id, context_id=task.context_id,
+        )
     return A2AResult(
-        text=text, context_id=task.context_id, task_id=task.id, state=state
+        text=text, context_id=task.context_id, task_id=task.id, state=state,
+        request_id=request_id, root_run_id=root_run_id,
     )
 
 

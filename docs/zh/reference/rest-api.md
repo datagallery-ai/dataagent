@@ -67,5 +67,8 @@
 
 - `contextId` 就是会话的 `threadId`，和 `/api/v1/runs` 共用会话与 Checkpoint。它必须是最长 128 的安全 ID，省略时自动生成。
 - 只读取文本 part。成功时最终回答在 `result.task.artifacts`，状态是 `TASK_STATE_COMPLETED`。
-- 设置环境变量 `DATAAGENT_A2A_AUTH_TOKEN` 后，`/a2a/jsonrpc` 需要 `Authorization: Bearer <token>`，否则返回 401，错误码 `UNAUTHORIZED`。Agent Card 仍可匿名读取。对外暴露 A2A 时一定要设置。
+- 默认匿名、单团队共享访问，可查看、续接和取消同实例的任务。设置可选的 `DATAAGENT_A2A_AUTH_TOKEN` 后，`/a2a/jsonrpc` 需要 `Authorization: Bearer <token>`，否则返回 401，错误码 `UNAUTHORIZED`。Agent Card 仍可匿名读取。
+- 每次 RPC 响应带服务端生成的 `X-Request-ID`。Task 的 `metadata.dataagent` 包含 `schemaVersion: 1`、创建请求的 `requestId`、输入 `messageId` 和已创建时的 `rootRunId`。查询、取消不覆盖创建请求的关联信息。
+- 执行失败仍是 HTTP 200 加失败 Task，`metadata.dataagent.error` 包含稳定的 `code`、`stage` 和脱敏 `message`。错误码包括 `BAD_REQUEST`、`CONFLICT`、`FORBIDDEN`、`TIMEOUT`、`MODEL_ERROR`、`TOOL_ERROR`、`CONFIG_ERROR`、`LIMIT_EXCEEDED`、`LOOP_DETECTED`、`INTERNAL_ERROR` 和 `CANCELLED`。同一会话被 Web/TUI 占用时，A2A 返回失败 Task 加 `CONFLICT`，不是 HTTP 409。
+- `GetTask`、`CancelTask` 在 `params.id` 传任务号，直接在 `result` 返回 Task；`ListTasks` 在 `result.tasks` 返回共享列表。`SendMessage` 设置 `params.configuration.returnImmediately: true` 可提前取得任务号，再查询或取消。任务默认保存在内存中，重启后旧 task 不可查询，会话和 checkpoint 可续接；没有执行去重或自动重试承诺。
 - JSON-RPC 的错误按 JSON-RPC 规范返回，不用上面的错误信封。
