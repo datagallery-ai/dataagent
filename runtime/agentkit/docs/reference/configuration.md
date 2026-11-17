@@ -23,7 +23,7 @@
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |
 | `model` | 字符串 | `"primary"` | 必须是 `models` 的键 |
-| `limits.timeout_seconds` | 数 | `180` | 大于 0。同时用于：REST 和 A2A 服务的整轮时限；模型请求超时；shell 命令超时；MCP 读超时；MCP 工具发现时限（取它和 20 秒中的较小值）；远端 A2A 调用的默认超时 |
+| `limits.timeout_seconds` | 数 | `180` | 大于 0。用于 REST 的 Agent 事件迭代时限、A2A 的 Agent `ainvoke` 时限、模型请求超时、shell 命令超时、MCP 读超时、MCP 工具发现时限（取它和 20 秒中的较小值），以及远端 A2A 调用的默认超时。A2A 排队、会话准备和 Checkpoint 保存不在 `ainvoke` 的时限内，不是客户端请求总耗时上限 |
 | `limits.model_calls_per_agent` | 整数 | `128` | 大于 0。每个 Agent 每次调用的模型循环上限 |
 | `limits.tool_calls_per_agent` | 整数 | `128` | 大于 0。每个 Agent 每次调用的工具次数上限 |
 | `loop_detection.enabled` | 布尔 | `true` | 检测模型输出复读和无进展工具循环。复读命中后终止本轮；工具循环第一次命中先提示模型换方法，第二次命中再终止 |
@@ -41,7 +41,7 @@
 | `path` | 字符串 | 必须是已存在且可读的目录，解析后唯一 |
 | `read_only` | `true` | 只能是 `true` |
 
-`entry` 由高层替换；省略则继承低层。改它要重启进程，扩展刷新不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /api/v1/runs` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent`、`loop_detection.ignored_tools` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍然是整轮时限。
+`entry` 由高层替换；省略则继承低层。改它要重启进程，扩展刷新不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /api/v1/runs` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent`、`loop_detection.ignored_tools` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍约束宿主执行阶段，边界见上表。
 
 ### 复读与循环检测
 
@@ -127,9 +127,9 @@
 
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |
-| `agents` | 数组 | `[]` | 高层整表替换。`id` 不能重复 |
+| `remote_agents` | 数组 | `[]` | 高层整表替换。`id` 不能重复；只配置出站调用，不控制入站 A2A 路由 |
 
-`agents[]`：
+`remote_agents[]`：
 
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |

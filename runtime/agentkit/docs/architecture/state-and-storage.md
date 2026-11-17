@@ -5,19 +5,22 @@
 | 状态 | 位置 | 谁写入 |
 | --- | --- | --- |
 | 消息和图状态 | `<home>/runtime/checkpoints.sqlite` | LangGraph Sqlite saver |
-| 会话索引 | `<home>/runtime/sessions.sqlite` | REST `Sessions` |
+| 会话索引 | `<home>/runtime/sessions.sqlite` | REST/A2A 共用的 `Sessions` |
 | 输入和输出绑定 | `sessions.sqlite` 的 `session_bindings` 表 | AgentKit bootstrap |
 | 产物 | 默认 `<home>/outputs/<user>/<thread>/`，可配置 | Agent 文件工具和 shell |
 | Trace | `<home>/runtime/users/<user>/sessions/<thread>/traces/<run_id>.json` | 根运行结束时的本地导出器 |
-| 后端日志 | `<home>/runtime/logs/backend.log` | REST 日志 |
+| 后端日志 | `<home>/runtime/logs/backend.log` | 服务入口、插件和启动器 |
+| 界面日志 | `<home>/runtime/logs/web.log`、`tui.log` | 对应 Web/TUI 进程或其启动器 |
 
-SDK 与 REST 共用数据库文件，但不读写 REST 的 `sessions` 索引表。SDK 未指定会话时使用 `sdk` 作为 thread ID，按上表分别保存 Trace 和产物。控制面的会话目录只保留 `traces/`，不创建 `logs/` 或 `outputs/`。
+SDK 与服务端共用 `session_bindings` 的产物绑定规则，但不读写服务端的 `sessions` 索引表；SDK 的对话 Checkpoint 由调用方提供的 checkpointer 管理，不自动使用服务端的 `checkpoints.sqlite`。SDK 未指定会话时使用 `sdk` 作为 thread ID，按上表分别保存 Trace 和产物。控制面的会话目录只保留 `traces/`，不创建 `logs/` 或 `outputs/`。
 
 ## 会话索引
 
 主键是 `(user_id, thread_id)`。`thread_id` 全局唯一。字段有标题、创建和更新时间、状态、最后 Checkpoint、最后 `run_id`。
 
-`start` 把状态设为 `running`。正常结束写成 `completed` 并保存 Checkpoint id。错误写成 `error`，不推进 Checkpoint id。连接断开写成 `interrupted`。服务再次启动时，残留的 `running` 改成 `interrupted`。
+`start` 把状态设为 `running`。正常结束写成 `completed` 并保存 Checkpoint id。错误写成 `error`，取消或连接断开写成 `interrupted`；收尾时若本轮已有消息 Checkpoint，也保存它的位置，没有新消息时保留原位置。服务再次启动时，残留的 `running` 改成 `interrupted`。
+
+A2A TaskStore 是进程内的协议任务记录。重启后旧 Task ID 不可查询，同一 `contextId` 对应的会话、Checkpoint 和产物仍可继续使用；它不构成另一套持久业务记录。
 
 标题是用户文本压缩空白后的前 100 个字符。
 

@@ -16,7 +16,7 @@
 | Web | `npm run start` 或 `npm run start:web` | `http://127.0.0.1:3000/data-tasks` |
 | TUI | `npm run start:tui` | 终端。控制面没在听就由 TUI 拉起 |
 
-Python SDK 可以不经 HTTP，直接准备同一份运行时。对话的 HTTP 入口是 `POST /api/v1/runs`。
+Python SDK 可以不经 HTTP，直接准备同一份运行时。Web/TUI 的对话入口是 `POST /api/v1/runs`；其他 Agent 可通过同一后端的 A2A 1.0 `POST /a2a/jsonrpc` 调用。A2A 返回 Task 和最终回答，不提供 Web/TUI 的 SSE 事件流，见 [A2A 接口](../reference/rest-api.md#a2a)。
 
 ## 主要模块
 
@@ -37,4 +37,4 @@ Python SDK 可以不经 HTTP，直接准备同一份运行时。对话的 HTTP �
 
 让模型读本机目录时，用工作区，不要在 Home 里找一份“数据源配置”。步骤见 [数据从哪里来](../guides/data-sources.md)。新产生的文件在该会话的 `outputs/`。
 
-当前工作目录下的 `.dataagent/` 不会被读取。HTTP 不校验令牌，也没有注册接口。
+当前工作目录下的 `.dataagent/` 不会被读取。REST 没有访问令牌或注册接口；A2A JSON-RPC 可用 `DATAAGENT_A2A_AUTH_TOKEN` 设置共享 Bearer 令牌，它不保护 REST 接口，也不区分调用者身份。

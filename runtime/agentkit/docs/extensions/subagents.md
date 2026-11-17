@@ -53,7 +53,7 @@
 
 未声明名为 `general-purpose` 的子代理时，运行时会加入内置的 general-purpose。它使用父级工具和 Skill。插件中为其他子代理声明的 Hook 不会套用到它。若要为这个名字配置 Hook 和限额，请在插件中声明同名子代理；声明之后使用插件中的定义。
 
-子代理可见性在 AG-UI 适配器里是 `hidden`。客户端看到的是根运行的事件，不把子代理运行展开成独立的用户回合。
+服务端 AG-UI 适配器使用 `subagent_visibility="attributed"`，子代理步骤归属到当前根运行，客户端可展示其过程；它们不会变成独立的用户回合。A2A 通过 Task 提供最终结果，可等待结束或先返回任务号再查询，不提供这条 AG-UI 事件流。
 
 ## 入口模式
 
@@ -70,7 +70,7 @@
 限制：
 
 - 只接受带 `runnable` 的编译型子代理。
-- `dataagent.hooks`、`limits.model_calls_per_agent` / `limits.tool_calls_per_agent`、`workspaces`，以及插件里的 Skill、工具（含 MCP）、`system_prompt`、其他子代理和根中间件，仍按原路径编译或留在配置里，不装进入口图，也不因此报错。`limits.timeout_seconds` 仍然是整轮时限。
+- `dataagent.hooks`、`limits.model_calls_per_agent` / `limits.tool_calls_per_agent`、`workspaces`，以及插件里的 Skill、工具（含 MCP）、`system_prompt`、其他子代理和根中间件，仍按原路径编译或留在配置里，不装进入口图，也不因此报错。`limits.timeout_seconds` 仍约束宿主执行阶段；A2A 排队等时限边界见 [配置参考](../reference/configuration.md#dataagent)。
 - 不要用同一个 `thread_id` 在 Deep Agents 根和入口图之间恢复。两边的 Checkpoint 状态形状不同，根图还有 `messages` 以外的通道。
 - 只保证异步调用（`ainvoke`、`astream`）。nl2sql 这类只实现了 async 的 Runnable，同步 `invoke` / `stream` 可能失败。
 - Trace 的根名称是入口名。

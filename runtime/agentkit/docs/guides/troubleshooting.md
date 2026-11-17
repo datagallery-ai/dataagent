@@ -1,6 +1,6 @@
 # 故障排查
 
-先看进程打出的那一行 `DataAgent: ...`。密钥会被替换后再显示。后端文件日志在 `<home>/runtime/logs/backend.log`，单文件约 5 MB，保留 3 个轮转文件。
+先保存错误码和关联 ID，再查看 `<home>/runtime/logs/`：后端和插件看 `backend.log`，Web 页面及代理看 `web.log`，终端连接与交互看 `tui.log`。启动配置错误也进入后端 JSON 日志，按 `component=dataagent.startup` 和 `stage=prepare/start` 检索，不再依赖 `DataAgent:` 文本前缀。每个文件按 5,000,000 字节轮转，保留 3 个备份。级别、堆栈与脱敏规则见 [可观测性](../architecture/observability.md)。
 
 ## A2A 报障
 
@@ -21,7 +21,7 @@
 | `unknown field` 或重复键 | 删掉未知字段。JSON 不允许重复键，包括嵌套对象。`schema_version` 只能是产品配置的 `4`、插件清单的 `3` 或子代理 JSON 的 `1`；版本不对时报错会说明怎样升级 |
 | `missing environment variable LLM_...` | 在这次选中的环境文件或进程环境中提供该变量。传了 `--env-file` 用那份文件，否则用 Home `.env` |
 | `Port 127.0.0.1:8790 is occupied` | 改 `config.json` 的 `server.port`，或停掉占用进程。启动不会接管已有服务 |
-| 引擎未就绪 | 配置文件已经读入，对话引擎没有起来。进程仍在。`/healthz` 为 200，`data.conversation.ready` 为 false。`/ready` 和对话返回 503。标准错误里有 `DataAgent:`，常见原因是模型环境变量还没填 |
+| 引擎未就绪 | 配置文件已经读入，对话引擎没有起来。`serve` 进程仍在，`/healthz` 为 200，`data.conversation.ready` 为 false，`/ready` 和对话返回 503。查看 `backend.log` 中的启动错误，常见原因是模型环境变量还没填。独立 `serve-a2a` 没有这两个健康接口 |
 | `Another DataAgent backend owns this workspace` | 同一个 `stateDir` 已有后端持有 `backend.lock`。停掉它，或换 `DATAAGENT_HOME` |
 | `Expected a directory` | Home 下的 `skills`、`hooks`、`plugins` 或 `runtime` 被文件占用 |
 

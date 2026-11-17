@@ -1,81 +1,31 @@
-<h1 align="center">DataAgent</h1>
+# DataAgent
 
-<p align="center">
-  An enterprise-grade Data Agent workbench — it reads business definitions through unified semantics, runs complex multi-table, multi-step analysis inside read-only boundaries,<br />
-  and keeps every step auditable and replayable, turning one question into a trustworthy analysis.
-</p>
+A local data agent built on Python AgentKit / Deep Agents, with Web, TUI, REST, A2A, and Python SDK entry points. The main agent can delegate to local plugins such as nl2sql and preserve conversation state, result files, and traces by session.
 
-<p align="center">
-  <strong>28 datasource types out of the box · Enterprise semantics & context · Self-hosted · Multi-model · Fully auditable</strong>
-</p>
+[简体中文](README_zh.md) · [Documentation](docs/en/README.md) · [Quick start](docs/en/quick-start.md)
 
-<p align="center">
-  <strong>English</strong> · <a href="README_zh.md">简体中文</a>
-</p>
+## Current architecture and capabilities
 
-<p align="center">
-  <a href="#-formal-deploy"><strong>Quick Start</strong></a>
-  ·
-  <a href="https://datagallery-lab.github.io/datafoundry/"><strong>Docs</strong></a>
-  ·
-  <a href="docs/en/reference/supported-datasources.md"><strong>Supported Data Sources</strong></a>
-  ·
-  <a href="#️-roadmap"><strong>Roadmap</strong></a>
-  ·
-  <a href="#-contributing"><strong>Contributing</strong></a>
-</p>
+```text
+Web → Next same-origin proxy ─┐
+TUI → AG-UI / REST ──────────┼→ dataagent serve → main agent → tools / local subagents / MCP
+Other agents → A2A ─────────┘                           └→ nl2sql → configured database
+Python SDK → the same configuration and agent assembly, without requiring HTTP
+```
 
-<p align="center">
-  <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0" />
-  <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/self--hostable-local%20first-2ea44f" alt="Self-hostable" />
-  <img src="https://img.shields.io/badge/PRs-welcome-ff69b4" alt="PRs welcome" />
-  <img src="https://img.shields.io/badge/status-early%20but%20usable-orange" alt="Status" />
-  <br />
-  <a href="https://github.com/mastra-ai/mastra"><img src="https://img.shields.io/badge/Mastra-agent%20runtime-111827" alt="Mastra agent runtime" /></a>
-  <a href="https://github.com/ag-ui-protocol/ag-ui"><img src="https://img.shields.io/badge/AG--UI-event%20stream-6f42c1" alt="AG-UI event stream" /></a>
-  <a href="https://github.com/vadimdemedes/ink"><img src="https://img.shields.io/badge/Ink-terminal%20UI-0f766e" alt="Ink terminal UI" /></a>
-</p>
+- **One backend, several entry points.** Web and TUI share one Python control plane. A2A 1.0 exposes the same runtime through JSON-RPC, or can run as a separate A2A-only process.
+- **Sessions and outputs.** The service persists checkpoints, a session index, traces, and outputs. A2A, Web, and TUI can continue the same session; A2A's in-memory Tasks do not survive a restart.
+- **Plugins and subagents.** Configuration enables plugins, Skills, Hooks, MCP, and compiled subagents. Database queries require an enabled and configured plugin; the control plane has no built-in datasource registration service.
+- **File-based configuration.** Models, addresses, plugins, and inputs come from Home configuration and environment variables. Web does not create or test model profiles.
+- **Correlated diagnostics.** Logs use `backend.log`, `web.log`, and `tui.log`. A2A request, task, and run IDs connect responses to logs and local traces.
 
-<p align="center">
-  <img src="docs/assets/readme/gui-demo.gif" alt="DataAgent Web workbench demo" width="100%">
-</p>
+The current backend has no registration/login, Web model management, datasource registration, knowledge-base management, conversation branching, or trace DAG API. Remaining legacy UI entries do not imply backend support. See [Capabilities](docs/en/capabilities.md).
 
----
+## 🚀 Run It Locally
 
-## 🤔 What Is DataAgent
+Requirements: Node.js ≥22 and uv; the backend uses Python 3.12. Install and run in the same environment. Do not share `node_modules` between Windows and WSL. This version has no Docker / Compose deployment.
 
-When teams let AI query enterprise databases, the real worry is never "can the model write SQL." It is: **does it understand business definitions? Could it mutate production data? Could credentials leak into context? Can a conclusion be verified after the fact?**
-
-Most tools reduce the problem to `prompt → SQL → answer` — impressive in a demo, dead on arrival in the enterprise. DataAgent takes a different path: **it puts the agent inside a semantic, policy-aware, evidence-preserving data task system**, upgrading natural-language analytics into controllable, trustworthy, verifiable data work.
-
-## ✨ Core Capabilities
-
-- 🗄️ **28 datasource types, ready out of the box** — From PostgreSQL, MySQL, Snowflake, BigQuery, and ClickHouse to MongoDB, Redis, and Elasticsearch: connect your existing data stack quickly, cut integration cost, and get the agent into real business analysis faster.
-- 🧠 **Enterprise semantics and context organization** — Manage schema, metric definitions, and field relationships in one place, so terms like "GMV" and "retention" resolve to enterprise-approved tables, fields, and definitions — fewer guessed fields, wrong joins, and definition drift, and fundamentally better accuracy.
-- 🏠 **Self-hosted deployment and multi-model support** — Run it inside your own boundary so data never leaves; on the model side, any OpenAI-compatible provider works (Qwen, DeepSeek, GPT, ...), letting you balance security, cost, latency, and quality per scenario.
-- 🔒 **Safe by default, auditable throughout** — Read-only queries, credential isolation, field masking, row limits, and timeouts by default; SQL, tool calls, and event streams are fully persisted and replayable, so every conclusion is backed by evidence.
-- 🧩 **Deep optimization for complex data tasks** — Built for multi-table, multi-field, long-horizon analysis and multi-step reasoning: complex questions get decomposed, verified, and converged into trustworthy conclusions, materialized as tables, charts, and reports the team can reuse.
-
-## 🆕 What's New In v0.2.0
-
-DataAgent 0.2 turns the first usable workbench into a more complete, stateful data-agent workflow:
-
-- **Branchable, concurrent analysis** — Keep multiple sessions running, queue follow-up prompts, restore completed work, and branch from an earlier question or checkpoint without overwriting the original path.
-- **Evidence-first follow-ups** — Reference a complete output or a selected table/text region in the next question; resolved evidence is carried into the governed run context with diagnostics.
-- **Semantic trace** — Inspect checkpoint-backed run structure in a semantic Trace DAG.
-- **Reusable outputs and workspace assets** — Preview and export tables, charts, reports, SQL, and files; upload files into an active session, then promote supported files for reuse across sessions.
-- **Production-facing Web foundation** — Built-in password authentication, same-origin API proxying, bilingual UI, model connection tests, and onboarding.
-
-See the [v0.2.0 release notes](docs/en/releases/v0.2.0.md) for the complete capability and documentation audit.
-
-## 🚀 Formal deploy
-
-Formal mode has two paths. Docker / Compose is not provided in this release.
-
-### Recommended: Ubuntu / Debian one-click
-
-`./deploy.sh` generates configuration, installs dependencies, builds (Web, API, and TUI), and starts Web + API as a detached background process — closing the terminal does not stop the stack. The TUI is built and ready but is a foreground client: start it in another terminal with `./deploy.sh tui` (or `npm run start:tui`); it does **not** stay running with the stack. No model key is required during deploy — create and enable a model profile in the Web UI after login. Does **not** support native Windows / macOS.
+### Ubuntu / Debian one-click deployment
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -83,179 +33,111 @@ cd datafoundry
 ./deploy.sh
 ```
 
-If a complete `.env` already exists, interactive deploy skips the configuration questions. To change ports or the public URL (secrets are preserved; `.env` is backed up first):
-
-```bash
-./deploy.sh deploy --reconfigure
-```
-
-Common management commands:
+The script prepares configuration, dependencies, and builds, then starts Web/API in the background. Deployment does not require a model key, but conversations require a working model in the repository `.env` or Home `.env`; restart the service after configuring it. TUI is built but does not run in the background; open another terminal and run `./deploy.sh tui`.
 
 ```bash
 ./deploy.sh status
-./deploy.sh start
-./deploy.sh stop
-./deploy.sh logs
 ./deploy.sh doctor
-./deploy.sh tui      # optional: foreground TUI client (API must already be up)
+./deploy.sh logs
+./deploy.sh stop
+./deploy.sh start
 ```
 
-Open `http://127.0.0.1:3000/login`, register or sign in, create an OpenAI-compatible model profile, then go to `/data-tasks`. Re-running `./deploy.sh deploy` uses a maintenance window (stop the managed process group before install/build).
+Closing a terminal or stopping log following does not stop the managed service. Use `./deploy.sh stop`. Redeployment stops the managed service before installation and builds; use `./deploy.sh deploy --reconfigure` to change ports.
 
-### Windows / macOS / other: manual npm
+### Manual npm deployment
 
-On native Windows, macOS, or other non-Ubuntu/Debian hosts, use manual npm. Install and run in the same environment; on Windows, do not share `node_modules` between Windows and WSL.
+For native Windows, macOS, other Linux distributions, or manual configuration:
 
 ```bash
-git clone https://github.com/datagallery-lab/datafoundry.git
-cd datafoundry
 npm install
 cp .env.example .env
 ```
 
-Configure the server-side model in the root `.env` (the Web UI cannot change the model). These values override the Home `~/.dataagent/.env`:
+Edit the repository `.env`:
 
 ```bash
-LLM_MODEL=qwen-plus                # or deepseek-chat, gpt-4o, ...
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_MODEL=your-model-name
+LLM_BASE_URL=https://your-openai-compatible-host/v1
 LLM_API_KEY=replace-with-your-key
 ```
 
-Build and start. `npm install` syncs the control-plane Python dependencies when it finishes. `npm run build` compiles the web app and TUI:
-
 ```bash
 npm run build
-npm run start        # web defaults to 127.0.0.1:3000; override with --web-host / --web-port
+npm run start
+# Optional, in another terminal
+npm run start:tui
 ```
 
-Open `http://127.0.0.1:3000/login`, register or sign in, go to `/data-tasks`, and ask:
+Open `http://127.0.0.1:3000/data-tasks` directly, without registering or creating a Web model profile. Start by asking the agent to describe its capabilities. Database questions require the relevant plugin to be enabled and configured first.
 
-```text
-Show me the tables in this datasource and explain the main fields of each.
-```
+## Configuration and independent services
 
-You will see the full chain: schema inspection → read-only SQL → SQL audit → table output → replayable run history.
+Home defaults to `~/.dataagent`; set `DATAAGENT_HOME` in the process environment to change it. The CLI initializes missing configuration templates on first startup.
 
-> Full steps and the two-environment matrix: [Quick Start](docs/en/quick-start.md). Connect your own PostgreSQL / MySQL / CSV and more: [Data Sources guide](docs/en/guides/data-sources.md).
-
-
-## 🆚 How It Differs From Coding Agents And SQL Chatbots
-
-Coding agents change code, SQL chatbots answer questions, DataAgent runs data tasks — three different operating objects, risk boundaries, and outputs:
-
-| | Works on | Main risk | Output |
-| --- | --- | --- | --- |
-| Coding agent | Repos, tests, PRs | Breaking code | Patch, commit, PR |
-| SQL chatbot | Prompt, SQL, answer | Wrong tables, unsafe access, leaked credentials, no replay | A SQL snippet or an answer |
-| **DataAgent** | Datasources, files, knowledge, tools, task state | Production data boundaries, business semantics, audit evidence | **Replayable data tasks** + SQL audit + tables / charts / reports |
-
-On data tasks specifically, DataAgent's core advantages over a general-purpose coding agent are:
-
-- **Accuracy, from data constraints** — Pointed at a database, a coding agent tends to guess tables, fields, and definitions; DataAgent enforces schema-first analysis and constrains query paths through Data Gateway, cutting guessed fields and wrong joins.
-- **Safety, from controlled execution** — Coding agents run commands and write files: powerful, but high-risk against enterprise data. DataAgent defaults to read-only SQL, credential isolation, field masking, row limits, timeouts, and audit — built for real data environments.
-- **Speed, from a converging task path** — Not because the model reasons faster, but because datasource selection, schema caching, context budgeting, tool policy, and the artifact pipeline eliminate wasted attempts, so analysis converges on results sooner.
-- **Complex tasks, from data-workflow design** — Coding agents excel at code engineering; DataAgent is built for analysis across many tables, fields, and metrics plus knowledge bases, files, and report outputs, chaining "query, verify, explain, materialize" into one complete flow.
-- **Adoption, from an enterprise runtime** — This is not a demo: the Web workbench, TUI, REST API, CopilotKit / AG-UI, Data Gateway, Skills, MCP, Files, Artifacts, and Metadata combine into an operating foundation for data agents.
-
-## ⚙️ How A Data Task Runs
-
-```text
-Ask → Align semantics → Execute under control → Materialize output → Replay & review
-```
-
-1. **Define the task** — Pick datasources, files, knowledge, and tools, then describe the business question in natural language.
-2. **Align meaning with structure** — The agent inspects schema and available context first, grounding terms like "GMV" or "retention" in real tables and fields.
-3. **Execute under control** — Data Gateway runs queries inside a read-only boundary with SQL guardrails, row limits, timeouts, and masking; every SQL statement leaves an audit record.
-4. **Materialize output** — Results become tables, charts, reports, or files — assets the team can cite.
-5. **Replay and review** — Web, TUI, and API share one run history, so every step's evidence is always one click away.
-
-<p align="center">
-  <img src="docs/assets/readme/runtime-flow.png" alt="DataAgent runtime flow" width="100%">
-</p>
-
-## 🗄️ Bring Your Data Stack, No Rebuild
-
-Connect through Data Gateway adapters: DuckDB, SQLite, CSV, Excel, PostgreSQL, and MySQL fit local trials; cloud warehouses, search engines, and NoSQL systems plug in with their own services and credentials.
-
-<p align="center">
-  <img src="docs/assets/readme/database-wall.png" alt="Supported DataAgent data sources" width="100%">
-</p>
-
-See the full list in [Supported Data Sources](docs/en/reference/supported-datasources.md).
-
-## 🛡️ Security Boundary
-
-- The model only receives governed context; datasource credentials, model API keys, and MCP tokens never enter `messages`, `context`, or `forwardedProps`.
-- All datasource access goes through Data Gateway — read-only by default, with SQL guardrails, row limits, timeouts, and field masking.
-- SQL audit logs, tool-call records, and event streams are fully persisted for after-the-fact review.
-- Production-grade multi-tenant auth, centralized secret management, monitoring, and deployment operations require a dedicated design for your environment — see [Security](docs/en/security.md).
-
-## 🗺️ Roadmap
-
-- [x] **Governed data-task workbench** — Web and TUI share one TypeScript agent runtime, CopilotKit / AG-UI event stream, replayable run history, SQL audit trail, and unified asset layer.
-- [x] **Safe data access foundation** — Datasource registration, connection testing, schema introspection, table preview, read-only SQL, masking, knowledge imports, MCP resources, skill packages, and model configuration.
-- [ ] **Unified semantic layer** — Durable metrics, entities, relationships, lineage, and policies, moving agents from "guessing fields" to "understanding business definitions" and from one-off SQL to a governable data operating layer.
-- [ ] **Autonomous analyst loops** — Agents that plan investigations, run controlled experiments, critique findings, and converge on evidence-backed conclusions.
-- [ ] **Evaluation and reliability lab** — NL2SQL, retrieval, tool-use, and end-to-end task benchmarks with regression gates and failure forensics.
-- [ ] **Enterprise control plane** — Identity, RBAC, approvals, audit export, policy-as-code, and cost limits.
-
-Roadmap discussions are welcome in issues and discussions.
-
-## 📚 Documentation
-
-| Goal | Read |
+| File or setting | Purpose |
 | --- | --- |
-| Run the local demo | [Quick Start](docs/en/quick-start.md) |
-| Understand positioning and scope | [Overview](docs/en/overview.md) · [Capabilities](docs/en/capabilities.md) |
-| Use the Web / TUI | [Web workbench guide](docs/en/guides/web-workbench.md) · [TUI guide](docs/en/guides/tui.md) |
-| Connect data sources | [Data sources guide](docs/en/guides/data-sources.md) · [Supported data sources](docs/en/reference/supported-datasources.md) |
-| Integrate via API and runtime | [REST API](docs/en/reference/rest-api.md) · [Agent Runtime & AG-UI](docs/en/reference/agent-runtime.md) |
-| Understand architecture and security | [Architecture overview](docs/en/architecture/overview.md) · [Security](docs/en/security.md) |
+| `<Home>/config.json` | Product configuration with `schema_version: 4`, including `models`, `dataagent`, `plugins`, and `server` |
+| `<Home>/.env` | Values for `$env{NAME}` references; nonempty process variables override the file |
+| `--config` | Replaces Home configuration; does not select a neighboring `.env` |
+| `--env-file` | Explicitly replaces Home `.env`, including for direct Python CLI launches |
+| `server.host / port` | Backend defaults to `127.0.0.1:8790`; Web defaults to port 3000 |
 
-## 🤝 Contributing
+```bash
+# Backend, including A2A routes
+uv run --project runtime/agentkit dataagent serve
 
-DataAgent moves quickly, so small, well-scoped PRs are the easiest to merge:
+# A2A only: choose this OR serve, since one Home supports one backend
+uv run --project runtime/agentkit dataagent serve-a2a
+```
 
-1. Open an issue or discussion first for behavioral, protocol, datasource-adapter, or agent-policy changes.
-2. Keep each PR focused on one runtime boundary or feature area.
-3. Run `npm run build` plus the targeted smoke checks for what you touched (e.g. `npm run smoke:docs`).
-4. Update docs when a change affects setup, APIs, datasource configuration, or user-visible output.
-5. Do not commit credentials, local databases, generated storage, or private benchmark data.
+`serve` provides `/healthz`, `/ready`, `/api/v1/runs`, sessions, and outputs. `serve-a2a` has none of those REST/health routes. SDK callers can use `prepare_runtime`, `create_agent`, and `ainvoke` directly; their host manages the checkpointer, exception handling, and logging configuration.
 
-See [CONTRIBUTING.md](CONTRIBUTING.md) for details.
+## A2A calls
 
-## 💬 Community
+The service exposes `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc`. Requests must include `A2A-Version: 1.0`. Calls can wait for the final result or use `returnImmediately: true` to obtain a Task for polling. A2A streaming is not supported; see [call modes and examples](runtime/agentkit/docs/reference/a2a.md#等待结果与异步任务).
 
-Join the DataAgent community to discuss the product, roadmap, and real-world adoption with us. Issues and discussions are always welcome too.
+```bash
+curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
+  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
+  -d '{"jsonrpc":"2.0","id":"request-1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"message-1","contextId":"thread-1","parts":[{"text":"Describe your capabilities in three sentences."}]}}}'
+```
 
-<table align="center">
-  <tr>
-    <td align="center"><strong>Slack Community</strong></td>
-    <td align="center"><strong>QQ Group</strong></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/assets/readme/community-slack-qrcode.png" alt="DataAgent Slack community QR code" width="300"></td>
-    <td align="center"><img src="docs/assets/readme/community-qq-qrcode.png" alt="DataAgent QQ group QR code" width="220"></td>
-  </tr>
-  <tr>
-    <td align="center"><a href="https://join.slack.com/t/datafoundry-7bb8405/shared_invite/zt-42qikc65e-DwA~8ltIri_WYWWpRMjCFQ"><strong>Join Slack</strong></a></td>
-    <td align="center"><strong>Group ID</strong><br><code>1048076064</code></td>
-  </tr>
-</table>
+When `DATAAGENT_A2A_AUTH_TOKEN` is set, also send `Authorization: Bearer <token>`. The Agent Card remains public. Execution failures can still return HTTP 200; inspect Task state and `metadata.dataagent.error`. See [REST and A2A](docs/en/reference/rest-api.md) for query and cancellation contracts.
 
-## 🙏 Acknowledgements
+## Logs and diagnosis
 
-DataAgent is inspired by and built with ideas from excellent open-source projects and communities:
+`<Home>/runtime/logs/` uses three main files:
 
-- Thanks to the [LINUX DO](https://linux.do/) community for their support and discussions.
-- [Mastra](https://github.com/mastra-ai/mastra) for agent runtime patterns.
-- [AG-UI](https://github.com/ag-ui-protocol/ag-ui) for event stream protocol design.
-- [CopilotKit](https://github.com/CopilotKit/CopilotKit) for agent-native UX patterns.
-- [Ink](https://github.com/vadimdemedes/ink) for terminal UI foundations.
-- [MCP](https://modelcontextprotocol.io) for the tool ecosystem and integration model.
+| File | Contents |
+| --- | --- |
+| `backend.log` | Backend, plugins, models, A2A, shared dependencies, and service lifecycle |
+| `web.log` | Web builds, server, proxy, and reported browser errors |
+| `tui.log` | TUI builds, connections, transport, and interaction |
 
-## 📄 License
+Each rotates at 5,000,000 bytes with 3 backups. Correlate records using `X-Request-ID`, Task ID, and run IDs. A file may not exist until its process first writes a record. Browser reporting requires a reachable Web server and has no offline-storage guarantee.
 
-Apache License 2.0. See [LICENSE](LICENSE).
+## Security boundary
 
-> DataAgent is under active development. Current code, public docs, and passing smoke checks are the source of truth.
+- The default listener is local. REST has no access token. The optional A2A shared token protects JSON-RPC only; it is not user login or tenant isolation.
+- Known credentials are redacted before log and trace export. Conversations, SQL, tool results, and CSV files can still contain business data.
+- Workspace read-only guidance and plugin SQL rules are not an operating-system sandbox. File tools and shell use backend process permissions; nl2sql SQL security rules must be enabled through configuration.
+
+See [Security](docs/en/security.md) and [Supported inputs](docs/en/reference/supported-datasources.md).
+
+## Documentation and development
+
+- [Quick start](docs/en/quick-start.md): deployment, models, lifecycle, and troubleshooting.
+- [Architecture](docs/en/architecture/overview.md): the control plane, Web/TUI, and A2A.
+- [Configuration](docs/en/reference/configuration-api.md) and [API](docs/en/reference/rest-api.md): current integration contracts.
+- [Contributing](CONTRIBUTING.md). Runtime, plugin, and SDK technical docs are under `runtime/agentkit/docs/` in this repository.
+- [Historical v0.2.0 release notes](docs/en/releases/v0.2.0.md): product design and capabilities at that time, rather than an acceptance checklist for the current refactored runtime.
+
+```bash
+npm run test:deploy
+npm run test:web
+npm run test:tui
+npm run test:product
+```
+
+Apache-2.0; see [LICENSE](LICENSE).

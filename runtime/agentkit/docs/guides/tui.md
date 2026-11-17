@@ -29,6 +29,7 @@ npm run start:tui -- --runtime-url http://127.0.0.1:8790
 | --- | --- |
 | `/help` | 显示帮助。别名 `h`、`?` |
 | `/clear` | 开始新对话。不删除已有会话 |
+| `/stop` | 通过取消接口停止当前一轮，再中止本地流；保留当前会话 |
 | `/resume` | 打开会话列表 |
 | `/resume list` | 打开会话列表 |
 | `/resume <threadId>` | 恢复该会话 |

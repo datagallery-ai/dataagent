@@ -1,10 +1,10 @@
 # REST API 参考
 
-这篇给要调用控制面的集成方，不写服务内部模块。控制面默认地址是 `http://127.0.0.1:8790`，来自 Home `config.json` 的 `server.host` 和 `server.port`。没有访问令牌。网页通过 Next 把相同路径转到这个地址。
+这篇给要调用控制面的集成方，不写服务内部模块。控制面默认地址是 `http://127.0.0.1:8790`，来自 Home `config.json` 的 `server.host` 和 `server.port`。REST 没有访问令牌；A2A JSON-RPC 有可选共享令牌，见下文。网页通过 Next 把 `/api/v1/*` 转到这个地址。
 
 ## 信封
 
-所有 JSON 响应都用信封，成功和失败都一样。只有两处例外：`POST /api/v1/runs` 成功时返回 SSE 事件流，取消成功时返回空的 204。
+REST 的 JSON 响应都用信封，成功和失败都一样。`POST /api/v1/runs` 成功时返回 SSE 事件流，REST 取消成功时返回空的 204。A2A 使用自己的 Agent Card 和 JSON-RPC 格式，见下文，不套 REST 成功信封。
 
 ```json
 {"success": true, "data": {}}

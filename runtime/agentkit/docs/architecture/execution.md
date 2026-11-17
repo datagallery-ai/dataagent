@@ -40,13 +40,14 @@ Checkpoint 使用 `<stateDir>/checkpoints.sqlite` 的 `AsyncSqliteSaver`。同�
 1. 根 Agent 的 `TodoListMiddleware`。子代理没有
 2. 模型次数限制，超出则错误
 3. 工具次数限制，超出则错误
-4. 编译后的 Hook
-5. `ToolErrorMiddleware`：只有 `ToolException` 变成可纠正文本
-6. 有修订号时，再加会按修订刷新的 Skill 中间件
+4. 启用时的工具循环检测
+5. 编译后的 Hook
+6. `ToolErrorMiddleware`：只有 `ToolException` 变成可纠正文本
+7. 有修订号时，再加会按修订刷新的 Skill 中间件
 
 core 再装配文件系统、子代理、摘要和补丁工具调用，以及画像要求的其他层。产品配置、插件和子代理通过 Hook 扩展生命周期。
 
-模型是 `ChatOpenAI`，超时等于 `timeout_seconds`，重试等于 `max_retries`。子代理使用同一默认模型。
+模型是 `ChatOpenAI`，超时等于 `timeout_seconds`，重试等于 `max_retries`。标准子代理使用同一默认模型；nl2sql 等编译型子代理可通过自己的参数选择 `models` 别名。
 
 文件系统后端是 `LocalShellBackend(virtual_mode=False)`。根目录为该会话 `outputs/`，shell 继承进程环境，超时使用同一个 `timeout_seconds`。`CompositeBackend` 把卸载文件放到 `outputs/artifacts/`。路径使用宿主上的真实路径。
 
@@ -66,8 +67,8 @@ START → <entry> → END
 
 ## 一轮的边界
 
-REST 用 `asyncio.timeout(timeout_seconds)` 包住整个上游迭代，包括重试等待和工具。SDK 的 `ainvoke` 没有这层总时限，由调用方自己限制。
+REST 用 `asyncio.timeout(timeout_seconds)` 包住整个上游迭代，包括重试等待和工具。入站 A2A 的时限只包住 Agent 的 `ainvoke`，不含排队、会话准备或 Checkpoint 保存，见 [A2A](../reference/a2a.md#请求号与诊断)。SDK 的 `ainvoke` 没有宿主总时限，由调用方自己限制。
 
 AG-UI 默认的 `recursion_limit=25` 会被图自己的 limit 盖过，只转发图配置里的那一个值。
 
-若图停在未完成的节点，服务返回 `RUN_ERROR`。恢复会话时使用上一份成功的 Checkpoint。
+若图停在未完成的节点，服务返回 `RUN_ERROR`。失败或取消时，收尾会把本轮已经写入消息的 Checkpoint 记入会话索引；下一轮优先从索引指向的位置继续，没有该位置时读线程最新状态。恢复不等于重新执行或幂等重放。

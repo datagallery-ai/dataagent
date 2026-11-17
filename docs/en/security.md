@@ -1,6 +1,6 @@
 # Security
 
-The control plane listens on `127.0.0.1` by default. Callers and the backend are on the same machine. HTTP does not check an access token.
+The control plane listens on `127.0.0.1` by default. REST does not check an access token. A2A JSON-RPC can require a shared Bearer token through `DATAAGENT_A2A_AUTH_TOKEN`; the Agent Card remains public. This token does not protect REST or identify individual callers. See [REST and A2A](reference/rest-api.md).
 
 ## Secrets
 
@@ -8,7 +8,7 @@ Public examples use placeholders such as `replace-with-your-key`. Do not commit 
 
 Put secrets in the process environment or Home `.env`, and reference them with `$env{...}`. Logs and error text replace secrets the runtime knows. Trace files still contain the system prompt, the conversation, and tool results.
 
-`POST /api/v1/runs` rejects `context`, `state`, and `forwardedProps`. Do not put secrets in the user message.
+`POST /api/v1/runs` requires `context: []` and `forwardedProps: {}`. `state` can be omitted, `null`, or `{}`. Nonempty client-supplied content is rejected. Do not put secrets in the user message.
 
 ## Identity and files
 

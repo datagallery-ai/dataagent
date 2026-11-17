@@ -6,16 +6,70 @@ SDK 与 REST 使用同一套准备和装配。只有一条路径：`prepare_runt
 
 ## 准备和调用
 
+### 不配置文件日志
+
+先在 Home `config.json` / `.env` 配好可用模型，再将以下示例保存为脚本，从仓库根目录用 `uv run --project runtime/agentkit python /path/to/example.py` 运行。示例使用内存 Checkpoint，进程退出后不保留对话历史。
+
 ```python
+import asyncio
+
+from langgraph.checkpoint.memory import InMemorySaver
 from dataagent import LaunchOptions, create_agent, prepare_runtime
 
-runtime = prepare_runtime(LaunchOptions(workspaces=("/existing/data",)))
-async with create_agent(runtime, checkpointer=checkpointer) as agent:
-    result = await agent.ainvoke(
-        {"messages": [("user", "Summarize 1, 2, 3")]},
-        config={"configurable": {"thread_id": "task-a"}},
-    )
+
+async def main():
+    runtime = prepare_runtime(LaunchOptions())
+    async with create_agent(runtime, checkpointer=InMemorySaver()) as agent:
+        result = await agent.ainvoke(
+            {"messages": [("user", "用三句话说明你现在能做什么。")]},
+            config={"configurable": {"thread_id": "sdk-demo"}},
+        )
+        print(result["messages"][-1].content)
+
+
+asyncio.run(main())
 ```
+
+SDK 不自动安装日志处理器，也不自动创建 `backend.log`。现有宿主若已配置 Python logging，SDK/插件日志仍会交给该宿主；“不配置文件日志”也不关闭 Trace 或产物。调用异常向上抛出。
+
+### 写入统一 backend.log
+
+自建宿主需要文件日志时使用已有的 `configure_logging(runtime)`，仍写同一个 Home 日志目录。此函数设置根 logger 为 INFO，并替换已有 handlers（`force=True`），接入已有应用时应由宿主统一选择初始化位置。下面用 `logger.exception` 记录创建/调用异常及堆栈，然后继续抛出；日志配置本身不会自动捕获所有 SDK 异常。
+
+```python
+import asyncio
+import logging
+
+from langgraph.checkpoint.memory import InMemorySaver
+from dataagent import LaunchOptions, create_agent, prepare_runtime
+from dataagent.host import configure_logging
+
+
+async def main():
+    runtime = prepare_runtime(LaunchOptions())
+    configure_logging(runtime)
+    logger = logging.getLogger("dataagent.sdk.example")
+    thread_id = "sdk-logged-demo"
+    try:
+        async with create_agent(runtime, checkpointer=InMemorySaver()) as agent:
+            logger.info("SDK 调用开始", extra={"threadId": thread_id})
+            result = await agent.ainvoke(
+                {"messages": [("user", "用三句话说明你现在能做什么。")]},
+                config={"configurable": {"thread_id": thread_id}},
+            )
+            logger.info("SDK 调用完成", extra={"threadId": thread_id})
+            print(result["messages"][-1].content)
+    except Exception:
+        logger.exception("SDK 创建或调用失败", extra={"threadId": thread_id})
+        raise
+
+
+asyncio.run(main())
+```
+
+配置准备在日志初始化前执行；若 `prepare_runtime` 就失败，异常仍交给宿主处理。日志位于 `<Home>/runtime/logs/backend.log`，JSON 格式、脱敏与轮转沿用后端实现，不另建 SDK 日志文件。非空进程 `DATAAGENT_HOME` 决定 Home；内部 `DATAAGENT_LOG_CAPTURE` 留给启动器管理，不手动设置。实现见 [日志配置](../../dataagent/logging.py)，准备和调用见 [SDK 句柄](../../dataagent/client.py)。
+
+上述两个示例使用默认主代理。验证“主代理委派 nl2sql”时，在所选配置中启用并配置 nl2sql，省略 `dataagent.entry`，将问题改成实际数据库问题。配置了 MCP 时还需按下文加载工具。
 
 `prepare_runtime` 返回不可变的 PreparedRuntime：设置、路径、扩展位置和启动报告。默认 `init_home=False`。Home 不存在时，只是没有用户配置层。需要模板目录时传入 `init_home=True`。
 
@@ -114,5 +168,7 @@ async def summarize(text: str, runtime: ToolRuntime[AgentContext]) -> str:
 ## 和环境的关系
 
 SDK 准备过程不修改 `os.environ`。`LaunchOptions.env_file` 和 Home `.env` 二选一，与 CLI 相同。`LaunchOptions.config` 不改变环境文件。见 [命令与环境变量](../reference/cli-and-environment.md)。
+
+服务入口 `dataagent serve`、`serve-a2a` 自动配置 `backend.log`；SDK 的可选接入见上文 [写入统一 backend.log](#写入统一-backendlog)，接口定义见 [宿主接口](../reference/python-api.md#宿主接口dataagenthost)。
 
 请把 AgentKit 装在独立环境。旧运行时使用同一个导入名 `dataagent`。
