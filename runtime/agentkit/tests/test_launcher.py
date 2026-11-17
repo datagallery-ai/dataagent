@@ -136,7 +136,7 @@ def _run_serve(tmp_path, *args):
 def test_missing_config_exits_without_listening(tmp_path):
     code, text = _run_serve(tmp_path, "--config", str(tmp_path / "missing.json"))
     assert code == 1
-    assert "DataAgent:" in text
+    assert "dataagent.startup" in text
     assert "Configuration file does not exist" in text
     assert "missing.json" in text
 
@@ -146,7 +146,7 @@ def test_invalid_config_exits_without_listening(tmp_path):
     path.write_text("{")
     code, text = _run_serve(tmp_path, "--config", str(path))
     assert code == 1
-    assert "DataAgent:" in text
+    assert "dataagent.startup" in text
     assert "Invalid JSON" in text
 
 
@@ -167,12 +167,12 @@ def test_old_config_exits_with_upgrade_steps(tmp_path):
     assert "semantic.timeout to semantic.timeout_seconds" in text
 
 
-def test_loaded_config_without_model_env_stays_unready(tmp_path, monkeypatch, capsys):
+def test_loaded_config_without_model_env_stays_unready(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
     for name in ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"):
         monkeypatch.delenv(name, raising=False)
     assert _prepare(_parser().parse_args(["serve"])) is None
-    assert "missing environment variable" in capsys.readouterr().err
+    assert "missing environment variable" in caplog.text
 
 
 def test_serve_config_comes_only_from_the_flag():
@@ -237,7 +237,7 @@ def test_degraded_start_expands_env_in_listen_address(tmp_path, monkeypatch) -> 
     assert _listen(None, str(config)) == ("127.0.0.2", 8803)
 
 
-def test_missing_env_in_any_section_stays_unready_like_models(tmp_path, monkeypatch, capsys):
+def test_missing_env_in_any_section_stays_unready_like_models(tmp_path, monkeypatch, caplog):
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
     monkeypatch.delenv("SEMANTIC_PASSWORD", raising=False)
     for name, value in (("LLM_MODEL", "m"), ("LLM_BASE_URL", "http://127.0.0.1:1/v1"), ("LLM_API_KEY", "k")):
@@ -249,4 +249,4 @@ def test_missing_env_in_any_section_stays_unready_like_models(tmp_path, monkeypa
         "semantic": {"base_url": "http://127.0.0.1:1", "username": "u", "password": "$env{SEMANTIC_PASSWORD}"},
     }))
     assert _prepare(_parser().parse_args(["serve", "--config", str(config)])) is None
-    assert "missing environment variable SEMANTIC_PASSWORD" in capsys.readouterr().err
+    assert "missing environment variable SEMANTIC_PASSWORD" in caplog.text

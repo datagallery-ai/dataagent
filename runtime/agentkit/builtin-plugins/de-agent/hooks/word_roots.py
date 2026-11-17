@@ -1,18 +1,20 @@
 """Check CREATE names and ALTER ADD columns after native filesystem writes."""
 
 import json
+import logging
 from dataclasses import replace
 from pathlib import Path
 
 import sqlglot
 from langchain_core.messages import ToolMessage
 from langgraph.types import Command
-from loguru import logger
 from sqlglot import exp
 from sqlglot.errors import ParseError, TokenError
 from utils.evidence import ArtifactPathError, output_file
 from utils.word_root_validator import WordRootContext
 from utils.word_roots import validate_identifier_word_roots
+
+logger = logging.getLogger(__name__)
 
 
 def _names(statements, path, is_create, is_alter):
@@ -29,7 +31,7 @@ def _names(statements, path, is_create, is_alter):
                         if isinstance(column, exp.ColumnDef)
                     )
             logger.info(
-                "[check_word_roots] path={} table={} added_columns={}",
+                '[check_word_roots] path=%s table=%s added_columns=%s',
                 path, statement.this.sql(dialect="hive"), columns,
             )
             names.extend(columns)
@@ -47,7 +49,7 @@ def _names(statements, path, is_create, is_alter):
             for partition in properties.find_all(exp.PartitionedByProperty):
                 columns.extend(column.name for column in partition.find_all(exp.ColumnDef))
         logger.info(
-            "[check_word_roots] path={} table={} columns={}",
+            '[check_word_roots] path=%s table=%s columns=%s',
             path,
             schema.this.sql(dialect="hive"),
             columns,
@@ -107,7 +109,7 @@ async def check_word_roots(request, result, *, params):
     if unavailable:
         warning = (f"DDL 词根校验未完成：{unavailable}。文件已写入；请保留候选名称继续任务，"
                    "在最终交付中说明未完成词根校验，不得声称已通过，不要反复重试写入同一文件。")
-        logger.warning("[check_word_roots] path={} {}", path, warning)
+        logger.warning('[check_word_roots] path=%s %s', path, warning)
         payload = {"file_written": True, "word_roots_valid": None, "warning": warning}
         status = "success"
     content = json.dumps({"path": str(path), **payload}, ensure_ascii=False)

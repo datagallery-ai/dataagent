@@ -43,10 +43,9 @@ Best-effort 契约：永不抛异常，所有失败都在返回值里表达。
 
 from __future__ import annotations
 
+import logging
 from pathlib import Path
 from typing import Any
-
-from loguru import logger
 
 from dataagent import AgentContext
 from utils.dataops_quality_check import (
@@ -70,6 +69,8 @@ from utils.dataops_validate_tool import (
     extract_insert_partition_filter,
     extract_insert_target_table,
 )
+
+logger = logging.getLogger(__name__)
 
 # 报告前缀：让前端一眼看出这是「数据验证」的结果，而不是 agent 自己的叙述。
 _REPORT_PREFIX = "【数据验证】"
@@ -471,7 +472,7 @@ def _fmt(original_msg: str, data: dict[str, Any]) -> dict[str, Any]:
     agent 侧看到的也是同一份内容。
     """
     logger.debug(
-        "[validate_data] ok={} skipped={} reason={}",
+        '[validate_data] ok=%s skipped=%s reason=%s',
         data.get("ok"),
         data.get("skipped"),
         data.get("reason"),

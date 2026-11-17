@@ -108,6 +108,10 @@ create_agent(runtime, *, model=None, checkpointer=None, mcp_tools=None, semantic
 | `extension_revision(runtime)` | 扩展来源的 SHA-256 指纹，用来判断是否需要刷新。不含业务输入和会话状态 |
 | `server_listen(options=None)` | 读所选配置的 `server` 段，按 `prepare_runtime` 的环境规则展开 `$env{NAME}`（含 `options.env_file`），返回 `(host, port)`。读不到、缺少变量或校验失败时返回 `127.0.0.1:8790`。`prepare_runtime` 失败时也能用 |
 | `error_code(error)` | 把异常映射为固定错误码 |
+| `configure_logging(runtime=None)` | 宿主启动时配置统一的 `backend.log`。无 runtime 时也能记录早期启动错误 |
+| `register_log_secrets(values)` | 扩展或凭据刷新后追加脱敏值，保留旧运行凭据的脱敏能力 |
+| `diagnostic_traceback(error, secrets=())` | 返回完整的脱敏堆栈，用于诊断日志，不作为公开错误响应 |
+| `log_context` | 宿主用 ContextVar 绑定 `requestId`、`threadId`、`runId` 等关联字段，结束后重置 token |
 | `OPAQUE_ID_PATTERN` | 客户端给的 ID（`threadId`、`runId`、用户）的正则：`[A-Za-z0-9][A-Za-z0-9_-]{0,127}`。宿主校验请求时用它 |
 | `ERROR_CODES` | 全部错误码。取值和含义见 [事件](events.md)。异常类可用类属性 `error_code` 声明自己的码 |
 

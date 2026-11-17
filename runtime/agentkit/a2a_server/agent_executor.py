@@ -24,6 +24,7 @@ from a2a_server.request_context import (
 )
 from dataagent.bootstrap.paths import opaque_id
 from dataagent.diagnostics import safe_error
+from dataagent.host import log_context
 
 Reply = Callable[[str, str], Awaitable[object]]
 
@@ -84,6 +85,7 @@ class AgentKitExecutor(AgentExecutor):
             message_id=context.message.message_id if context.message else "",
         )
         token = current_request.set(invocation)
+        log_token = log_context.set({**log_context.get(), "requestId": request.request_id, "stage": "a2a"})
         started = time.monotonic()
         try:
             task = new_task(task_id=task_id, context_id=context_id,
@@ -101,6 +103,7 @@ class AgentKitExecutor(AgentExecutor):
                 return
 
             invocation.root_run_id = str(uuid4())
+            log_context.set({**log_context.get(), "threadId": thread_id, "runId": invocation.root_run_id})
             invocation.stage = "queue"
             self._runs[task_id] = (asyncio.current_task(), invocation)
             audit("a2a.execution.queued", secrets=self._secrets)
@@ -141,6 +144,7 @@ class AgentKitExecutor(AgentExecutor):
             )
         finally:
             self._runs.pop(task_id, None)
+            log_context.reset(log_token)
             current_request.reset(token)
 
     async def cancel(self, context: RequestContext, event_queue: EventQueue) -> None:

@@ -32,14 +32,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
 import re
 import time
 from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-from loguru import logger
 
 from dataagent import AgentContext
 from utils.dataops_constants import DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
@@ -51,6 +50,8 @@ from utils.dataops_log_utils import (
 from utils.dataops_mcp import IntegrationClient, dataops_options, getenv, invoke_model_text
 from utils.dataops_prod_adapter import prod_collect_result, prod_execute_sql, prod_get_query_result
 from utils.validation_model import resolve_thinking, validation_llm_kwargs
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     pass
@@ -151,7 +152,7 @@ async def _poll_until_done(
             except Exception as cancel_exc:
                 logger.debug(f"[dataops_validate_sql] cancel failed for {job_id}: {cancel_exc}")
         else:
-            logger.warning("DROP {} timed out; leaving it running", job_id)
+            logger.warning('DROP %s timed out; leaving it running', job_id)
         return "timed_out", None
 
     result = await client.collect(job_id=job_id)
@@ -953,7 +954,7 @@ async def _expand_cte_for_dml(
             try:
                 llm = context.get_model(dataops_options(context).get("model"))
             except Exception as exc:  # noqa: BLE001
-                logger.debug("[_expand_cte_for_dml] context.get_model() failed: {}", exc)
+                logger.debug('[_expand_cte_for_dml] context.get_model() failed: %s', exc)
                 llm = None
         else:
             llm = None
@@ -2055,7 +2056,7 @@ async def _analyze_log_directly(
             llm = context.get_model(dataops_options(context).get("model"))
             llm_source = "context.get_model"
         except Exception as exc:
-            logger.debug("[_analyze_log_directly] model unavailable: {}", exc)
+            logger.debug('[_analyze_log_directly] model unavailable: %s', exc)
 
     if llm is None:
         logger.debug(

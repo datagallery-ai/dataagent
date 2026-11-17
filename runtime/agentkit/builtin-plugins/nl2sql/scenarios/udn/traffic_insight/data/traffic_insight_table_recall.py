@@ -14,13 +14,14 @@
 
 from __future__ import annotations
 
+import logging
 import re
 from collections.abc import Mapping
 from typing import Any
 
-from loguru import logger
-
 from .traffic_insight_field_normalizer import split_fields_by_catalog
+
+logger = logging.getLogger(__name__)
 
 _GRANULARITY_RE = re.compile(r"_(?P<granularity>\d+(?:min|h|d|w|m))$", re.IGNORECASE)
 _DEFAULT_EXCLUDE_PREFIXES = ("dim",)
@@ -198,7 +199,7 @@ def select_families_by_max_need_hits(
     kept = [family for score, family in scored if score == max_hits]
     kept.sort(key=lambda family: str(family.get("family_name") or ""))
     logger.info(
-        "Traffic Insight perceptor step=select_max_need_hit_families max_hits={} kept={} families={}",
+        'Traffic Insight perceptor step=select_max_need_hit_families max_hits=%s kept=%s families=%s',
         max_hits,
         len(kept),
         [family.get("family_name") for family in kept],
@@ -244,8 +245,7 @@ def select_families_by_min_extra_fields(
     kept = [family for _, family in kept_scored]
     tier_kept_counts = {extra: sum(1 for score, _ in kept_scored if score == extra) for extra in sorted(allowed)}
     logger.info(
-        "Traffic Insight perceptor step=select_min_extra_families top_n={} allowed_extras={} "
-        "tier_kept_counts={} kept={} families={}",
+        'Traffic Insight perceptor step=select_min_extra_families top_n=%s allowed_extras=%s tier_kept_counts=%s kept=%s families=%s',
         keep_tiers,
         sorted(allowed),
         tier_kept_counts,
@@ -285,8 +285,7 @@ def select_families_by_min_extra_fields_converged(
         if len(kept) <= family_limit:
             if current_top_n < initial_top_n:
                 logger.info(
-                    "Traffic Insight perceptor step=converge_min_extra_families "
-                    "initial_top_n={} converged_top_n={} limit={} kept={}",
+                    'Traffic Insight perceptor step=converge_min_extra_families initial_top_n=%s converged_top_n=%s limit=%s kept=%s',
                     initial_top_n,
                     current_top_n,
                     family_limit,
@@ -302,7 +301,7 @@ def select_families_by_min_extra_fields_converged(
     )
     truncated = kept[:family_limit]
     logger.warning(
-        "Traffic Insight perceptor step=truncate_min_extra_families top_n=1 limit={} before={} after={}",
+        'Traffic Insight perceptor step=truncate_min_extra_families top_n=1 limit=%s before=%s after=%s',
         family_limit,
         len(kept),
         len(truncated),
@@ -324,7 +323,7 @@ def build_families_from_tables(
     for raw in table_names:
         parsed = parse_traffic_insight_table_name(raw)
         if not parsed:
-            logger.warning("Traffic Insight table recall skipped unparsable table: {}", raw)
+            logger.warning('Traffic Insight table recall skipped unparsable table: %s', raw)
             continue
         if is_excluded_dimension_table(parsed["bare_table_name"], exclude_prefixes):
             continue

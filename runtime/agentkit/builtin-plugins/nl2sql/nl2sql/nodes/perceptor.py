@@ -13,10 +13,9 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
-
-from loguru import logger
 
 from nl2sql.constants import (
     DEFAULT_NL2SQL_SCHEMA_TOP_K,
@@ -33,6 +32,8 @@ from nl2sql.utils.nl2sql_utils import (
     iter_semantic_column_payloads,
     schema_to_ddl,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dataagent import SemanticServiceClient
@@ -213,7 +214,7 @@ class PerceptorNode(BaseNL2SQLNode):
                         f"{rules}\n{schema_context.extra_rules}" if rules else schema_context.extra_rules
                     )
             else:
-                logger.debug("NL2SQL Perceptor using schema_mode={}", self.schema_mode)
+                logger.debug('NL2SQL Perceptor using schema_mode=%s', self.schema_mode)
                 if self.schema_mode == _SCHEMA_MODE_LINKING:
                     schema, joins = await asyncio.to_thread(self.schema_linking, [question] if question else [])
                     if not schema:

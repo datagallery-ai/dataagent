@@ -8,7 +8,6 @@ import socket
 import sys
 import threading
 from dataclasses import replace
-from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from uuid import uuid4
 
@@ -24,7 +23,7 @@ from dataagent import (
     prepare_runtime,
     safe_error,
 )
-from dataagent.host import server_listen
+from dataagent.host import configure_logging, diagnostic_traceback, server_listen
 
 # Reload watches source only. The project root also holds .venv, which the
 # polling reloader would rescan every tick.
@@ -55,44 +54,6 @@ def check_port(host: str, port: int):
             raise RuntimeError(
                 f"Port {host}:{port} is occupied; no existing process was changed"
             ) from None
-
-
-def configure_logging(runtime: PreparedRuntime | None):
-    handlers = []
-    plain = logging.Formatter("%(asctime)s %(levelname)s %(name)s %(message)s")
-    if runtime is None:
-        stderr = logging.StreamHandler(sys.stderr)
-        stderr.setFormatter(plain)
-        handlers.append(stderr)
-    else:
-        for path in (runtime.paths.state_dir, runtime.paths.state_dir / "logs"):
-            path.mkdir(parents=True, exist_ok=True, mode=0o700)
-        for path in (runtime.paths.state_dir, runtime.paths.state_dir / "logs"):
-            path.chmod(0o700)
-        secrets = runtime.redaction_secrets
-
-        class SafeFormatter(logging.Formatter):
-            def format(self, record):
-                formatted = super().format(record)
-                # log_event redacts fields before serialization; do not truncate its JSON envelope.
-                if hasattr(record, "dataagent_event"):
-                    return formatted
-                return safe_error(RuntimeError(formatted), secrets)["message"]
-
-        file_handler = RotatingFileHandler(
-            runtime.paths.state_dir / "logs" / "backend.log",
-            maxBytes=5_000_000,
-            backupCount=3,
-        )
-        file_handler.setFormatter(SafeFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-        stderr = logging.StreamHandler(sys.stderr)
-        stderr.setFormatter(SafeFormatter("%(asctime)s %(levelname)s %(name)s %(message)s"))
-        handlers.extend((file_handler, stderr))
-    logging.basicConfig(level=logging.INFO, handlers=handlers, force=True)
-    if runtime is not None:
-        logging.getLogger("dataagent.startup").info(
-            "Enabled plugins and sources: %s", runtime.report.plugin_origins,
-        )
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -155,10 +116,12 @@ def _prepare(args):
             init_home=True,
         ))
     except ConfigurationLoadError as error:
-        print(f"DataAgent: {safe_error(error, ())['message']}", file=sys.stderr, flush=True)
+        logging.getLogger("dataagent.startup").error("Runtime preparation failed: %s", safe_error(error)["message"],
+                                                   extra={"stage": "prepare", "stack": diagnostic_traceback(error)})
         raise SystemExit(1) from None
     except Exception as error:
-        print(f"DataAgent: {safe_error(error, ())['message']}", file=sys.stderr, flush=True)
+        logging.getLogger("dataagent.startup").error("Runtime preparation failed: %s", safe_error(error)["message"],
+                                                   extra={"stage": "prepare", "stack": diagnostic_traceback(error)})
         return None
 
 
@@ -256,6 +219,8 @@ def _run_reload(argv, host: str, port: int) -> int:
     try:
         check_port(host, port)
     except Exception as error:
+        logging.getLogger("dataagent.startup").error("Reload startup failed: %s", safe_error(error)["message"],
+                                                  extra={"stage": "start", "stack": diagnostic_traceback(error)})
         print(f"DataAgent: {safe_error(error, ())['message']}", file=sys.stderr)
         return 1
     import uvicorn
@@ -280,6 +245,7 @@ def _run_reload(argv, host: str, port: int) -> int:
 
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
+    configure_logging()
     if args.command == "history-sql":
         return history_sql.run(args)
     runtime = None
@@ -299,7 +265,8 @@ def main(argv=None) -> int:
         return 130
     except Exception as error:
         secrets = runtime.redaction_secrets if runtime is not None else ()
-        print(f"DataAgent: {safe_error(error, secrets)['message']}", file=sys.stderr)
+        logging.getLogger("dataagent.startup").error("Backend startup failed: %s", safe_error(error, secrets)["message"],
+                                                   extra={"stage": "start", "stack": diagnostic_traceback(error, secrets)})
         return 1
 
 

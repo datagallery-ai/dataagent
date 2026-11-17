@@ -83,7 +83,7 @@ class SemanticServiceClient:
     @property
     def redaction_secrets(self) -> tuple[str, ...]:
         """Return credentials for host diagnostics without displaying their values."""
-        values = list(self.auth or ())
+        values = [self.auth[1]] if self.auth else []
         if self.auth:
             encoded = b64encode(":".join(self.auth).encode("utf-8")).decode("ascii")
             values.append(encoded)

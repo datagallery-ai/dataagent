@@ -15,11 +15,12 @@
 from __future__ import annotations
 
 import json
+import logging
 import re
 from functools import lru_cache
 from pathlib import Path
 
-from loguru import logger
+logger = logging.getLogger(__name__)
 
 _INDEX_PATH = Path(__file__).resolve().parent / "china_administrative_division_aliases.json"
 _LEVEL_PRIORITY = {"province": 1, "city": 2, "county": 3}

@@ -11,13 +11,14 @@
 # limitations under the License.
 # ============================================================================
 import json
+import logging
 from typing import Any
-
-from loguru import logger
 
 from nl2sql.constants import DEFAULT_NL2SQL_REF_RETRIES, DEFAULT_NL2SQL_SELECTOR_THRESHOLD
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.state import NL2SQLState, Result
+
+logger = logging.getLogger(__name__)
 
 
 class SelectorNode(BaseNL2SQLNode):

@@ -84,7 +84,7 @@ def test_env_uses_existing_layers_and_relative_command_anchors_to_mcp_file(tmp_p
     assert connection["command"] == str(home / "bin/server")
     assert connection["env"] == {"VALUE": "file-secret"}
     assert "file-secret" not in repr(runtime)
-    assert "file-secret" in runtime.redaction_secrets
+    assert "file-secret" not in runtime.redaction_secrets  # VALUE is ordinary configuration, not a credential field.
     assert "home-secret" not in runtime.redaction_secrets
     monkeypatch.setenv("MCP_TEST_VALUE", "process-secret")
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, env_file=explicit))

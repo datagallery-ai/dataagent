@@ -14,10 +14,10 @@
 
 import hashlib
 import json
+import logging
 from pathlib import Path
 
 from langchain.tools import ToolRuntime
-from loguru import logger
 from utils.checks import _validate_ddl_comprehensive, _validate_dml
 from utils.data_task_ir.core import get_ir_context
 from utils.data_task_ir.runtime import ir_enabled
@@ -28,6 +28,8 @@ from utils.dataops_validate_tool import cleanup_temp_tables, dataops_validate_sq
 from utils.evidence import ArtifactPathError, model_evidence, output_file
 
 from dataagent import AgentContext, collect_model_stream
+
+logger = logging.getLogger(__name__)
 
 
 async def validate_deliverables(
@@ -193,7 +195,7 @@ async def _validate_dataops(ddl, dml, context, query: str) -> dict:
                     list(candidate.values()), context=context, context_label="validate_deliverables"
                 )
         except Exception as exc:
-            logger.warning("[validate_deliverables] cleanup failed (ignored): {}", exc)
+            logger.warning('[validate_deliverables] cleanup failed (ignored): %s', exc)
         finally:
             lock_path.unlink(missing_ok=True)
 

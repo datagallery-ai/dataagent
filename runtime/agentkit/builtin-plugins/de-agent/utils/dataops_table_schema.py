@@ -31,16 +31,17 @@ DDL (CREATE)  从 ``CREATE TABLE ... ( col TYPE, ... )`` 里解析
 
 from __future__ import annotations
 
+import logging
 import re
 from typing import Any
-
-from loguru import logger
 
 from dataagent import AgentContext
 from utils.dataops_quality_check import (
     DEFAULT_EXCLUDE_FIELDS,
     parse_ddl_column_types,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # DDL 识别与解析

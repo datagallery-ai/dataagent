@@ -19,6 +19,7 @@ import csv
 import hashlib
 import io
 import json
+import logging
 import re
 import threading
 from collections import OrderedDict
@@ -27,9 +28,9 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any
 
-from loguru import logger
-
 from dataagent import AgentContext, collect_model_stream
+
+logger = logging.getLogger(__name__)
 
 _PROMPT_VERSION = "word-root-candidate-ranking-full-table-topk-v3"
 _MAX_K = 20
@@ -115,7 +116,7 @@ async def validate_word_root(
     try:
         table = _load_word_root_table(config)
     except FileNotFoundError as exc:
-        logger.warning("Word-root CSV is missing; skipping validation: {}", exc)
+        logger.warning('Word-root CSV is missing; skipping validation: %s', exc)
         return _validation_skipped_result()
     llm_call_params = _llm_call_params(config)
     normalized_name = _normalize_name(english_name)
@@ -246,7 +247,7 @@ async def validate_word_roots(
     try:
         table = _load_word_root_table(config)
     except FileNotFoundError as exc:
-        logger.warning("Word-root CSV is missing; skipping batch validation: {}", exc)
+        logger.warning('Word-root CSV is missing; skipping batch validation: %s', exc)
         skipped_items = []
         for original_index, unique_index in enumerate(original_to_unique_index):
             skipped_items.append({

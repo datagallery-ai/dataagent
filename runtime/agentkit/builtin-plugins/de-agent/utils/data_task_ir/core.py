@@ -17,13 +17,12 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 import re
 import time
 from copy import deepcopy
 from datetime import datetime
 from pathlib import Path
-
-from loguru import logger
 
 from dataagent import AgentContext
 
@@ -45,6 +44,8 @@ from .template import (
     list_field_templates,
     load_template_catalog,
 )
+
+logger = logging.getLogger(__name__)
 
 
 class IRRefreshError(RuntimeError):
@@ -130,7 +131,7 @@ async def _check_and_repair_ir(
     )
     if completed and warnings and (ir_consistency_policy(context) == "warn"):
         logger.warning(
-            "[DataTaskIR consistency_warning] IR 存在一致性问题，按 warn 策略继续注入；不触发定向修复或降级。signature={} trace={}\n{}",
+            '[DataTaskIR consistency_warning] IR 存在一致性问题，按 warn 策略继续注入；不触发定向修复或降级。signature=%s trace=%s\n%s',
             input_signature,
             trace_dir,
             "\n".join(warnings),
@@ -146,7 +147,7 @@ async def _check_and_repair_ir(
             cache["ir_repaired_input"] = input_signature
             repair_dir = _resolve_ir_trace_dir(context)
             logger.info(
-                "[update_ir] one targeted repair: fields={} trace={}", sorted(affected), repair_dir
+                '[update_ir] one targeted repair: fields=%s trace=%s', sorted(affected), repair_dir
             )
             try:
                 repaired = await fill_ir_fields(
@@ -430,7 +431,7 @@ async def _ir_consistency_gate(
             warnings.append("一致性检查报告口径冲突但未给出详情，需核对后再生成 SQL。")
     except Exception as exc:
         error = type(exc).__name__
-        logger.warning("[update_ir] consistency gate failed ({}); retry on next update", error)
+        logger.warning('[update_ir] consistency gate failed (%s); retry on next update', error)
         warnings.append("IR 一致性检查未完成，不能视为检查通过；需重试检查或明确报告风险。")
     write_field_attempt(trace_dir, "_consistency_gate", 1, messages, raw)
     write_field_meta(
@@ -460,7 +461,7 @@ async def _refresh_with_policy(context, state):
         fallback = {"signature": cache.get("ir_attempt_signature"), "reason": str(exc)}
         if cache.get("ir_fallback") != fallback:
             ir_session.record_fallback(context, fallback)
-            logger.warning("[DataTaskIR fallback_without_ir] {}", fallback)
+            logger.warning('[DataTaskIR fallback_without_ir] %s', fallback)
         cache.update(
             ir_fallback=fallback,
             ir_blocked_input={"signature": fallback["signature"], "message": str(exc)},
@@ -681,7 +682,7 @@ async def _update_ir_locked(context: AgentContext, state: dict) -> None:
         except ValueError:
             raise
         except Exception as exc:
-            logger.warning("[update_ir] field extraction failed: {}", type(exc).__name__)
+            logger.warning('[update_ir] field extraction failed: %s', type(exc).__name__)
             _extraction_failed(context, input_signature)
 
     if any(field.get("_extraction_error") for field in field_results):
@@ -711,7 +712,7 @@ async def _update_ir_locked(context: AgentContext, state: dict) -> None:
     if gate_completed:
         cache["ir_input_signature"] = input_signature
     logger.info(
-        "[update_ir] completed: fields={} reused={} gate_completed={} elapsed={:.3f}s trace={}",
+        '[update_ir] completed: fields=%s reused=%s gate_completed=%s elapsed=%.3fs trace=%s',
         len(field_results),
         len(reuse_ids),
         gate_completed,

@@ -197,7 +197,9 @@ async def test_failure_log_and_sse_include_only_redacted_exception_chain(runtime
     assert "test-secret" not in message and "transport-secret" not in message
     assert "test-secret" not in events[-1]["message"] and "transport-secret" not in events[-1]["message"]
     assert "\x1b" not in message and "\n" not in message
-    assert record.exc_info is None  # No unredacted traceback or request payload in the log record.
+    assert record.exc_info is None  # Raw exception objects stay out of the public log record.
+    assert "_agenerate" in record.stack and "OSError" in record.stack
+    assert "test-secret" not in record.stack and "transport-secret" not in record.stack
 
 
 async def test_upstream_run_error_is_also_logged_redacted(runtime, caplog, monkeypatch):
@@ -454,6 +456,51 @@ async def test_provider_failure_after_actual_streamed_tokens(runtime):
         assert "Provider stream failed" in events[-1]["message"]
         assert any("partial provider output" in str(event.get("delta", "")) for event in events)
         assert model.cursor == 1
+
+
+@pytest.mark.parametrize("failed_message", ["http.response.start", "http.response.body"])
+async def test_sse_send_failure_releases_session_and_restores_log_context(runtime, failed_message):
+    from dataagent.logging import log_context
+
+    async with client_for(runtime, ScriptedModel(responses=[AIMessage(content="retry succeeded")])) as (client, app):
+        body = query()
+        received = False
+        failed = False
+        original = log_context.get().copy()
+
+        async def receive():
+            nonlocal received
+            if not received:
+                received = True
+                return {"type": "http.request", "body": json.dumps(body).encode(), "more_body": False}
+            await asyncio.Event().wait()
+
+        async def send(message):
+            nonlocal failed
+            if message["type"] == failed_message:
+                failed = True
+                assert log_context.get() == {
+                    "requestId": "send-failure", "threadId": body["threadId"],
+                    "runId": body["runId"], "stage": "run",
+                }
+                raise OSError("client disconnected")
+
+        scope = {
+            "type": "http", "asgi": {"version": "3.0", "spec_version": "2.4"},
+            "http_version": "1.1", "method": "POST", "scheme": "http",
+            "path": "/api/v1/runs", "raw_path": b"/api/v1/runs", "query_string": b"",
+            "headers": [(b"content-type", b"application/json"), (b"x-request-id", b"send-failure")],
+            "client": ("127.0.0.1", 1234), "server": ("127.0.0.1", 8790),
+        }
+        async with asyncio.timeout(5):
+            await app(scope, receive, send)
+        assert failed
+        assert log_context.get() == original
+        assert not app.state.active_runs
+        row = await app.state.sessions.get(runtime.paths.user_id, body["threadId"])
+        assert row["status"] == "interrupted"
+        response = await client.post("/api/v1/runs", json=query("retry"))
+        assert terminal(sse(response)) == ["RUN_FINISHED"]
 
 
 async def test_real_http_disconnect_cancels_model_and_releases_session(runtime, monkeypatch):

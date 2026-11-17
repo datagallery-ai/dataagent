@@ -12,12 +12,14 @@
 # ============================================================================
 """Dialect checks migrated from de_agent Suite; no runtime or model dependencies."""
 
+import logging
 import re
 from pathlib import Path
 
 import sqlglot
-from loguru import logger
 from sqlglot import exp
+
+logger = logging.getLogger(__name__)
 
 
 def validate_sql_syntax(content: str) -> list[str]:

@@ -34,18 +34,20 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 import sqlglot
 from langchain_core.language_models import BaseChatModel
-from loguru import logger
 from nl2sql.hooks import PostSqlHandler
 from nl2sql.state import Result
 from nl2sql.utils.nl2sql_utils import schema_to_ddl, sql_parser
 from sqlglot import exp
 
 from .llm import execute_with_llm
+
+logger = logging.getLogger(__name__)
 
 _PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 

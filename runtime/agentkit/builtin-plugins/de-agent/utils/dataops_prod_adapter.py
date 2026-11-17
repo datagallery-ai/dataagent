@@ -28,11 +28,12 @@
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from loguru import logger
-
 from utils.dataops_mcp import call_mcp
+
+logger = logging.getLogger(__name__)
 
 # 官方 status -> 内部统一状态
 _STATUS_MAP = {

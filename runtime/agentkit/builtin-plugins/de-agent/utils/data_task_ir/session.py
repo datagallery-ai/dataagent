@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 import uuid
 from copy import deepcopy
@@ -11,13 +12,14 @@ from datetime import UTC, datetime
 from pathlib import Path
 
 from langchain_core.messages import SystemMessage
-from loguru import logger
 
 from .inputs import _user_text
 from .json_llm import ainvoke_json_object
 from .runtime import ir_options, ir_state
 from .session_store import IRSessionStore, atomic_json, digest
 from .template import load_template_catalog
+
+logger = logging.getLogger(__name__)
 
 SUMMARY_ID = "data-task-business-context"
 RELATION_PROMPT = (
@@ -152,7 +154,7 @@ async def resolve_task_context(context):
             decision = {"relation": decision["relation"], "reason": decision["reason"]}
         except Exception as exc:
             decision = {"relation": "unavailable", "reason": type(exc).__name__}
-            logger.warning("[IR relation] inference unavailable: {}", type(exc).__name__)
+            logger.warning('[IR relation] inference unavailable: %s', type(exc).__name__)
         session["decision"] = decision
         atomic_json(
             session["store"].root / "ir_trace" / session["turn_id"] / "relation.json",

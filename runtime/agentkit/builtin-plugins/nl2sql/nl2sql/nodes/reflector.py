@@ -11,9 +11,8 @@
 # limitations under the License.
 # ============================================================================
 import json
+import logging
 from typing import Any
-
-from loguru import logger
 
 from nl2sql.constants import DEFAULT_NL2SQL_REFLECTOR_THRESHOLD
 from nl2sql.errors import DataAgentError
@@ -21,6 +20,8 @@ from nl2sql.hooks import REFLECTOR_POST_SQL
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.state import NL2SQLState, Result
 from nl2sql.utils.nl2sql_utils import normalize_sql, quote_sql_placeholders
+
+logger = logging.getLogger(__name__)
 
 
 def _as_str_list(value: Any) -> list[str]:

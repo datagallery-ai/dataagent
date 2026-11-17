@@ -3,7 +3,6 @@
 import base64
 import json
 import os
-import re
 import tempfile
 from collections import defaultdict
 from pathlib import Path
@@ -14,13 +13,12 @@ from google.protobuf.json_format import MessageToDict
 from opentelemetry.exporter.otlp.proto.common.trace_encoder import encode_spans
 from opentelemetry.sdk.trace.export import SpanExporter, SpanExportResult
 
+from dataagent.diagnostics import redact_log_text
+
 
 def _redact(value, secrets: tuple[str, ...]):
     if isinstance(value, str):
-        for secret in sorted(filter(None, secrets), key=len, reverse=True):
-            value = value.replace(secret, "[REDACTED]")
-        value = re.sub(r"\bsk-[A-Za-z0-9_-]+", "[REDACTED]", value)
-        return re.sub(r"(?i)(bearer\s+)\S+", r"\1[REDACTED]", value)
+        return redact_log_text(value, secrets)
     if isinstance(value, list):
         return [_redact(item, secrets) for item in value]
     if isinstance(value, tuple):

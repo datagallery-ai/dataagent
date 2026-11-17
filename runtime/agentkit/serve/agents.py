@@ -1,6 +1,7 @@
 """Bounded per-session AgentKit handles, refreshed atomically before a new run (never mid-run)."""
 
 import asyncio
+import logging
 from collections import OrderedDict
 
 from dataagent import (
@@ -8,7 +9,12 @@ from dataagent import (
     load_mcp_tools,
     safe_error,
 )
-from dataagent.host import extension_revision, refresh_extensions
+from dataagent.host import (
+    diagnostic_traceback,
+    extension_revision,
+    refresh_extensions,
+    register_log_secrets,
+)
 
 
 class ExtensionReloadError(RuntimeError):
@@ -40,6 +46,7 @@ class SessionAgents:
             try:
                 if changed:
                     candidate = refresh_extensions(candidate)
+                    register_log_secrets(candidate.redaction_secrets)
                 revision = extension_revision(candidate) if changed else self.revision
                 opened = await asyncio.to_thread(candidate.paths.open_session, thread_id, create=create)
                 if opened is None:
@@ -66,6 +73,7 @@ class SessionAgents:
                     extension_revision=revision,
                     semantic_client=self.semantic_client,
                 )
+                register_log_secrets(agent.context.redaction_secrets)
                 if changed and extension_revision(candidate) != revision:
                     raise ExtensionReloadError(
                         "Extensions changed during loading; retry after installation finishes"
@@ -73,6 +81,10 @@ class SessionAgents:
             except Exception as error:
                 if not changed:
                     raise
+                logging.getLogger("dataagent.api").error(
+                    "Extension reload failed",
+                    extra={"threadId": thread_id, "stage": "reload", "stack": diagnostic_traceback(error)},
+                )
                 message = safe_error(
                     error, (*self.runtime.redaction_secrets, *candidate.redaction_secrets)
                 )["message"]

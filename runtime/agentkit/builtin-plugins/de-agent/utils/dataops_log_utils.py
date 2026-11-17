@@ -35,9 +35,10 @@ exception) sits near the head, but drivers sometimes append the decisive
 
 from __future__ import annotations
 
+import logging
 from typing import Any
 
-from loguru import logger
+logger = logging.getLogger(__name__)
 
 # How much of the excerpt goes to the head. The head carries the exception
 # class/message and the top of the stack, which is where the root cause lives.

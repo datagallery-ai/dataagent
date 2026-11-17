@@ -371,11 +371,15 @@ def exercise_query_and_resume(tmp_path, values):
         assert audit.startswith(previous_audit)
         records = []
         for line in audit[len(previous_audit):].splitlines():
-            event = next((item for item in line.split() if item in {
+            log_record = json.loads(line)
+            message = log_record["message"]
+            event = next((item for item in message.split() if item in {
                 "hook.before_agent", "hook.after_agent", "hook.before_tool", "hook.after_tool",
             }), None)
             if event:
-                records.append({"event": event, **dict(item.split("=", 1) for item in line.split() if "=" in item)})
+                assert log_record["threadId"] == row["thread_id"]
+                assert log_record["runId"] == row["last_run_id"]
+                records.append({"event": event, **dict(item.split("=", 1) for item in message.split() if "=" in item)})
         assert {record["agent"] for record in records if record["event"] == "hook.before_agent"} == {
             "dataagent", "general-purpose",
         }
