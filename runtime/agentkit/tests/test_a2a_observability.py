@@ -232,6 +232,11 @@ async def test_a2a_anonymous_nonblocking_query_list_cancel(runtime, caplog):
         assert metadata(canceled)["error"]["code"] == "CANCELLED"
         assert metadata(canceled)["requestId"] == response.headers["X-Request-ID"]
         assert canceled_response.headers["X-Request-ID"] != response.headers["X-Request-ID"]
+        # CancelTask acknowledges before trace/checkpoint cleanup has finished.
+        async with asyncio.timeout(5):
+            while not any(r.get("task_id") == task["id"]
+                          for r in audit_records(caplog, "a2a.execution.cancelled")):
+                await asyncio.sleep(0.01)
     assert not audit_records(caplog, "a2a.execution.completed")
     assert audit_records(caplog, "a2a.execution.cancelled")
 
