@@ -13,6 +13,11 @@ stages produced, so the Agent never hand-assembles the JSON:
 The deployment contract is registered only when ``validate_deployment_contract.py`` set
 ``validation.structural_validation.passed=true``; otherwise the entry is omitted and the
 omission is reported on stderr, matching ``step2_5_finalize.md``.
+
+When ``progress_step2_3b.txt`` exists (semantic prior features were applied), the receipt
+additionally registers the ``step2_3b_wide_semantic`` warehouse table plus the step2_3b
+file artifacts (``semantic_apply.json``, feature doc, gate reports), and the summary gains
+the semantic feature counts.
 """
 
 from __future__ import annotations
@@ -24,12 +29,26 @@ import sys
 from pathlib import Path
 from typing import Any
 
+SCRIPTS_DIR = Path(__file__).resolve().parent
+if str(SCRIPTS_DIR) not in sys.path:
+    sys.path.insert(0, str(SCRIPTS_DIR))
+
+from step2_driver_common import load_data_source  # noqa: E402
+
 WIDE_CSV = "step2_4_wide_userfiltered.csv"
 CONTRACT = "step2_2_deployment_feature_contract.json"
 DERIVATION = "step2_2_feature_derivation.md"
 SCHEMA = "schema_resolution.json"
 USER_FILTER_REPORT = "step2_4_user_filter_report.json"
 RECEIPT = "receipt.json"
+
+# step2_3b（语义先验特征）产物：marker 由 step2_3b gate 写出，存在即视为该阶段生效。
+SEMANTIC_MARKER = "progress_step2_3b.txt"
+SEMANTIC_TABLE = "step2_3b_wide_semantic"
+SEMANTIC_APPLY = "semantic_apply.json"
+SEMANTIC_MD = "step2_3b_semantic_features.md"
+SEMANTIC_GATE_REPORT_JSON = "step2_3b_gate_report.json"
+SEMANTIC_GATE_REPORT_MD = "step2_3b_gate_report.md"
 
 
 def _read_json(path: Path) -> dict[str, Any] | None:
@@ -64,6 +83,75 @@ def _ratio_text(n_pos: int, n_neg: int) -> str:
     if n_pos <= 0 or n_neg <= 0:
         return f"{n_pos}:{n_neg}"
     return f"1:{round(n_neg / n_pos)}"
+
+
+def _semantic_artifacts(out_dir: Path, output_database: str) -> tuple[list[dict[str, str]], str]:
+    """Return ``(artifacts, summary_suffix)`` for step2_3b, or ``([], "")`` when inactive.
+
+    Active means ``progress_step2_3b.txt`` exists. The warehouse-table entry needs
+    ``table_kind`` / ``uri_scheme`` from data_source.json; missing files are skipped with a
+    stderr warning so a half-finished step2_3b is visible instead of silently omitted.
+    """
+    if not (out_dir / SEMANTIC_MARKER).is_file():
+        return [], ""
+
+    apply_path = out_dir / SEMANTIC_APPLY
+    apply_payload = _read_json(apply_path)
+    if apply_payload is None:
+        raise SystemExit(
+            f"存在 {SEMANTIC_MARKER} 但找不到 {apply_path}；step2_3b 产物不完整，"
+            "请从 generate 重新执行 step2_3b。"
+        )
+
+    artifacts: list[dict[str, str]] = []
+
+    data_source = load_data_source(out_dir)
+    table_kind = str(data_source.get("table_kind") or "").strip()
+    uri_scheme = str(data_source.get("uri_scheme") or "").strip()
+    if table_kind and uri_scheme:
+        artifacts.append(
+            {
+                "kind": table_kind,
+                "uri": f"{uri_scheme}://{output_database}/{SEMANTIC_TABLE}",
+                "name": f"{output_database}.{SEMANTIC_TABLE}",
+            }
+        )
+    else:
+        print(
+            "警告：data_source.json 缺少 table_kind/uri_scheme，receipt 未登记 "
+            f"{SEMANTIC_TABLE} 表条目（文件产物照常登记）。",
+            file=sys.stderr,
+        )
+
+    artifacts.append({"kind": "file", "path": SEMANTIC_APPLY, "type": "json"})
+    if (out_dir / SEMANTIC_MD).is_file():
+        artifacts.append({"kind": "file", "path": SEMANTIC_MD, "type": "markdown"})
+    else:
+        print(f"警告：存在 {SEMANTIC_MARKER} 但缺少 {SEMANTIC_MD}。", file=sys.stderr)
+
+    gate = apply_payload.get("gate") if isinstance(apply_payload.get("gate"), dict) else {}
+    gate_report_missing = not (out_dir / SEMANTIC_GATE_REPORT_JSON).is_file()
+    if not gate_report_missing:
+        artifacts.append({"kind": "file", "path": SEMANTIC_GATE_REPORT_JSON, "type": "json"})
+        if (out_dir / SEMANTIC_GATE_REPORT_MD).is_file():
+            artifacts.append({"kind": "file", "path": SEMANTIC_GATE_REPORT_MD, "type": "markdown"})
+    if not gate:
+        print(
+            "警告：semantic_apply.json 尚无 gate 段（spearman-gate 未运行？），"
+            "receipt 摘要只登记启用的语义特征数。",
+            file=sys.stderr,
+        )
+    elif gate_report_missing:
+        print(f"警告：semantic_apply.json 有 gate 段但缺少 {SEMANTIC_GATE_REPORT_JSON}。", file=sys.stderr)
+
+    enabled = len(apply_payload.get("enabled_features") or [])
+    if gate:
+        kept = len(gate.get("kept") or [])
+        dropped = len(gate.get("dropped") or [])
+        suffix = f"语义先验特征 {enabled} 个（入选 {kept}、剔除 {dropped}）"
+    else:
+        suffix = f"语义先验特征 {enabled} 个"
+    return artifacts, suffix
 
 
 def main() -> None:
@@ -123,11 +211,15 @@ def main() -> None:
     if contract_registered:
         artifacts.append({"kind": "file", "path": CONTRACT, "type": "json"})
 
+    semantic_artifacts, semantic_suffix = _semantic_artifacts(out_dir, output_database)
+    artifacts.extend(semantic_artifacts)
+
     artifacts.append({"kind": "file", "path": WIDE_CSV, "type": "csv"})
 
     summary = args.summary or (
         f"特征工程完成：基于 {table_count} 张交付表，产出 {row_count} 行 {column_count} 列宽表。"
         f"正 {n_pos} : 负 {n_neg} = {_ratio_text(n_pos, n_neg)}，库 {output_database}"
+        + (f"；{semantic_suffix}" if semantic_suffix else "")
     )
 
     output.write_text(
@@ -138,7 +230,8 @@ def main() -> None:
     print(f"已写出 {output}")
     print(f"  summary: {summary}")
     for item in artifacts:
-        print(f"  - {item['kind']}: {item['path']}")
+        location = item.get("path") or item.get("uri") or ""
+        print(f"  - {item['kind']}: {location}")
     if contract is None:
         print(f"  未找到 {contract_path.name}，receipt 不含契约条目。", file=sys.stderr)
     elif not contract_registered:

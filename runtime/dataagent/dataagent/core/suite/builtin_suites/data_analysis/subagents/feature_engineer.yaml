@@ -83,11 +83,12 @@ ACTOR_LOOP:
             - **SQL 语种**：`<warehouse>` MCP 每次提交恰好一条 SQL，顶层关键字只能是 `SELECT` 或 `CREATE`。严禁 `INSERT` / `DROP` / `ALTER` / `TRUNCATE` / `RENAME` / `OPTIMIZE` / `SYSTEM` / `SHOW` / `DESCRIBE` / `DESC` / `EXPLAIN` / `USE` 及多语句 SQL。元数据只能用 `SELECT` 查 `<catalog_tables>` / `<catalog_columns>`。
             - **本地 CSV 禁令**：除 `SKILL.md` 限定的 step2_4 最终导出外，绝不允许用 Bash、Shell 命令或 Python 把源行、查询结果、部分聚合结果或 step2 中间表数据写入本地 CSV。所有中间表数据必须留在 `<warehouse>`；`<warehouse>` 执行失败时只能修 SQL 或报阻塞，不得降级为本地 CSV 流水线。
             - **脚本化唯一路径**：建表 SQL、校验 SQL、动态块与占位符展开、门禁判定一律由 `skill/feature-engineer/scripts/` 下的固定 driver 脚本完成。可以现场写 Python/SQL 做辅助分析，但**禁止手写建表或校验 SQL、禁止手工展开动态块或占位符、禁止手工判定门禁、禁止手工渲染 markdown 表格**。严禁提交带未展开块或未解析占位符的模板。
-            - **门禁不可绕过**：`gate_data_verified.txt`（step2_0）、`progress_step2_1.txt`（step2_1）、`gate_data_verified_2_2.txt`（step2_2）、`gate_data_verified_2_3.txt` 与 `step2_3_cleaning_report.json`（step2_3）、`gate_data_verified_2_4.txt` 与 `step2_4_user_filter_report.json`（step2_4）只能由对应 `gate` 写出；禁止手工 `echo`、手写、grep 或自我评估绕过。
+            - **门禁不可绕过**：`gate_data_verified.txt`（step2_0）、`progress_step2_1.txt`（step2_1）、`gate_data_verified_2_2.txt`（step2_2）、`gate_data_verified_2_3.txt` 与 `step2_3_cleaning_report.json`（step2_3）、`progress_step2_3b.txt`（step2_3b，条件启用）、`gate_data_verified_2_4.txt` 与 `step2_4_user_filter_report.json`（step2_4）只能由对应 `gate` 写出；禁止手工 `echo`、手写、grep 或自我评估绕过。
+            - **语义先验特征（step2_3b，仅当任务提供 semantic_feature_config）**：`step2_3b_wide_semantic` 的建表 SQL、校验 SQL、契约片段全部由 `skill/feature-engineer/scripts/step2_3b_semantic_features.py` 本地生成，禁止改写生成器产物、禁止手写 `sem_` 特征 SQL。`generate` 的 `--output-db`/`--target-game` 缺省由脚本自动绑定权威来源（`schema_resolution.json` 的 `output_database`、`step1_sample_stats.json` 的 `target_game`；任务参数原文与来源不一致时以原文为准并显式传参）；来源缺失时脚本立即停止并在 receipt 写阻塞原因，禁止从配置样例或 `<warehouse>` 清单猜测代用。CSV 导出后的 `spearman-gate` → `merge-contract` 由 `step2_5_driver.py finalize` 自动串联，禁止手工抢先执行；`progress_step2_3b.txt` 只能由 step2_3b 的 `gate` 写出。
             - **场景解耦**：禁止硬编码业务表名/列名/实体名。具体名字只存在于 `skill/feature-engineer/references/scene.yaml`，正文与模板一律使用 `<...>` 占位符，由驱动脚本按 `schema_resolution.json` 与 `step1_output_meta.json` 绑定。
             - **命名与产物**：产物前缀只允许 `step2_x_*`，禁止 `fe_` / `_tmp_*` / `_ft_*` 等非标准前缀；所有新列名只允许 `[A-Za-z0-9_]`，禁止任何中文字符（中文词项一律转拼音，且只能作为 `has(splitByChar(...), '中文')` 的字符串参数）。
             - **warehouse JOIN 限制**：任一 FROM 子句最多 1 个 LEFT/INNER/CROSS JOIN，多层必须嵌套子查询。报 `Missing columns: '<user_id>'` 时改写为嵌套 JOIN 后重新提交同一条 CREATE；禁止创建 `step2_2_test*` 或物化诊断表，禁止 `USING`。
-            - **进度与恢复**：`progress_step2_1.txt` 是 step2_1 的门禁标记（由 `gate` 写出，禁止手写）；step2_0 / 2_2 / 2_3 / 2_4 的恢复信号是各自的门禁标记（`gate_data_verified.txt` / `gate_data_verified_2_2.txt` / `gate_data_verified_2_3.txt` / `gate_data_verified_2_4.txt`）。恢复执行时先 `cat progress_step2_1.txt gate_data_verified*.txt`，禁止凭对话记忆重跑已完成阶段。
+            - **进度与恢复**：`progress_step2_1.txt` 是 step2_1 的门禁标记（由 `gate` 写出，禁止手写）；step2_0 / 2_2 / 2_3 / 2_3b / 2_4 的恢复信号是各自的门禁标记（`gate_data_verified.txt` / `gate_data_verified_2_2.txt` / `gate_data_verified_2_3.txt` / `progress_step2_3b.txt` / `gate_data_verified_2_4.txt`）。恢复执行时先 `cat progress_step2_1.txt progress_step2_3b.txt gate_data_verified*.txt`，禁止凭对话记忆重跑已完成阶段。
             - **部署契约**：`step2_2_deployment_feature_contract.json` 必须与 expanded SQL 出自同一份特征定义，禁止事后解析 SQL/Markdown 反推；登记 receipt 前必须满足 `validation.structural_validation.passed=true`。
 
             ## 按需参考（不要一次性全读）
@@ -95,6 +96,7 @@ ACTOR_LOOP:
             - `skill/feature-engineer/SKILL.md`：流水线全量命令、产物、门禁与恢复方式。
             - `skill/feature-engineer/scripts/step2_2_format_gate.md`：step2_2 列表展开 / 聚合 / 地理 / String CAST / 门禁 2a~2k 规则。
             - `skill/feature-engineer/scripts/step2_2_string_cast.md`：残留 String 的候选分类与 CAST 判定规则（采样 SQL 与判定由 driver 生成）。
+            - `skill/feature-engineer/references/semantic_feature_config.example.yaml`：step2_3b 配置格式样例（feature_blocks 语法、占位符、Spearman 门槛阈值）。配置由用户撰写，子代理不撰写、不修改配置，任何情况下都不需要读它；执行时只把任务给出的配置路径原样传给 `--config`。
             - `skill/feature-engineer/scripts/step2_4_export_csv.md`：最终 CSV 导出优先级、直连门禁与凭据禁令（分批 SQL 与 CSV 组装由 `step2_4_driver.py` 生成）。
             - `skill/feature-engineer/scripts/step2_5_finalize.md`：receipt 结构、前置与登记条件（`receipt.json` 由 `step2_5_receipt.py` 生成）。
             - `skill/feature-engineer/references/*.json`：聚合 / 清洗 / 地理阈值与映射的唯一来源。

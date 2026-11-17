@@ -1,0 +1,609 @@
+# 语义特征配置（feature_blocks 配置驱动，可选）
+# =============================================================================
+# 用法：
+#   1. 复制本文件到任意路径，按本次运行的目标改 target_game_profile 与词表值；
+#      场景（游戏/音乐…）的表结构、特征 SQL 全部在下方 feature_blocks——换场景
+#      时新写一份 feature_blocks，生成器代码零改动。
+#   2. 启动 data_analysis 工作流时，在任务指令的运行参数里带上：
+#        semantic_feature_config: /abs/path/semantic_feature_config.yaml
+#      主代理按 semantic_feature_config 这个键名识别并把引用转写进 feature_engineering
+#      步骤目标。路径建议用绝对路径（子代理跨工作区直接读取）。
+#   3. 未提供配置时，feature_engineering 完全按现行流水线执行，行为不变。
+#   4. 配置体检（不写产物，秒级定位错误块/特征）：
+#        python skill/feature-engineer/scripts/step2_3b_semantic_features.py check \
+#          --config <本文件> --meta step1_output_meta.json \
+#          --output-db <output_database> --target-game <目标>
+#
+# 生效范围（仅 feature_engineering 阶段）：
+#   - composite_features   特征启停（只是开关集合，顺序不影响产物；特征顺序由
+#                          feature_blocks 的 sql 决定）
+#   - spearman_gate        语义特征入选门槛（CSV 导出后剔除与老特征重复的 sem_ 列）
+#
+# feature_blocks 块 SQL 行文法（引擎强校验，违反即报错）：
+#     SELECT
+#         <主表别名>.<user_col> AS <user_col>,
+#         <表达式> AS <特征名>, ...     # 每特征独占一行，行尾 AS <特征名> 锚定；
+#                                       # 表达式内部可含 AS，以行尾最后一个为准
+#     FROM {{source_db}}.<表> AS <别名>
+#     [INNER|LEFT JOIN {{source_db}}.<表> AS <别名> ON <条件>]  # 每块至多 1 个 JOIN
+#     [WHERE <条件>]
+#     GROUP BY <主表别名>.<user_col>    # 首键必须是主表用户键（外层按它 JOIN）
+#   - 一行一个要素，禁止空行/子查询/写死库名（库名统一 {{source_db}}）
+#   - 每块至多 1 个 JOIN——ClickHouse 23.8 多 JOIN bug 的规避由引擎强制
+#   - 同源特征放同一块共用一次扫描/JOIN；一个块可产出 1..N 个特征
+# 占位符（引擎替换）：
+#   {{source_db}}  源库标识符（step1 meta 解析）
+#   {{target_game}} 目标实体名——建表 SQL 填真实值；部署契约保留占位符给 NL2SQL
+#   {{profile.X}}  target_game_profile.X → 引号字符串
+#   {{vocab.X}}    vocabularies.X → 标量渲染引号字符串；列表渲染引号逗号列表
+#   未启用特征的 SELECT 行不渲染，其引用的 profile/vocab 键也不校验（仅启用才校验）。
+#
+# 每特征元数据（features 列表）：
+#   name/dtype(UInt64|UInt8|Float64，决定补零形态与契约 output_type)/
+#   source_columns（`别名.列名` 显式声明，部署契约血缘；不解析 SQL 推导）/
+#   description（进生成的特征文档）。
+#
+# 泛化机制：字典匹配类特征全部按 target_game_profile 参数化——换目标游戏时对每张
+# 字典表执行一次 SELECT * FROM <source_database>.<表名> WHERE game_name='<目标游戏>';
+# 把各轴取值填进下方 target_game_profile（特征名/SQL/代码都不变）。
+# 本目标上表现平平的特征由 Spearman 门槛（spearman_gate）与 step3_2 IV 筛查自动剔除；
+# 同一特征在另一次目标游戏的圈群中可能成为主力。
+# =============================================================================
+
+version: 1
+scene: game_ontology
+
+# -----------------------------------------------------------------------------
+# 目标游戏画像（品类匹配特征的比对基准；换目标游戏时改这里，特征名不变）。
+# 一键查询（只读，逐表执行 SELECT * 即可拿到下表全部取值）：
+#   SELECT * FROM <source_database>.game_culture   WHERE game_name='<目标游戏>';  # culture/play_type/painting/expressiveness
+#   SELECT * FROM <source_database>.game_hardware  WHERE game_name='<目标游戏>';  # computing_need/frame/network
+#   SELECT * FROM <source_database>.game_play      WHERE game_name='<目标游戏>';  # interaction/difficulty/time_duration/feedback_fre
+#   SELECT * FROM <source_database>.game_social    WHERE game_name='<目标游戏>';  # organization/theory/org_depen
+#   SELECT * FROM <source_database>.game_asset     WHERE game_name='<目标游戏>';  # pay_driven/fully_equipped/get_method/asset_depreciation
+#   SELECT * FROM <source_database>.game_brand     WHERE game_name='<目标游戏>';  # brand/quantity/praise
+#   SELECT * FROM <source_database>.game_info      WHERE game_name='<目标游戏>';  # game_type
+#   SELECT * FROM <source_database>.game_feedback  WHERE game_name='<目标游戏>';  # surprise
+#   SELECT * FROM <source_database>.game_growth    WHERE game_name='<目标游戏>';  # sunk_cost/growth_dimension
+# 画像键缺失时仅在对应特征启用才报错（可用 composite_features 关掉不需要的特征）。
+# -----------------------------------------------------------------------------
+target_game_profile:
+  # —— game_culture ——
+  culture: 末日废土
+  play_type: 策略游戏
+  painting: 硬核写实
+  expressiveness: 风格化渲染
+  # —— game_hardware ——
+  computing_need: 标准3D
+  frame: 稳定
+  network: 常规联网
+  # —— game_play ——
+  difficulty: 常规双手
+  interaction: 策略排布
+  time_duration: 标准单局
+  feedback_fre: 中等
+  # —— game_social ——
+  organization: 独立独狼
+  theory: 间接比拼
+  org_depen: 自由往来
+  # —— game_asset ——
+  pay_driven: 买数值强度
+  fully_equipped: 中度
+  get_method: 周期保底
+  asset_depreciation: 正常损耗
+  # —— game_brand ——
+  brand: 新锐黑马
+  praise: 评价一般
+  # —— game_info / game_feedback / game_growth ——
+  game_type: CPS-非IAP
+  surprise: 偶发奇遇
+  sunk_cost: 时间积累
+  growth_dimension: 多维度并行
+
+# 语义特征入选门槛：step2_4 CSV 导出后、契约合并前，--gate 计算每个 sem_ 列与全部
+# 老数值特征列的平均秩 Spearman；max|ρ| 超过该值的语义特征被剔除（CSV 与部署契约
+# 同步删列）。名单随 FE 每轮列集漂移是设计内行为。缺省 0.6；设 1.0 等效关闭门槛
+#（只剔除 |ρ|=1 的完全重复列）。字符串老列/常数列不参与计算。
+spearman_gate: 0.6
+
+# 组合特征词表（取值必须与数据中的字面值完全一致，含大小写）
+vocabularies:
+  # game_statistics.act_type 中代表"使用过该游戏"的动作（注意 APP 为大写）
+  gs_open_act_types: [游戏APP打开, 小程序打开]
+  # game_detail.action_type 中的搜索类动作（注意 app 为小写）
+  gd_search_action_types: [游戏中心搜索, 应用市场搜索, 三方搜索, 浏览器搜索]
+  gd_install_action_type: 游戏app安装
+  gd_fresh_install_flag: 曾经未安装
+  # game_statistics.act_type 中的游戏侧搜索（不含华为音乐/主题搜索——那是内容搜索不是找游戏）
+  gs_search_act_types: [游戏中心搜索, 三方搜索]
+  # game_booking_pay_info.entity_flag 中的预约类行为
+  booking_entity_flags: [三方媒体游戏预约, 游戏预约信息]
+  # game_statistics.act_type 中的运营活动参与行为
+  gs_event_act_types: [游戏中心-参加游戏活动]
+  # game_brand.quantity 中的"非头部量级"值集（腰部游戏玩家形态，与具体目标取值无关）
+  brand_quantity_midtail_levels: [百万级, 十万级, 万级]
+  # user_info 付费意向列的高意向取值（跨 6 域计数）
+  pay_intent_high_values: [较高, 高]
+
+# =============================================================================
+# 特征启停（只是开关集合：显式列举时仅启用列出且 enabled!=false 的项，未列出默认
+# 关闭；省略时全部启用）。特征本体（SQL/元数据）见下方 feature_blocks。
+# =============================================================================
+composite_features:
+  - {name: sem_similar_painting_cnt,            enabled: true}
+  - {name: sem_similar_painting_play_time_90d,  enabled: true}
+  - {name: sem_similar_culture_cnt,             enabled: true}
+  - {name: sem_similar_culture_play_time_90d,   enabled: true}
+  - {name: sem_similar_play_type_cnt,           enabled: true}
+  - {name: sem_similar_play_type_play_time_90d, enabled: true}
+  - {name: sem_gsp_click_rate,        enabled: true}
+  - {name: sem_gsp_click_any,         enabled: true}
+  - {name: sem_fresh_install_cnt,     enabled: true}
+  - {name: sem_game_seeking_cnt,      enabled: true}
+  - {name: sem_seeking_channel_cnt,   enabled: true}
+  - {name: sem_stats_seeking_cnt,     enabled: true}
+  - {name: sem_times_7d_over_90d,     enabled: true}
+  - {name: sem_event_participate_cnt, enabled: true}
+  - {name: sem_duration_7d_over_90d,  enabled: true}
+  - {name: sem_booked_target_game,    enabled: true}
+  - {name: sem_installed_similar_painting_cnt, enabled: false}
+  - {name: sem_top_game_time_share,          enabled: true}
+  - {name: sem_similar_computing_time_share, enabled: true}
+  - {name: sem_similar_difficulty_time_share, enabled: true}
+  - {name: sem_pay_similar_painting_cnt,     enabled: true}
+  - {name: sem_similar_expressiveness_time_share, enabled: true}
+  - {name: sem_similar_interaction_time_share, enabled: true}
+  - {name: sem_similar_timeduration_time_share, enabled: true}
+  - {name: sem_similar_feedback_fre_time_share, enabled: true}
+  - {name: sem_similar_network_time_share, enabled: true}
+  - {name: sem_similar_frame_time_share,   enabled: true}
+  - {name: sem_similar_organization_time_share, enabled: true}
+  - {name: sem_similar_theory_time_share,        enabled: true}
+  - {name: sem_similar_org_depen_time_share,     enabled: true}
+  - {name: sem_similar_pay_driven_time_share,   enabled: true}
+  - {name: sem_similar_fully_equipped_time_share, enabled: true}
+  - {name: sem_similar_getmethod_time_share,    enabled: true}
+  - {name: sem_similar_depreciation_time_share, enabled: true}
+  - {name: sem_indie_game_time_share,     enabled: true}
+  - {name: sem_midtail_game_time_share,   enabled: true}
+  - {name: sem_similar_praise_time_share, enabled: true}
+  - {name: sem_similar_gametype_time_share, enabled: true}
+  - {name: sem_similar_surprise_time_share, enabled: true}
+  - {name: sem_similar_sunk_cost_time_share,   enabled: true}
+  - {name: sem_similar_growthdim_time_share,   enabled: true}
+  - {name: sem_similar_full_profile_cnt,  enabled: true}
+  - {name: sem_recent_new_game_cnt,       enabled: true}
+  - {name: sem_cross_domain_pay_intent_cnt, enabled: true}
+
+# =============================================================================
+# 特征块（block = CTE 名 = 装配顺序；一段 SQL 产出 1..N 个特征；特征表达式
+# 原样进生成的 .sql——所见即所得，只换占位符）。语义证据口径见各 description。
+# =============================================================================
+feature_blocks:
+
+- block: sem_open_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        uniqExactIf(gs.game_name, gc.painting = {{profile.painting}}) AS sem_similar_painting_cnt,
+        sumIf(gs.duration_90day, gc.painting = {{profile.painting}}) AS sem_similar_painting_play_time_90d,
+        uniqExactIf(gs.game_name, gc.culture = {{profile.culture}}) AS sem_similar_culture_cnt,
+        sumIf(gs.duration_90day, gc.culture = {{profile.culture}}) AS sem_similar_culture_play_time_90d,
+        uniqExactIf(gs.game_name, gc.play_type = {{profile.play_type}}) AS sem_similar_play_type_cnt,
+        sumIf(gs.duration_90day, gc.play_type = {{profile.play_type}}) AS sem_similar_play_type_play_time_90d
+    FROM {{source_db}}.game_statistics AS gs
+    INNER JOIN {{source_db}}.game_culture AS gc ON gs.game_name = gc.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_painting_cnt
+    dtype: UInt64
+    source_columns: [gs.game_name, gc.painting]
+    description: 近90天打开过的游戏中，画风与目标游戏相同的去重游戏数（比对 target_game_profile.painting）
+  - name: sem_similar_painting_play_time_90d
+    dtype: Float64
+    source_columns: [gs.duration_90day, gc.painting]
+    description: 打开过的与目标游戏画风相同的游戏上的近90天时长投入（毫秒；sem_similar_painting_cnt 的深度版本）
+  - name: sem_similar_culture_cnt
+    dtype: UInt64
+    source_columns: [gs.game_name, gc.culture]
+    description: 近90天打开过的游戏中，文化题材与目标游戏相同的去重游戏数（比对 target_game_profile.culture）
+  - name: sem_similar_culture_play_time_90d
+    dtype: Float64
+    source_columns: [gs.duration_90day, gc.culture]
+    description: 打开过的与目标游戏题材相同的游戏上的近90天时长投入（毫秒；sem_similar_culture_cnt 的深度版本）
+  - name: sem_similar_play_type_cnt
+    dtype: UInt64
+    source_columns: [gs.game_name, gc.play_type]
+    description: 近90天打开过的游戏中，玩法类型与目标游戏相同的去重游戏数（比对 target_game_profile.play_type）
+  - name: sem_similar_play_type_play_time_90d
+    dtype: Float64
+    source_columns: [gs.duration_90day, gc.play_type]
+    description: 打开过的与目标游戏玩法相同的游戏上的近90天时长投入（毫秒；sem_similar_play_type_cnt 的深度版本）
+
+- block: sem_gsp
+  user_col: usid
+  sql: |
+    SELECT
+        gsp.usid AS usid,
+        sum(gsp.click_cnt) / greatest(sum(gsp.exp_cnt), 1) AS sem_gsp_click_rate,
+        (sum(gsp.click_cnt) > 0) AS sem_gsp_click_any
+    FROM {{source_db}}.game_statistics_push AS gsp
+    GROUP BY gsp.usid
+  features:
+  - name: sem_gsp_click_rate
+    dtype: Float64
+    source_columns: [gsp.click_cnt, gsp.exp_cnt]
+    description: 游戏 push 点击率 = 总点击 / max(总曝光, 1)（全游戏口径，无曝光记 0）
+  - name: sem_gsp_click_any
+    dtype: UInt8
+    source_columns: [gsp.click_cnt]
+    description: 是否点击过任意游戏 push（0/1）
+
+- block: sem_detail
+  user_col: usid
+  sql: |
+    SELECT
+        gd.usid AS usid,
+        countIf(gd.action_type = {{vocab.gd_install_action_type}} AND gd.is_install_before = {{vocab.gd_fresh_install_flag}}) AS sem_fresh_install_cnt,
+        countIf(gd.action_type IN ({{vocab.gd_search_action_types}})) AS sem_game_seeking_cnt,
+        uniqExactIf(gd.action_type, gd.action_type IN ({{vocab.gd_search_action_types}})) AS sem_seeking_channel_cnt
+    FROM {{source_db}}.game_detail AS gd
+    GROUP BY gd.usid
+  features:
+  - name: sem_fresh_install_cnt
+    dtype: UInt64
+    source_columns: [gd.action_type, gd.is_install_before]
+    description: 新装游戏行为数：安装动作且此前未安装过该游戏（game_detail）
+  - name: sem_game_seeking_cnt
+    dtype: UInt64
+    source_columns: [gd.action_type]
+    description: 主动找游戏行为数：搜索类动作合计（游戏中心/应用市场/三方/浏览器搜索）
+  - name: sem_seeking_channel_cnt
+    dtype: UInt64
+    source_columns: [gd.action_type]
+    description: 使用过的找游戏渠道数（搜索类动作类型去重，0-4）
+
+- block: sem_stats
+  user_col: usid
+  sql: |
+    SELECT
+        gst.usid AS usid,
+        countIf(gst.act_type IN ({{vocab.gs_search_act_types}})) AS sem_stats_seeking_cnt,
+        sum(gst.times_7day) / greatest(sum(gst.times_90day), 1) AS sem_times_7d_over_90d,
+        countIf(gst.act_type IN ({{vocab.gs_event_act_types}})) AS sem_event_participate_cnt,
+        sum(gst.duration_7day) / greatest(sum(gst.duration_90day), 1) AS sem_duration_7d_over_90d
+    FROM {{source_db}}.game_statistics AS gst
+    GROUP BY gst.usid
+  features:
+  - name: sem_stats_seeking_cnt
+    dtype: UInt64
+    source_columns: [gst.act_type]
+    description: 游戏侧搜索行为记录数（游戏中心搜索/三方搜索，按 游戏×渠道 记录粒度）
+  - name: sem_times_7d_over_90d
+    dtype: Float64
+    source_columns: [gst.times_7day, gst.times_90day]
+    description: 近期活跃趋势 = 近7天次数 / max(近90天次数, 1)，升温用户趋近 1
+  - name: sem_event_participate_cnt
+    dtype: UInt64
+    source_columns: [gst.act_type]
+    description: 游戏中心活动参与行为记录数（act_type=游戏中心-参加游戏活动）
+  - name: sem_duration_7d_over_90d
+    dtype: Float64
+    source_columns: [gst.duration_7day, gst.duration_90day]
+    description: 近期游戏时长活跃趋势 = 近7天时长 / max(近90天时长, 1)（sem_times_7d_over_90d 的深度口径）
+
+- block: sem_booking
+  user_col: usid
+  sql: |
+    SELECT
+        bp.usid AS usid,
+        (countIf(bp.game_name = {{target_game}} AND bp.entity_flag IN ({{vocab.booking_entity_flags}})) > 0) AS sem_booked_target_game
+    FROM {{source_db}}.game_booking_pay_info AS bp
+    GROUP BY bp.usid
+  features:
+  - name: sem_booked_target_game
+    dtype: UInt8
+    source_columns: [bp.game_name, bp.entity_flag]
+    description: 是否预约过目标游戏（含三方媒体预约与应用市场预约，投放前可知的强信号）
+
+- block: sem_install_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gd.usid AS usid,
+        uniqExactIf(gd.game_name, gc.painting = {{profile.painting}}) AS sem_installed_similar_painting_cnt
+    FROM {{source_db}}.game_detail AS gd
+    INNER JOIN {{source_db}}.game_culture AS gc ON gd.game_name = gc.game_name
+    WHERE gd.action_type = {{vocab.gd_install_action_type}}
+    GROUP BY gd.usid
+  features:
+  - name: sem_installed_similar_painting_cnt
+    dtype: UInt64
+    source_columns: [gd.game_name, gc.painting]
+    description: 安装过的与目标游戏画风相同的去重游戏数（game_detail 安装动作 JOIN game_culture）
+
+- block: sem_top_game
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        max(gs.duration_90day) / greatest(sum(gs.duration_90day), 1) AS sem_top_game_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_top_game_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day]
+    description: 单点深耕形态：最重单款游戏的时长占比 = max(单 open 行时长) / 全部 open 时长。爆款专注 vs 均衡多开）
+
+- block: sem_hw_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, gh.computing_need = {{profile.computing_need}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_computing_time_share,
+        sumIf(gs.duration_90day, gh.network = {{profile.network}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_network_time_share,
+        sumIf(gs.duration_90day, gh.frame = {{profile.frame}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_frame_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_hardware AS gh ON gs.game_name = gh.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_computing_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, gh.computing_need]
+    description: 硬件口味匹配：目标游戏算力档（target_game_profile.computing_need，比对 game_hardware.computing_need）游戏的时长占比。玩同算力档游戏=设备与习惯适配目标游戏）
+  - name: sem_similar_network_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, gh.network]
+    description: 联网形态匹配：目标游戏网络依赖档（target_game_profile.network，比对 game_hardware.network）游戏的时长占比。
+  - name: sem_similar_frame_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, gh.frame]
+    description: 帧率要求匹配：目标游戏帧率档（target_game_profile.frame，比对 game_hardware.frame）游戏的时长占比。
+
+- block: sem_diff_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, gp.difficulty = {{profile.difficulty}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_difficulty_time_share,
+        sumIf(gs.duration_90day, gp.interaction = {{profile.interaction}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_interaction_time_share,
+        sumIf(gs.duration_90day, gp.time_duration = {{profile.time_duration}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_timeduration_time_share,
+        sumIf(gs.duration_90day, gp.feedback_fre = {{profile.feedback_fre}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_feedback_fre_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_play AS gp ON gs.game_name = gp.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_difficulty_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, gp.difficulty]
+    description: 操作门槛匹配：目标游戏操作档（target_game_profile.difficulty，比对 game_play.difficulty）游戏的时长占比。
+  - name: sem_similar_interaction_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, gp.interaction]
+    description: 交互逻辑匹配：目标游戏交互形态（target_game_profile.interaction，比对 game_play.interaction）游戏的时长占比。
+  - name: sem_similar_timeduration_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, gp.time_duration]
+    description: 单局时长形态匹配：目标游戏单局时长档（target_game_profile.time_duration，比对 game_play.time_duration）游戏的时长占比。
+  - name: sem_similar_feedback_fre_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, gp.feedback_fre]
+    description: 节奏匹配：目标游戏反馈频率档（target_game_profile.feedback_fre，比对 game_play.feedback_fre）游戏的时长占比。
+
+- block: sem_pay_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        uniqExactIf(gs.game_name, gc.painting = {{profile.painting}} AND gs.amount_90day > 0) AS sem_pay_similar_painting_cnt
+    FROM {{source_db}}.game_statistics AS gs
+    INNER JOIN {{source_db}}.game_culture AS gc ON gs.game_name = gc.game_name
+    GROUP BY gs.usid
+  features:
+  - name: sem_pay_similar_painting_cnt
+    dtype: UInt64
+    source_columns: [gs.game_name, gs.amount_90day, gc.painting]
+    description: 品类付费证明：在画风匹配游戏上付过费（amount_90day>0）的去重游戏数。
+
+- block: sem_express_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, ce.expressiveness = {{profile.expressiveness}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_expressiveness_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_culture AS ce ON gs.game_name = ce.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_expressiveness_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, ce.expressiveness]
+    description: 视觉路线匹配：目标游戏视觉表现力档（target_game_profile.expressiveness，比对 game_culture.expressiveness）游戏的时长占比。画风（painting）是内容风格，表现力是美术工业化路线，两轴正交。
+
+- block: sem_social_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, cso.organization = {{profile.organization}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_organization_time_share,
+        sumIf(gs.duration_90day, cso.theory = {{profile.theory}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_theory_time_share,
+        sumIf(gs.duration_90day, cso.org_depen = {{profile.org_depen}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_org_depen_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_social AS cso ON gs.game_name = cso.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_organization_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cso.organization]
+    description: 组织形态匹配：目标游戏组织规模档（target_game_profile.organization，比对 game_social.organization）游戏的时长占比。
+  - name: sem_similar_theory_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cso.theory]
+    description: 博弈烈度匹配：目标游戏博弈形态档（target_game_profile.theory，比对 game_social.theory）游戏的时长占比。
+  - name: sem_similar_org_depen_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cso.org_depen]
+    description: 社交绑定度匹配：目标游戏组织依赖档（target_game_profile.org_depen，比对 game_social.org_depen）游戏的时长占比。
+
+- block: sem_asset_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, csa.pay_driven = {{profile.pay_driven}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_pay_driven_time_share,
+        sumIf(gs.duration_90day, csa.fully_equipped = {{profile.fully_equipped}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_fully_equipped_time_share,
+        sumIf(gs.duration_90day, csa.get_method = {{profile.get_method}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_getmethod_time_share,
+        sumIf(gs.duration_90day, csa.asset_depreciation = {{profile.asset_depreciation}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_depreciation_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_asset AS csa ON gs.game_name = csa.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_pay_driven_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, csa.pay_driven]
+    description: 付费驱动匹配：目标游戏付费驱动形态（target_game_profile.pay_driven，比对 game_asset.pay_driven）游戏的时长占比。
+  - name: sem_similar_fully_equipped_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, csa.fully_equipped]
+    description: 满配投入档匹配：目标游戏满配投入档（target_game_profile.fully_equipped，比对 game_asset.fully_equipped）游戏的时长占比。
+  - name: sem_similar_getmethod_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, csa.get_method]
+    description: 获取方式匹配：目标游戏道具获取方式（target_game_profile.get_method，比对 game_asset.get_method）游戏的时长占比。
+  - name: sem_similar_depreciation_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, csa.asset_depreciation]
+    description: 资产折旧匹配：目标游戏资产折旧速度（target_game_profile.asset_depreciation，比对 game_asset.asset_depreciation）游戏的时长占比。
+
+- block: sem_brand_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, cb.brand = {{profile.brand}}) / greatest(sum(gs.duration_90day), 1) AS sem_indie_game_time_share,
+        sumIf(gs.duration_90day, cb.quantity IN ({{vocab.brand_quantity_midtail_levels}})) / greatest(sum(gs.duration_90day), 1) AS sem_midtail_game_time_share,
+        sumIf(gs.duration_90day, cb.praise = {{profile.praise}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_praise_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_brand AS cb ON gs.game_name = cb.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_indie_game_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cb.brand]
+    description: 新锐尝鲜：目标游戏厂牌档（target_game_profile.brand，比对 game_brand.brand）游戏的时长占比。
+  - name: sem_midtail_game_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cb.quantity]
+    description: 腰部游戏玩家：中小量级（vocabularies.brand_quantity_midtail_levels，比对 game_brand.quantity）游戏的时长占比。愿意把时长花在腰部量级游戏的用户是新锐游戏的自然受众——通用『非头部偏好』形态，不依赖具体目标取值。
+  - name: sem_similar_praise_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cb.praise]
+    description: 口碑档匹配：目标游戏口碑档（target_game_profile.praise，比对 game_brand.praise）游戏的时长占比。
+
+- block: sem_info_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, ci.game_type = {{profile.game_type}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_gametype_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_info AS ci ON gs.game_name = ci.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_gametype_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, ci.game_type]
+    description: 商业化类型匹配：目标游戏商业化类型（target_game_profile.game_type，比对 game_info.game_type）游戏的时长占比。
+
+- block: sem_feedback_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, cf.surprise = {{profile.surprise}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_surprise_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_feedback AS cf ON gs.game_name = cf.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_surprise_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cf.surprise]
+    description: 惊喜机制匹配：目标游戏惊喜触发率档（target_game_profile.surprise，比对 game_feedback.surprise）游戏的时长占比。
+
+- block: sem_growth_genre
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        sumIf(gs.duration_90day, cg.sunk_cost = {{profile.sunk_cost}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_sunk_cost_time_share,
+        sumIf(gs.duration_90day, cg.growth_dimension = {{profile.growth_dimension}}) / greatest(sum(gs.duration_90day), 1) AS sem_similar_growthdim_time_share
+    FROM {{source_db}}.game_statistics AS gs
+    LEFT JOIN {{source_db}}.game_growth AS cg ON gs.game_name = cg.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_sunk_cost_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cg.sunk_cost]
+    description: 沉没成本形态匹配：目标游戏沉没成本形态（target_game_profile.sunk_cost，比对 game_growth.sunk_cost）游戏的时长占比。
+  - name: sem_similar_growthdim_time_share
+    dtype: Float64
+    source_columns: [gs.duration_90day, cg.growth_dimension]
+    description: 养成维度匹配：目标游戏养成结构（target_game_profile.growth_dimension，比对 game_growth.growth_dimension）游戏的时长占比。
+
+- block: sem_full_profile
+  user_col: usid
+  sql: |
+    SELECT
+        gs.usid AS usid,
+        uniqExactIf(gs.game_name, gc.culture = {{profile.culture}} AND gc.painting = {{profile.painting}} AND gc.play_type = {{profile.play_type}}) AS sem_similar_full_profile_cnt
+    FROM {{source_db}}.game_statistics AS gs
+    INNER JOIN {{source_db}}.game_culture AS gc ON gs.game_name = gc.game_name
+    WHERE gs.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gs.usid
+  features:
+  - name: sem_similar_full_profile_cnt
+    dtype: UInt64
+    source_columns: [gs.game_name, gc.culture, gc.painting, gc.play_type]
+    description: 同构游戏数：近90天打开过的游戏中与目标游戏【题材+画风+玩法三轴全同】（culture+painting+play_type 同时匹配）的去重游戏数——目标游戏的直接同品类近邻。比单轴匹配更强的语义：玩过同构游戏=已验证的品类受众。
+
+- block: sem_recent_games
+  user_col: usid
+  sql: |
+    SELECT
+        gst.usid AS usid,
+        uniqExactIf(gst.game_name, gst.times_7day > 0 AND gst.times_90day <= gst.times_7day) AS sem_recent_new_game_cnt
+    FROM {{source_db}}.game_statistics AS gst
+    WHERE gst.act_type IN ({{vocab.gs_open_act_types}})
+    GROUP BY gst.usid
+  features:
+  - name: sem_recent_new_game_cnt
+    dtype: UInt64
+    source_columns: [gst.game_name, gst.times_7day, gst.times_90day]
+    description: 尝新速度：近 7 天新接触的去重游戏数（该游戏整个 90 天窗口的活动全部发生在最近 7 天=新启动或回流：times_7day>0 AND times_90day<=times_7day）。通用行为形态（不依赖目标游戏画像），尝新型玩家对新游戏发布敏感。
+
+- block: sem_pay_intent
+  user_col: usid
+  sql: |
+    SELECT
+        ui.usid AS usid,
+        countIf(ui.game_intent_game_payment_u IN ({{vocab.pay_intent_high_values}})) + countIf(ui.audio_intent_game_live_payment_u IN ({{vocab.pay_intent_high_values}})) + countIf(ui.audio_intent_long_video_payment_u IN ({{vocab.pay_intent_high_values}})) + countIf(ui.social_intent_game_social_payment_u IN ({{vocab.pay_intent_high_values}})) + countIf(ui.social_intent_chat_new_user_payment_u IN ({{vocab.pay_intent_high_values}})) + countIf(ui.reading_intent_novel_payment_u IN ({{vocab.pay_intent_high_values}})) AS sem_cross_domain_pay_intent_cnt
+    FROM {{source_db}}.user_info AS ui
+    GROUP BY ui.usid
+  features:
+  - name: sem_cross_domain_pay_intent_cnt
+    dtype: UInt64
+    source_columns: [ui.game_intent_game_payment_u, ui.audio_intent_game_live_payment_u, ui.audio_intent_long_video_payment_u, ui.social_intent_game_social_payment_u, ui.social_intent_chat_new_user_payment_u, ui.reading_intent_novel_payment_u]
+    description: 跨域付费意向：user_info 六个内容域付费意向列（游戏/游戏直播/长视频/游戏社交/聊天/小说）中取值∈高意向词表（vocabularies.pay_intent_high_values，较高/高）的域数。跨 6 列的组合形态（评分卡单变量 WoE 表达不了；六列字符串虽已进宽表，跨列计数是新形态）。

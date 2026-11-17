@@ -14,6 +14,9 @@ TOOLS:
 
     - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.start_data_analysis_workflow
       function: start_data_analysis_workflow
+      hooks:
+        pre:
+          - dataagent.core.suite.builtin_suites.data_analysis.tools.workflow._user_query_source_hook.user_query_source
     - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.advance_data_analysis_workflow
       function: advance_data_analysis_workflow
     - module: dataagent.core.suite.builtin_suites.data_analysis.tools.workflow.control_data_analysis_workflow

@@ -143,6 +143,8 @@ def run_script(path: Path, argv: list[str]) -> int:
 _MARKER_SUFFIX = ".via-save-collect"
 _STALE_AGE_SECONDS = 20 * 60
 _TOOL_RESULTS_DIR = Path("tool-results")
+_JOBS_DIR = Path("jobs")
+_JOB_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]*$")
 _LINE_NUMBER_PREFIX_RE = re.compile(r"^\d+\t")
 _SCRIPT_CLI = "python skill/feature-engineer/scripts/step2_driver_common.py"
 
@@ -329,7 +331,7 @@ def _collect_as_names(manifest: dict[str, Any]) -> list[str]:
 
 
 def _remedy_command(out_name: str, *, extract_rows: bool = False) -> str:
-    cmd = f"{_SCRIPT_CLI} save-collect --source <tool-results/id.txt> --out {out_name}"
+    cmd = f"{_SCRIPT_CLI} save-collect --job <job_id> --out {out_name}"
     if extract_rows:
         cmd += " [--extract-rows]"
     return cmd
@@ -413,6 +415,7 @@ def check_collect(
             file=sys.stderr,
         )
     print("补救：用 save-collect 重新落盘，例如：", file=sys.stderr)
+    print("（job_id 见该 job 的 submit/collect 响应；不确定时 ls jobs/ 查看已终态的 job）", file=sys.stderr)
     for name in names:
         if name in missing or name in unmarked or name in empty_rows or name in bad_json:
             print(f"  {_remedy_command(name, extract_rows=expect_rows)}", file=sys.stderr)
@@ -464,12 +467,14 @@ def save_collect(
     *,
     extract_rows: bool = False,
     source_latest: bool = False,
+    job_id: str | None = None,
 ) -> int:
     """Persist a collect payload to *out* and write the ``.via-save-collect`` marker.
 
     Foolproof path: readable file → strip line numbers → JSON validate → write out +
     marker. Explicit ``--source`` is never refused for “illegitimacy”; only missing
-    files / invalid JSON fail.
+    files / invalid JSON fail. ``job_id`` resolves to the platform-persisted
+    ``jobs/<job_id>/result.json`` — size-independent, no re-typing of inline payloads.
     """
     out_path = Path(out)
     out_dir = out_path.parent if out_path.parent != Path("") else Path(".")
@@ -480,8 +485,9 @@ def save_collect(
             print(
                 "save-collect --latest: 在 tool-results/ 下找不到未消费且结构像 collect 结果的 "
                 ".txt/.json。\n"
-                "小结果常以内联形式返回、不会落 tool-results/；"
-                "请先把 payload 写入临时文件后用 --source <path>。",
+                "小结果以内联形式返回、不会落 tool-results/；"
+                "请改用 --job <job_id>（读 jobs/<job_id>/result.json，与结果大小无关），"
+                "或 --source <path> 指向任意可读的 collect 结果文件。",
                 file=sys.stderr,
             )
             return 1
@@ -494,9 +500,26 @@ def save_collect(
             )
         source_path = latest
         print(f"save-collect --latest: 选用 {source_path}")
+    elif job_id is not None:
+        if not _JOB_ID_RE.fullmatch(str(job_id)):
+            print(
+                f"save-collect: --job {job_id!r} 不是合法 job id（仅 [A-Za-z0-9_-]，不含路径分隔符）",
+                file=sys.stderr,
+            )
+            return 1
+        source_path = _JOBS_DIR / str(job_id) / "result.json"
+        if not source_path.is_file():
+            print(
+                f"save-collect --job: 未找到 {source_path}。collect_job 的全量结果由平台持久化在该处；\n"
+                "job 可能尚未到达终态（先 poll_job / collect_job），或 jobs 目录不在当前目录下"
+                "（此时用 --source <jobs/.../result.json> 显式指定）。",
+                file=sys.stderr,
+            )
+            return 1
+        print(f"save-collect --job: 选用 {source_path}")
     else:
         if source is None:
-            print("save-collect: 需要 --source 或 --latest", file=sys.stderr)
+            print("save-collect: 需要 --source、--latest 或 --job", file=sys.stderr)
             return 1
         source_path = Path(source)
         if not source_path.is_file():
@@ -630,12 +653,16 @@ def _cmd_save_collect(args: argparse.Namespace) -> int:
             out_dir=args.out_dir if args.out_dir is not None else Path("."),
         )
 
-    if bool(args.source) == bool(args.latest):
-        # XOR: exactly one of --source / --latest
-        if args.source and args.latest:
-            print("save-collect: --source 与 --latest 互斥", file=sys.stderr)
+    picked = [
+        flag
+        for flag, value in (("--source", args.source), ("--latest", args.latest), ("--job", args.job))
+        if value
+    ]
+    if len(picked) != 1:
+        if len(picked) > 1:
+            print(f"save-collect: {' 与 '.join(picked)} 互斥", file=sys.stderr)
         else:
-            print("save-collect: 需要 --source 或 --latest", file=sys.stderr)
+            print("save-collect: 需要 --source、--latest 或 --job 之一", file=sys.stderr)
         return 1
     if args.out is None:
         print("save-collect: 需要 --out", file=sys.stderr)
@@ -645,6 +672,7 @@ def _cmd_save_collect(args: argparse.Namespace) -> int:
         args.out,
         extract_rows=args.extract_rows,
         source_latest=bool(args.latest),
+        job_id=args.job,
     )
 
 
@@ -666,6 +694,12 @@ def main() -> int:
         "--latest",
         action="store_true",
         help="pick the newest unconsumed collect-like file under tool-results/",
+    )
+    source_group.add_argument(
+        "--job",
+        type=str,
+        default=None,
+        help="read the platform-persisted jobs/<job_id>/result.json (size-independent)",
     )
     save.add_argument("--out", type=Path, default=None, help="destination collect_as path")
     save.add_argument(

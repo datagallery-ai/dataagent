@@ -376,10 +376,11 @@ def _rescue_collect(args: argparse.Namespace) -> int:
     print("2. poll_job → collect_job")
     print(
         "3. python skill/feature-engineer/scripts/step2_driver_common.py save-collect "
-        f"--source <tool-results/id.txt> --out {RAW_CLEANING_REPORT} --extract-rows"
+        f"--job <job_id> --out {RAW_CLEANING_REPORT} --extract-rows"
     )
     print(
-        f"   （大结果可用 --latest 代替 --source；落盘后应出现 {RAW_CLEANING_REPORT}.via-save-collect）"
+        f"   （--job 读 jobs/<job_id>/result.json，不依赖结果大小；大结果也可用 --latest；"
+        f"落盘后应出现 {RAW_CLEANING_REPORT}.via-save-collect）"
     )
     print(
         f"4. {_CHECK} --manifest {MANIFEST} --expect-rows --out-dir {out_dir}"

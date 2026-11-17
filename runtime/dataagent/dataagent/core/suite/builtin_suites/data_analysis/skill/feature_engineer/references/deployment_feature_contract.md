@@ -37,8 +37,22 @@
 - 引用只允许本 plan 声明的 alias；禁止引用 `w` / `dim_agg` / `*_agg` 等其他 scope 的临时 alias。
 - `source_columns` 必须完整列出表达式读取的物理字段并与 alias 的表一致；仅 `count()` 等不读字段的表达式允许空列表。
 - `output_type` 用 Step2 宽表实际输出类型；`null_policy.kind` 只允许 `preserve` / `fill`（`fill` 必须给 JSON 标量 `value`）。
-- 表达式 / 过滤 / JOIN 条件只允许一个运行时参数 `{{target}}`（NL2SQL 用 `step1_sample_stats.json.target` 替换）；
+- 表达式 / 过滤 / JOIN 条件只允许两个运行时参数：`{{target}}`（NL2SQL 用 `step1_sample_stats.json.target` 替换）与 `{{target_game}}`（step2_3b 语义特征片段带入，NL2SQL 用 `step1_sample_stats.json.target_game` 替换）；
   禁止把库名、表名、列名或任意 SQL 片段参数化。
+
+## step2_3b 语义片段合并（条件启用）
+
+仅当任务提供 `semantic_feature_config` 时：`step2_3b_semantic_features.py` 本地产出
+`step2_3b_contract_fragment.json`（`relation_plans` + `features`，结构与主契约相同；
+`sem_*` 特征表达式保留 `{{target_game}}` 占位符）。CSV 导出后、`validate-contract` 之前，按
+`spearman-gate` → `merge-contract` 顺序把它原子合并进主契约：
+
+- 合并会摘除旧的 `validation` 段（旧结论不再描述合并后的契约），随后必须重跑
+  `step2_2_validate_deployment_contract.py`（`step2_5_driver.py finalize` 已自动串行）。
+- 重复合并 / relation_plan id 冲突 / feature 名冲突都会报错；全部语义特征被门槛剔除时
+  合并自动跳过，契约保持不含语义特征。
+- 合并来源与计数记录在契约的 `semantic_features` 段（fragment 路径、feature_count、
+  relation_plan_count、runtime_parameter）。
 
 ## 校验（step2_4 CSV 导出后）
 
