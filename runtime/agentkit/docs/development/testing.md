@@ -23,11 +23,20 @@ uv run --project runtime/agentkit pytest runtime/agentkit/tests -q -m 'not live'
 | A2A 契约、诊断与取消 | `test_a2a_server.py`、`test_a2a_client.py`、`test_a2a_observability.py` |
 | A2A 真实进程与重启 | `test_a2a_e2e.py`，使用本机合成提供者，不访问真实模型 |
 | A2A 真实模型 | `test_a2a_live.py`，显式提供网关环境变量后运行 |
+| nl2sql 主代理委派、结果文件与限额 | `test_nl2sql_plugin.py`，脚本化主模型/子模型与本机 SQLite |
+| nl2sql SQL 安全与场景包 | `test_nl2sql_security_rules.py`、`test_nl2sql_scenario_assembly.py`、`nl2sql_scenarios/` |
+| 后端日志、轮转与脱敏 | `test_logging.py` |
 | 示例仍能装配 | `test_examples.py` |
 
 `test_product_e2e.py` 里未标 `live` 的用例走脚本化的提供者，覆盖 TUI、后端、工具、Skill、子代理、Checkpoint 和重启。标了 `live` 的用例才打真实提供者。
 
 `test_a2a_e2e.py` 归入产品脚本的串行系统测试。它验证真实 `serve-a2a` 进程、TCP、默认匿名访问、模型错误分类、日志落盘，以及重启后旧 Task 不存在但会话历史仍可续接。外部 HTTPS 和网关仍需在实际部署环境验收。
+
+## A2A 与 nl2sql 的联合验收
+
+协议与插件测试分别通过，不代表真实模型下的整条委派链通过。建议联合验证主代理路由、nl2sql 业务结果、会话/产物与错误关联，具体数据、用例和执行安排由测试设计。本页维护自动化入口和覆盖边界。
+
+测试应保留主代理入口，并核对实际 `task` 委派、业务结果、CSV/meta 与诊断关联。`TASK_STATE_COMPLETED` 和查询成功的区别见 [A2A 的本地子代理约定](../reference/a2a.md#入站调用与本地子代理)。本地 schema 与真实语义服务的覆盖范围分别记录；可控模型测试不能替代真实环境联合验收。
 
 ## 真实模型
 

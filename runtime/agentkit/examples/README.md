@@ -8,7 +8,7 @@
 | 用途 | JSON 文件 | 加载位置 |
 | --- | --- | --- |
 | 个人产品配置 | `<home>/config.json` | bootstrap 自动读取 |
-| 显式产品配置 | `--config <path>/config.json` | 作为最高优先级配置层 |
+| 显式产品配置 | `--config <path>/config.json` | 替代 Home config.json，不与它叠加 |
 | Home 初始化模板 | `dataagent/bootstrap/templates/config.json` | 首次初始化时复制，不覆盖已有目标文件 |
 | 最小配置示例 | `config.example.json` | 手动复制或显式指定 |
 | 完整配置示例 | `examples/config.json` | 显式指定，随附 `hooks/` |
@@ -17,7 +17,7 @@
 | 子 Agent 声明 | 如 `subagents/statistics.json` | 由插件 `subagents` 引用 |
 | MCP 服务配置 | `<home>/.mcp.json`、启用插件的 `<plugin_root>/.mcp.json` | 只加载这两处；使用 `mcpServers`，不参与 config.json 合并 |
 
-产品配置版本为 `3`，插件清单版本为 `2`。只接受标准 JSON。
+产品配置版本为 `4`，插件清单版本为 `3`。只接受标准 JSON。
 
 已有 Home、显式配置和外部插件需要把配置**内容**转为 JSON，并改名为上述文件名；仅改后缀不够。
 插件清单中的 `subagents` 路径也要同步改为 `.json`。原文件可留作备份，但不会被自动加载；不要把真实凭证提交到仓库。
@@ -43,19 +43,14 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 
 除模型的 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` 外，再设置 `SEMANTIC_BASE_URL` 和 `NL2SQL_DATABASE_PATH`。
 `NL2SQL_DATABASE_PATH` 是 sqlite 文件路径。这一层会把 `plugins.enabled` 换成 `["nl2sql"]`。
-它只写入口会用到的限额：`limits.timeout_seconds` 是 REST 整轮时限，`plugins.config.nl2sql.model_call_budget` 是单次任务的模型调用上限。
-这份文件省略的 `hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 来自插件默认值和程序默认值，留在配置里，不装进这张图。
+它只写入口会用到的限额：`limits.timeout_seconds` 是宿主执行阶段时限，`plugins.config.nl2sql.model_call_budget` 是单次任务的模型调用上限。
+这份文件省略的 `hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 来自程序默认值，留在配置里，不装进这张图。
 
-未传 `--config` 时用字段默认值、插件 `plugins.config` 和 Home `config.json`。传了 `--config` 就用字段默认值、插件 `plugins.config` 和这份文件。
-启动目录的 `config.json` 不会自动读取。
+配置文件选择、插件依赖顺序、`defaults_file` 与 `plugins.config` 的合并/覆盖规则，以及环境文件优先级统一见 [配置操作](../docs/guides/configuration.md#优先级)。Home 和显式配置二选一，当前内置 nl2sql 没有声明默认配置文件。显式写出的值会覆盖插件默认值，省略项才继承；Hook 数组按相应契约追加。
 
-- 字典按字段合并；标量和普通列表由后层覆盖。省略字段表示继承；普通列表 `[]` 可以清空。
-- 例外：`dataagent.hooks` 按层追加。`"hooks": []` 或空事件分组只表示本层不追加，不清除低层注册。
-- 完整示例列出了默认值，作为最高层使用会覆盖低层相应字段。
-- 环境文件只读一份：`--env-file`，否则 Home `.env`。`--config` 不改变这个选择。进程里的非空值覆盖这份文件。空值不写入有效环境。
-- 引用写为 JSON 字符串 `"$env{LLM_MODEL}"`，不是 `${LLM_MODEL}`。启动时仅展开默认模型的环境引用；工具选择其他模型时延迟解析。
-- 扩展相关配置在 REST/TUI 的下一轮请求前刷新；模型、宿主路径、`dataagent.entry` 和服务配置仍需重启。
-  具体范围见[扩展生命周期](../docs/architecture/extension-lifecycle.md)。未知字段、重复键（含嵌套对象）、非法 JSON 和非有限数值都会报错。字段表见[配置参考](../docs/reference/configuration.md)。
+扩展相关配置可在下一轮请求前刷新；模型、宿主路径、`dataagent.entry` 和服务配置仍需重启，见 [扩展生命周期](../docs/architecture/extension-lifecycle.md)。字段定义见 [配置参考](../docs/reference/configuration.md)。
+
+SDK 的完整调用示例见 [不配置文件日志](../docs/guides/sdk.md#不配置文件日志) 与 [写入统一 backend.log](../docs/guides/sdk.md#写入统一-backendlog)。A2A 请求参数、等待/异步任务及认证见 [A2A](../docs/reference/a2a.md)。
 
 ## 产品字段
 
@@ -63,7 +58,7 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 | --- | --- |
 | `schema_version` | `4` |
 | `dataagent.model` | `"primary"`；引用 `models` 的配置 ID，不是服务端模型名 |
-| `dataagent.limits.timeout_seconds` | `180`；正数，REST 整轮流式时限，同时作为模型请求超时；SDK 调用方自行控制整轮时限 |
+| `dataagent.limits.timeout_seconds` | `180`；正数，用于宿主执行阶段及模型请求等超时；A2A 排队与 Checkpoint 保存不计入调用时限，SDK 自行控制整轮时限 |
 | `dataagent.limits.model_calls_per_agent` | `128`；每个 Agent 每次调用的模型循环上限，非整棵子 Agent 树的预算；不覆盖摘要器所有内部调用 |
 | `dataagent.limits.tool_calls_per_agent` | `128`；每个 Agent 每次调用的工具次数上限；主/子 Agent 独立计数，新一轮重置；超限抛错 |
 | `dataagent.workspaces` | `[]`；可选只读输入列表，在 Home 或显式配置声明；空列表不创建默认输入目录 |
@@ -76,7 +71,7 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 | `models.<id>.max_retries` | `2`；非负整数，模型 SDK 单次请求的最大重试次数（首次请求不计）；`0` 禁用 |
 | `plugins.enabled` | 默认 `[]`；本示例为 `["common"]`，需先把 `examples/plugins/common` 完整复制到 `<home>/plugins/common`；按顺序装配，不允许重复 ID；`[]` 不禁用独立 Skills/Hooks 和宿主工具 |
 | `plugins.paths` | `[]`；填写每个插件自身目录，不是插件集合父目录；添加路径不等于启用 |
-| `server.host` | `"127.0.0.1"`；当前仅本地服务，不支持远程多用户鉴权 |
+| `server.host` | `"127.0.0.1"`；默认本地监听，无个人登录或租户隔离 |
 | `server.port` | `8790`；1–65535，被占用则报错，不复用未知服务 |
 
 多个模型可放在 `models` 中，修改 `dataagent.model` 后重启切换；没有自动 fallback 或动态切换接口。
@@ -120,7 +115,7 @@ npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
 `params` 是自定义 JSON 参数，不是宿主配置。示例的 `max_chars` / `blocked_tools` 由相应 Python 函数定义。
 
 使用普通 `def` / `async def`，不传装饰后的 middleware 对象。四种 state Hook 可返回 `None`、原生 state-update dict 或 `Command`；
-两种 tool Hook 只返回 `None`。拒绝调用用异常，不返回 `action: deny`；异步 Hook 需用 `ainvoke` / `astream`。
+工具 Hook 还可返回原生请求/结果替换对象；拒绝单个工具可返回错误 ToolMessage，抛异常则结束整轮。完整返回契约见 [Hook](../docs/extensions/hooks.md#函数签名)，不使用 `action: deny`；异步 Hook 需用 `ainvoke` / `astream`。
 
 插件清单里的 Hook 先装配，随后是选中产品文件里的 `dataagent.hooks`。before 正序、after 逆序，重复声明不去重。
 根 Hooks 不自动继承到子 Agent；子 Agent 在自己的 JSON 中注册。
@@ -142,15 +137,15 @@ Home 由进程 `DATAAGENT_HOME` 指定，默认 `~/.dataagent`；它同时决定
 模型直接使用 workspace 的真实绝对路径读取输入，产出写入 `<home>/outputs/<user>/<session>/`。
 文件工具和 shell 使用相同的真实路径；shell 的 cwd 是当前 session 的 outputs，无虚拟路径转换。
 检查点、会话索引和后端日志留在 Home runtime；控制面会话目录只保留 `traces/`，用于保存运行轨迹。
-`--user` 仅选择本地资源 profile，不是登录；没有 Bearer token 验证。
+`--user` 仅选择本地资源 profile，不是登录。A2A JSON-RPC 可用共享 Bearer 令牌，REST 不受该令牌保护。
 
 独立 Skills 仅自动发现于 Home；任意 `--config` 旁的 `skills/` 不会自动发现。
 Tools、SubAgents 和 Prompts 在插件 `.plugin.json` 中声明，不是顶层产品字段。
 模型固定使用 Chat Completions，`max_retries` 默认 `2`。仅使用 SDK 原生连接/超时和可重试 HTTP 错误的退避，
 不重跑 Agent、Hook 或工具；已建立流式响应后的读取失败不自动重放。主/子 Agent 共用模型配置。
-REST 整轮 `timeout_seconds` 包括请求、重试等待及工具耗时；SDK 直接调用由调用方控制整轮时限。
+REST 的 Agent 事件迭代时限包含其中的模型请求、重试等待和工具耗时；并非 HTTP 从接收到结束的总耗时。SDK 直接调用由调用方控制整轮时限。
 模型调用限额统计 Agent 循环次数，不统计同一次模型请求内部的 HTTP 重试。重试可能增加等待和服务端费用。
-没有 `temperature`、`max_tokens`、`response_format`、`memory`、任意 backend 或 sandbox 配置入口。
+模型支持 `temperature`、`max_tokens`、`extra_body`，省略时保留提供者默认行为；没有独立的 `response_format`、`memory`、任意 backend 或 sandbox 配置入口。
 
 ## MCP
 

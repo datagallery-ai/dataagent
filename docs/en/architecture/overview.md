@@ -16,7 +16,7 @@ Browser apps/web
 | Web | `npm run start` or `npm run start:web` | `http://127.0.0.1:3000/data-tasks` |
 | TUI | `npm run start:tui` | The terminal. The TUI starts the control plane when nothing is listening. |
 
-The Python SDK can skip HTTP and prepare the same runtime in process. The conversation HTTP entry is `POST /api/v1/runs`.
+The Python SDK can skip HTTP and prepare the same runtime in process. Web/TUI use `POST /api/v1/runs`; other agents can use A2A 1.0 through `POST /a2a/jsonrpc` on the same backend. A2A returns a Task and final answer rather than the Web/TUI SSE event stream. See the [A2A interface](../reference/rest-api.md#a2a).
 
 ## Modules
 
@@ -37,4 +37,4 @@ What you edit to deploy is `config.json` and `.env` under Home `~/.dataagent`, p
 
 To let the model read a local directory, use a workspace. There is no datasource file inside Home. Steps are in [Where data comes from](../guides/data-sources.md). New files go to that session's `outputs/`.
 
-A `.dataagent/` directory in the current working directory is not read. HTTP does not check a token, and there is no registration API.
+A `.dataagent/` directory in the current working directory is not read. REST has no access-token or registration API. A2A JSON-RPC can require a shared Bearer token through `DATAAGENT_A2A_AUTH_TOKEN`; this does not protect REST routes or identify individual callers.

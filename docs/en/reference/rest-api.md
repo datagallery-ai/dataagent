@@ -1,10 +1,10 @@
 # REST API
 
-This page is for integrators calling the control plane. It does not describe internal modules. The control plane listens on `http://127.0.0.1:8790` by default, from `server.host` and `server.port` in Home `config.json`. There is no access token. The Web app proxies the same paths to that address.
+This page is for integrators calling the control plane. It does not describe internal modules. The control plane listens on `http://127.0.0.1:8790` by default, from `server.host` and `server.port` in Home `config.json`. REST has no access token; A2A JSON-RPC has an optional shared token, described below. The Web app proxies `/api/v1/*` to that address.
 
 ## Envelope
 
-Every JSON response uses the envelope, for success and error alike. The only exceptions: `POST /api/v1/runs` returns an SSE event stream on success, and cancel returns an empty 204.
+REST JSON responses use the envelope for success and error alike. `POST /api/v1/runs` returns an SSE event stream on success, and REST cancellation returns an empty 204. A2A uses its own Agent Card and JSON-RPC formats, described below, rather than the REST success envelope.
 
 ```json
 {"success": true, "data": {}}

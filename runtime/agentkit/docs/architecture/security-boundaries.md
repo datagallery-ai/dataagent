@@ -6,15 +6,15 @@ AgentKit 在本机运行。服务地址是 `127.0.0.1`，调用方与后端位�
 
 `--user` 和 `LaunchOptions.user_id` 选择 `runtime/users/<id>/`。ID 由字母、数字、下划线和连字符组成，最长 128 个字符。它用来划分会话目录，不是登录账号。
 
-HTTP API 不校验访问令牌。`/healthz` 在引擎就绪时返回 Home 路径、启用插件、模型名、`dataagent.entry` 和 user id，不返回输入目录、`stateDir` 或配置正文。
+REST API 没有访问令牌校验。A2A JSON-RPC 可设置 `DATAAGENT_A2A_AUTH_TOKEN` 做共享 Bearer 校验，Agent Card 仍匿名可读；该令牌不保护 REST 路由，也不识别实际调用者。`/healthz` 在引擎就绪时返回 Home 路径、启用插件、模型名、`dataagent.entry` 和 user id，不返回输入目录、`stateDir` 或配置正文。
 
 会话索引把 `threadId` 绑定到创建它的 user。其他 user 不能通过 API 读取该会话或它的产物。同一台机器上能读取 Home 目录的进程，仍然可以直接打开这些文件。
 
 ## 凭据
 
-把密钥放在环境变量或配置中的 `$env{...}`。模型密钥和语义服务密码以 `SecretStr` 保存。日志和错误消息会替换 PreparedRuntime 已知的密钥，并把消息截到 1500 字符。
+把密钥放在环境变量或配置中的 `$env{...}`。模型密钥和语义服务密码以 `SecretStr` 保存。日志写入前脱敏，保留诊断文本和堆栈；用户可见的 `safe_error` 摘要才截到 1500 字符。凭据来源和匹配规则见 [可观测性](observability.md)。
 
-Trace 会遮盖常见的 API key 和 Bearer 形态。Trace 文件里仍有系统提示、对话和工具结果。语义客户端的 Basic 用户名、密码及其 Base64 形式也参与替换。
+Trace 会遮盖已知凭据、常见的 API key、Bearer/Basic 和 URL 凭据。Trace 文件里仍有系统提示、对话和工具结果。语义客户端的密码和 Basic 认证组合的 Base64 形式参与替换；普通用户名不再作为任意子串替换。
 
 模型客户端和语义客户端放在 `AgentContext` 中，不写入消息或 Checkpoint。
 

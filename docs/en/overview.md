@@ -22,7 +22,7 @@ The backend defaults to `http://127.0.0.1:8790`. Integrators call that control p
 - Configuration is files, not Web forms.
 - There is no datasource registration API and no knowledge-base API.
 - Workspaces are read-only directories bound at startup. A conversation request cannot change them.
-- HTTP does not check a token. The default listen address is loopback.
+- The default listen address is loopback. REST does not check a token; A2A JSON-RPC can require a shared Bearer token, which does not protect REST.
 - Database questions depend on an enabled plugin. They are not built into the control plane.
 
 ## Next

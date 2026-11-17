@@ -1,14 +1,14 @@
 # 安全说明
 
-控制面默认只听 `127.0.0.1`。调用方和后端在同一台机器上。HTTP 不校验访问令牌。
+控制面默认只听 `127.0.0.1`。REST 不校验访问令牌。A2A JSON-RPC 可设置 `DATAAGENT_A2A_AUTH_TOKEN` 校验共享 Bearer 令牌；Agent Card 仍公开，令牌不保护 REST，也不识别个人身份。两种入口的范围见 [REST 与 A2A](reference/rest-api.md)。
 
 ## 凭据
 
-公开示例只用占位值，例如 `replace-with-your-key`。不要把真实模型密钥、语义服务密码或 MCP 令牌写进仓库、文档或截图。
+公开示例使用 `replace-with-your-key` 等示例值。不要把真实模型密钥、语义服务密码或 MCP 令牌写进仓库、文档或截图。
 
 密钥放在进程环境或 Home `.env`，配置里用 `$env{...}` 引用。日志和错误消息会替换运行时已知的密钥。Trace 里仍有系统提示、对话和工具结果。
 
-`POST /api/v1/runs` 不接受 `context`、`state` 或 `forwardedProps`。不要把密钥写进用户消息。
+`POST /api/v1/runs` 要求 `context: []`、`forwardedProps: {}`，`state` 只能省略、为 `null` 或 `{}`，不接受客户端注入非空内容。不要把密钥写进用户消息。
 
 ## 身份和文件
 

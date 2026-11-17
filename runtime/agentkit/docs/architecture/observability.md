@@ -30,13 +30,24 @@ A2A、REST API、TUI 和 Web 共用这些记录及会话 checkpoint、产物目�
 
 浏览器上报每个 Web 进程每分钟最多写入 60 条记录、接受 1 MiB 的有效上报正文，单次正文最大 32 KiB；所有来源共享额度，客户端 `x-forwarded-for` 不参与配额分组。Origin 默认与 Next 的服务监听地址核对。反向代理或通配地址部署时，将服务端 `DATAAGENT_WEB_ORIGIN` 设置为浏览器使用的 Origin（如 `https://data.example.com`），不从客户端 Host 或转发头推断。Origin 和 Fetch Metadata 用于浏览器来源校验，不作为客户端身份认证；浏览器自报的运行 ID 仍是不可信诊断数据。
 
+### 日志级别与入口边界
+
+| 入口 | 默认行为 |
+| --- | --- |
+| `dataagent serve`、`serve-a2a` | Python 根日志 INFO；DEBUG 不落盘，WARNING/ERROR 和异常诊断保留 |
+| TUI | 默认 INFO；代码里的 `setDebugMode` / `setLogLevel` 可调整界面日志，当前没有对应的公开 CLI 或环境变量 |
+| Web 与启动器 | 共享写入器记录调用方指定的级别；Web console 的 log/info、warn、error 分别映射 INFO、WARN、ERROR |
+| SDK 直接调用 | 不自动配置文件日志或捕获异常；自建宿主可显式使用 `configure_logging` |
+
+当前没有统一的 `LOG_LEVEL` 配置项。需要临时查看 Python DEBUG 时，由开发在自己的宿主完成日志初始化后调整 logger 级别，重启官方 CLI 会恢复 INFO；不要把它当作已支持的部署参数。WARNING 是 Python 的名称，WARN 是 Node 的名称，检索时同时考虑。
+
 ## A2A 调用关联
 
 `/a2a/jsonrpc` 的接收、完成、取消和失败事件通过同一后端写入器记录为每行一个 JSON 对象。关联字段包括 `request_id`、`rpc_id`、`message_id`、`context_id`、`task_id`、`root_run_id`、`instance_id` 和进程 `user_id`，均保留在 JSON 顶层。匿名访问不识别实际访问者，`user_id` 不能作为调用方身份。
 
 主要事件是 `a2a.request.received/finished/aborted/rejected/failed`、`a2a.execution.queued/started/completed/failed/cancelled`、`a2a.task.cancel_requested`、`a2a.checkpoint.saved/unchanged/failed`、`a2a.cleanup.failed`、`a2a.trace.saved/failed`。HTTP 完成记录区分 `http_status`、`rpc_error_code` 和 `task_state`，HTTP 200 不等于任务成功。
 
-失败记录带 `error_code`、`stage`、脱敏说明及最多 12 个异常栈帧的位置，不记录局部变量、完整请求体、模型提示或工具结果。按字段脱敏和限长，长错误不会截掉整条 JSON 或后面的关联号。
+失败记录带 `error_code`、`stage`、脱敏安全摘要和 `frames`（最多 12 个异常栈帧位置），不记录局部变量、完整请求体、模型提示或工具结果。按字段脱敏和限长，长错误不会截掉整条 JSON 或后面的关联号。普通异常日志的 `stack` 和 Trace 可补充诊断，不能假设每条 A2A 审计都有完整堆栈。
 
 先按响应头 `X-Request-ID` 或 Task ID 搜索日志，再用 `root_run_id` 找到 `a2a.trace.saved` 中的 `native_run_id` 和 `trace_file`。会话索引只保留最后的轮次和 checkpoint，历史调用关系依靠保留期内的日志与 trace。
 

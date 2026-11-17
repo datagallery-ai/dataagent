@@ -1,6 +1,6 @@
 # Home、工作区与目录
 
-运行时只有一个 Home，默认是 `~/.dataagent`。进程环境变量 `DATAAGENT_HOME` 可以改成别的目录；相对路径相对启动时的 `cwd`。写在 `.env` 文件里的 `DATAAGENT_HOME` 会被忽略。
+运行时只有一个 Home，默认是 `~/.dataagent`。进程环境变量 `DATAAGENT_HOME` 可以改成别的目录；相对路径相对启动时的 `cwd`。写在后端所选的 Home `.env` 或 `--env-file` 中会被忽略；启动器若预先加载仓库根 `.env`，它进入的是进程环境阶段。为避免混淆，建议启动前显式设置 Home。
 
 当前工作目录下的 `.dataagent/` 不会被读取。放在那里的 Skill、插件和配置不生效。
 
@@ -22,7 +22,10 @@
     backend.lock
     checkpoints.sqlite
     sessions.sqlite         # session_bindings 与 REST 会话索引
-    logs/backend.log
+    logs/
+      backend.log
+      web.log
+      tui.log
     users/<user>/sessions/<thread>/
       traces/<run_id>.json
 ```
@@ -51,7 +54,7 @@
 | `outputs/.../artifacts/` | 长工具结果和对话卸载。列表接口跳过 `large_tool_results` 和 `conversation_history` |
 | `traces/<run_id>.json` | 根运行结束时的本地导出。控制面会话目录里只有这一处 |
 
-会话目录不含 `logs/` 或 `outputs/`。服务日志只在 `runtime/logs/backend.log`。SDK 未指定会话时，thread id 用 `sdk`。
+会话目录不含 `logs/` 或 `outputs/`。后端和插件日志在 `runtime/logs/backend.log`，Web 和 TUI 分别写同目录的 `web.log`、`tui.log`；相关进程首次写入时才创建文件。轮转与调用关联见 [可观测性](observability.md)。SDK 未指定会话时，thread id 用 `sdk`；SDK 不自动配置文件日志。
 
 绑定规则和产物目录优先级见 [会话与产物](../guides/sessions-and-outputs.md)。
 

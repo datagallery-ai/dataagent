@@ -158,8 +158,8 @@ build_graph(runtime, *, checkpointer=None, model=None, session=None,
 | 名称 | 给谁 | 作用 |
 | --- | --- | --- |
 | `A2ACaller(base_url, *, auth_token=None, timeout=180)` | 调用方 | 调用另一个 A2A 1.0 Agent。`await send(text, *, thread_id=None)` 返回 `A2AResult` |
-| `A2AResult` | 调用方 | 结果：`text`、`context_id`、`task_id`、`state` |
-| `A2ACallError` | 调用方 | 远端任务失败、取消或拒绝 |
+| `A2AResult` | 调用方 | 结果：`text`、`context_id`、`task_id`、`state`，以及可选的 `request_id`、`root_run_id` |
+| `A2ACallError` | 调用方 | 远端任务失败、取消或拒绝；本地 `error_code` 为 `TOOL_ERROR`，可选的 `remote_code`、`request_id`、`task_id`、`context_id`、`root_run_id` 用于远端诊断 |
 | `create_a2a_server(runtime, *, host, port, auth_token=None)` | 宿主 | 返回只含 A2A 路由的 Starlette 应用 |
 | `run_a2a_server(runtime, *, host, port, auth_token=None)` | 宿主 | 用 uvicorn 运行上面的应用。命令行入口是 `dataagent serve-a2a` |
 

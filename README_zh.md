@@ -1,81 +1,31 @@
-<h1 align="center">DataAgent</h1>
+# DataAgent
 
-<p align="center">
-  企业级 Data Agent 工作台 —— 用统一语义读懂业务口径，在只读安全边界内执行多表、多步的复杂分析，<br />
-  每一步可审计、可回放，把一句提问变成一次可信的数据分析。
-</p>
+基于 Python AgentKit / Deep Agents 的本地数据 Agent，提供 Web、TUI、REST、A2A 和 Python SDK。主代理可以委派本地 nl2sql 等插件，按会话保存对话状态、结果文件和 Trace。
 
-<p align="center">
-  <strong>28 类数据源开箱接入 · 企业语义与上下文组织 · 私有化部署 · 多模型适配 · 全程审计可追溯</strong>
-</p>
+[English](README.md) · [中文文档](docs/zh/README.md) · [快速开始](docs/zh/quick-start.md)
 
-<p align="center">
-  <a href="README.md">English</a> · <strong>简体中文</strong>
-</p>
+## 当前架构与能力
 
-<p align="center">
-  <a href="#-正式态跑通"><strong>快速开始</strong></a>
-  ·
-  <a href="https://datagallery-lab.github.io/datafoundry/"><strong>在线文档</strong></a>
-  ·
-  <a href="docs/zh/reference/supported-datasources.md"><strong>支持的数据源</strong></a>
-  ·
-  <a href="#️-路线图"><strong>路线图</strong></a>
-  ·
-  <a href="#-参与贡献"><strong>参与贡献</strong></a>
-</p>
+```text
+Web → Next 同源转发 ─┐
+TUI → AG-UI / REST ─┼→ dataagent serve → 主代理 → 工具 / 本地子代理 / MCP
+其他 Agent → A2A ───┘                        └→ nl2sql → 已配置数据库
+Python SDK → 同一套配置准备与 Agent 装配（可跳过 HTTP）
+```
 
-<p align="center">
-  <img src="https://img.shields.io/badge/license-Apache--2.0-blue" alt="Apache-2.0" />
-  <img src="https://img.shields.io/badge/TypeScript-5.x-3178c6?logo=typescript&logoColor=white" alt="TypeScript" />
-  <img src="https://img.shields.io/badge/self--hostable-local%20first-2ea44f" alt="Self-hostable" />
-  <img src="https://img.shields.io/badge/PRs-welcome-ff69b4" alt="PRs welcome" />
-  <img src="https://img.shields.io/badge/status-early%20but%20usable-orange" alt="Status" />
-  <br />
-  <a href="https://github.com/mastra-ai/mastra"><img src="https://img.shields.io/badge/Mastra-agent%20runtime-111827" alt="Mastra agent runtime" /></a>
-  <a href="https://github.com/ag-ui-protocol/ag-ui"><img src="https://img.shields.io/badge/AG--UI-event%20stream-6f42c1" alt="AG-UI event stream" /></a>
-  <a href="https://github.com/vadimdemedes/ink"><img src="https://img.shields.io/badge/Ink-terminal%20UI-0f766e" alt="Ink terminal UI" /></a>
-</p>
+- **同一后端，多种入口**：Web/TUI 连接同一个 Python 控制面；A2A 1.0 通过 JSON-RPC 调用同一运行时。也可独立启动只提供 A2A 的进程。
+- **会话与产物**：服务端保存 Checkpoint、会话索引、Trace 和产物。A2A、Web、TUI 可续接同一会话；A2A 的内存 Task 在重启后不保留。
+- **插件与子代理**：通过配置启用插件、Skill、Hook、MCP 和编译型子代理。数据库查询能力来自已启用且配置完整的插件，不是控制面自带的数据源注册服务。
+- **配置驱动**：模型、服务地址、插件与输入目录来自 Home 配置和环境。Web 不提供模型 Profile 创建或测试。
+- **诊断与关联**：日志收敛到 `backend.log`、`web.log`、`tui.log`；A2A 请求号、任务号、运行号可关联日志和本地 Trace。
 
-<p align="center">
-  <img src="docs/assets/readme/gui-demo.gif" alt="DataAgent Web 工作台演示" width="100%">
-</p>
-
----
-
-## 🤔 DataAgent 是什么
-
-让 AI 直接查企业数据库，团队最担心的从来不是「模型会不会写 SQL」，而是：**它懂不懂业务口径？会不会误改生产数据？凭据会不会漏进上下文？结论出了问题能不能复盘？**
-
-大多数工具把问题简化成 `prompt → SQL → answer`，demo 惊艳，进企业就卡死。DataAgent 走另一条路：**把 Agent 放进一个有语义、有权限、有证据链的数据任务系统里**，让「自然语言问数」升级成可控、可信、可验证的数据工作。
-
-## ✨ 核心能力
-
-- 🗄️ **28 类数据源，开箱接入** — 从 PostgreSQL、MySQL 到 Snowflake、BigQuery、ClickHouse，再到 MongoDB、Redis、Elasticsearch，快速打通企业现有数据栈，大幅降低数据接入和适配成本，让 Agent 更快进入真实业务分析。
-- 🧠 **企业语义与上下文组织** — 统一管理 schema、指标口径和字段关系，让「GMV」「复购率」落到企业认可的表、字段和口径上，减少字段猜测、错误关联和口径偏差，从根上提升分析准确性。
-- 🏠 **私有化部署与多模型适配** — 支持本地自托管，数据不出企业边界；模型侧兼容任意 OpenAI-compatible 服务（Qwen、DeepSeek、GPT……），按场景平衡安全、成本、延迟和效果。
-- 🔒 **安全可控，审计可追溯** — 默认只读查询、凭据隔离、字段脱敏、行数限制和超时控制；SQL、工具调用和事件流全程留痕、可回放，让每个结论都有据可查。
-- 🧩 **复杂数据任务深度优化** — 面向多表、多字段、长程分析和多步骤推理，把复杂问题逐步拆解、验证并收敛到可信结论，最终沉淀为表格、图表和报告等团队资产。
-
-## 🆕 v0.2.0 新能力
-
-DataAgent 0.2 在首个可用版本上，进一步补齐了有状态、可追溯的 Data Agent 工作流：
-
-- **可分支的并发分析** — 多个会话可同时运行，运行中可排队后续问题；恢复历史后，可从早期问题或 checkpoint 创建新分支，不覆盖原分析路径。
-- **证据驱动的追问** — 可将完整产出，或选中的表格区域、文本片段引用到下一个问题；证据解析结果和诊断信息会进入受控 run context。
-- **语义 Trace** — 通过基于 checkpoint 的语义 Trace DAG 复盘执行结构。
-- **可复用的产出与工作区资产** — 统一预览和导出表格、图表、报告、SQL 和文件；文件可先上传到当前会话，再提升为跨会话复用的工作区资产。
-- **面向正式部署的 Web 基础** — 内置密码认证、同源 API 代理、中英双语界面、模型连接测试和首次引导。
-
-完整能力与文档盘点见 [v0.2.0 发布说明](docs/zh/releases/v0.2.0.md)。
+当前没有注册登录、网页模型管理、数据源注册、知识库管理、会话分支或 trace DAG 接口。旧页面残留入口不代表后端已经提供对应能力。完整范围见 [能力全览](docs/zh/capabilities.md)。
 
 ## 🚀 正式态跑通
 
-正式态有两条路径。本版本不提供 Docker / Compose。
+需要 Node.js ≥22 和 uv，后端使用 Python 3.12。安装与运行应处于同一环境；Windows 与 WSL 不要共用 `node_modules`。本版本不提供 Docker / Compose 部署。
 
-### 推荐：Ubuntu / Debian 一键部署
-
-`./deploy.sh` 自动生成配置、安装依赖、构建（含 Web、API 与 TUI），并以 detached 后台进程启动 Web + API——关闭终端一般不会停止服务。TUI 会在部署时构建就绪，但它是前台交互客户端：请另开终端执行 `./deploy.sh tui`（或 `npm run start:tui`），**不会**随 stack 后台常驻。部署时不要求填写模型 Key——登录后在 Web 中创建并启用模型即可。**不支持**原生 Windows / macOS。
+### Ubuntu / Debian 一键部署
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -83,178 +33,111 @@ cd datafoundry
 ./deploy.sh
 ```
 
-若已有完整 `.env`，交互部署会跳过配置问答。要改端口或公开访问地址时（会保留密钥并先备份 `.env`）：
-
-```bash
-./deploy.sh deploy --reconfigure
-```
-
-常用管理命令：
+脚本准备依赖、配置与构建，并在后台启动 Web/API。部署阶段不要求填写模型密钥；对话前仍需在仓库根 `.env` 或 Home `.env` 填入可用模型，再重启服务。TUI 已构建但不会后台常驻，需另开终端运行 `./deploy.sh tui`。
 
 ```bash
 ./deploy.sh status
-./deploy.sh start
-./deploy.sh stop
-./deploy.sh logs
 ./deploy.sh doctor
-./deploy.sh tui      # 可选：前台启动 TUI（需 API 已在运行）
+./deploy.sh logs
+./deploy.sh stop
+./deploy.sh start
 ```
 
-打开 `http://127.0.0.1:3000/login` 注册登录，在模型配置中创建 OpenAI-compatible Profile，然后进入 `/data-tasks`。重复执行 `./deploy.sh deploy` 会进入维护窗口（先停止旧进程再安装/构建）。
+关闭终端或退出日志跟随不会停止受管服务，停止请用 `./deploy.sh stop`。重复部署会先停止受管服务再安装和构建；需要重新配置端口时使用 `./deploy.sh deploy --reconfigure`。
 
-### Windows / macOS / 其他：手动 npm
+### 手动 npm
 
-原生 Windows、macOS 或其他非 Ubuntu/Debian 环境请用手动 npm。请在同一环境内安装和运行；Windows 用户不要在 Windows 和 WSL 之间共用 `node_modules`。
+原生 Windows、macOS、其他 Linux，或需要手动配置时：
 
 ```bash
-git clone https://github.com/datagallery-lab/datafoundry.git
-cd datafoundry
 npm install
 cp .env.example .env
 ```
 
-在根目录 `.env` 配置服务端模型（网页上不能改模型）。这里的值会覆盖 Home `~/.dataagent/.env`：
+编辑仓库根 `.env`：
 
 ```bash
-LLM_MODEL=qwen-plus                # 或 deepseek-chat、gpt-4o……
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
+LLM_MODEL=your-model-name
+LLM_BASE_URL=https://your-openai-compatible-host/v1
 LLM_API_KEY=replace-with-your-key
 ```
 
-构建并启动。`npm install` 结束时同步控制面的 Python 依赖。`npm run build` 编译网页和 TUI：
-
 ```bash
 npm run build
-npm run start        # 网页默认 127.0.0.1:3000，可用 --web-host / --web-port 改
+npm run start
+# 另开终端，可选
+npm run start:tui
 ```
 
-打开 `http://127.0.0.1:3000/login` 注册登录后进入 `/data-tasks`，提问：
+直接打开 `http://127.0.0.1:3000/data-tasks`，无需注册或创建网页模型 Profile。先提问“用三句话说明你现在能做什么”；数据库问题要先启用并配置相应插件。
 
-```text
-帮我查看数据源里有哪些表，并说明每张表的主要字段。
-```
+## 配置与独立启动
 
-你会看到完整的一条链路：schema 检查 → 只读 SQL → SQL 审计 → 表格产出 → 可回放的 run history。
+Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI 首次启动会初始化缺少的配置模板。
 
-> 完整步骤与两种环境对照见 [快速开始](docs/zh/quick-start.md)。接入自己的 PostgreSQL / MySQL / CSV 等见 [数据源指南](docs/zh/guides/data-sources.md)。
-
-## 🆚 和 Coding Agent、SQL Chatbot 有什么不同
-
-Coding agent 改代码，SQL chatbot 回答问题，DataAgent 跑数据任务——三者的工作对象、风险边界和产出完全不同：
-
-| | 工作对象 | 核心风险 | 产出 |
-| --- | --- | --- | --- |
-| Coding agent | 代码仓、测试、PR | 改错代码 | patch、commit、PR |
-| SQL chatbot | prompt、SQL、回答 | 猜错表、越权、凭据泄漏、不可复盘 | 一段 SQL 或一段回答 |
-| **DataAgent** | 数据源、文件、知识库、工具、任务状态 | 生产数据边界、业务口径、审计证据 | **可回放的数据任务** + SQL 审计 + 表格 / 图表 / 报告 |
-
-具体到数据任务上，DataAgent 相比通用 coding agent 的核心优势是：
-
-- **精度优势，来自数据约束** — coding agent 直接面对数据库时容易猜表、猜字段、猜口径；DataAgent 强制 schema-first，并通过 Data Gateway 约束查询路径，减少字段猜测和错误关联。
-- **安全优势，来自受控执行** — coding agent 能执行命令、读写文件，能力强但对企业数据风险更高；DataAgent 默认只读 SQL、凭据隔离、字段脱敏、行数限制、超时和审计，更适合真实数据环境。
-- **性能优势，来自任务链路收敛** — 不靠模型推理天然更快，而是通过数据源选择、schema 缓存、上下文预算、工具策略和 artifact 流程减少无效尝试，让分析更快收敛到结果。
-- **复杂任务优势，来自数据工作流设计** — coding agent 擅长代码工程；DataAgent 面向多表、多字段、多指标、知识库、文件和报告产出的分析任务，把「查数、验证、解释、沉淀产出」串成完整流程。
-- **落地优势，来自企业运行时** — 这不是一个 demo，而是 Web 工作台、TUI、REST API、CopilotKit / AG-UI、Data Gateway、Skill、MCP、Files、Artifacts、Metadata 组合成的数据 Agent 操作底座。
-
-## ⚙️ 一条数据任务如何跑完
-
-```text
-提出问题 → 对齐语义 → 受控执行 → 沉淀产出 → 回放复盘
-```
-
-1. **定义任务** — 选择数据源、文件、知识库和工具，用自然语言描述业务问题。
-2. **对齐语义与结构** — Agent 先检查 schema 和可用上下文，把「GMV」「复购率」这类业务词落到真实表和字段上。
-3. **受控执行** — Data Gateway 在只读边界内执行查询，统一处理 SQL guard、行数限制、超时和脱敏，每条 SQL 留审计日志。
-4. **沉淀产出** — 结果进入表格、图表、报告或文件，成为团队可引用的资产。
-5. **回放复盘** — Web、TUI、API 共用同一条 run history，随时回看每一步的依据。
-
-<p align="center">
-  <img src="docs/assets/readme/runtime-flow.png" alt="DataAgent 运行流程" width="100%">
-</p>
-
-## 🗄️ 接入现有数据栈，不重构
-
-通过 Data Gateway 适配器接入：DuckDB、SQLite、CSV、Excel、PostgreSQL、MySQL 适合本地试用；云数仓、搜索引擎和 NoSQL 按需配置服务与凭据。
-
-<p align="center">
-  <img src="docs/assets/readme/database-wall.png" alt="DataAgent 支持的数据源" width="100%">
-</p>
-
-完整列表见 [支持的数据源](docs/zh/reference/supported-datasources.md)。
-
-## 🛡️ 安全边界
-
-- 模型只接收受控上下文；数据库凭据、模型 API Key 和 MCP Token 不进入 `messages`、`context` 或 `forwardedProps`。
-- 所有数据源访问经由 Data Gateway，默认只读，附带 SQL guard、行数限制、超时和字段脱敏。
-- SQL 审计日志、工具调用记录和事件流全程留痕，支持事后复核。
-- 生产级多租户鉴权、集中式 Secret 管理、监控和部署运维需按你的部署方案单独设计，详见 [安全说明](docs/zh/security.md)。
-
-## 🗺️ 路线图
-
-- [x] **受控数据任务工作台** — Web 与 TUI 共用 TypeScript Agent Runtime、CopilotKit / AG-UI 事件流、可回放运行历史、SQL 审计和统一资产层。
-- [x] **安全数据访问底座** — 数据源注册、连接测试、schema 抓取、表预览、只读 SQL、脱敏、知识库导入、MCP 资源、Skill 包和模型配置。
-- [ ] **统一语义层** — 沉淀指标、实体、关联、血缘和策略，让 Agent 从「猜字段」走向「理解业务口径」，从一次性 SQL 走向可治理的数据操作层。
-- [ ] **自主分析循环** — Agent 规划分析、执行受控实验、审视结论，收敛到有证据支撑的结果。
-- [ ] **评测与可靠性实验室** — NL2SQL、检索、工具调用和端到端任务基准，支撑回归门禁和失败分析。
-- [ ] **企业控制平面** — 身份、RBAC、审批、审计导出、策略即代码、成本限制。
-
-欢迎在 issue 和 discussion 里参与路线图讨论。
-
-## 📚 文档
-
-| 你要做什么 | 阅读 |
+| 文件/设置 | 作用 |
 | --- | --- |
-| 本地跑通 demo | [快速开始](docs/zh/quick-start.md) |
-| 了解产品定位与能力边界 | [产品概览](docs/zh/overview.md) · [能力全览](docs/zh/capabilities.md) |
-| 使用 Web / TUI | [Web 工作台指南](docs/zh/guides/web-workbench.md) · [TUI 指南](docs/zh/guides/tui.md) |
-| 接入数据源 | [数据源指南](docs/zh/guides/data-sources.md) · [支持的数据源](docs/zh/reference/supported-datasources.md) |
-| 对接 API 与运行时 | [REST API](docs/zh/reference/rest-api.md) · [Agent Runtime 与 AG-UI](docs/zh/reference/agent-runtime.md) |
-| 理解架构与安全 | [架构概览](docs/zh/architecture/overview.md) · [安全说明](docs/zh/security.md) |
+| `<Home>/config.json` | 产品配置，`schema_version: 4`，包含 `models`、`dataagent`、`plugins`、`server` 等 |
+| `<Home>/.env` | 配置中 `$env{NAME}` 的值；非空进程环境覆盖文件值 |
+| `--config` | 替代 Home 配置，不自动改读旁边的 `.env` |
+| `--env-file` | 显式替代 Home `.env`；需要时用于直接 Python CLI |
+| `server.host / port` | 后端默认 `127.0.0.1:8790`；Web 默认端口为 3000 |
 
-## 🤝 参与贡献
+```bash
+# 只启动后端；也提供 A2A 路由
+uv run --project runtime/agentkit dataagent serve
 
-DataAgent 迭代很快，小而聚焦的 PR 最容易被合入：
+# 只启动 A2A。与 serve 二选一，同一 Home 不能并行启动两个后端
+uv run --project runtime/agentkit dataagent serve-a2a
+```
 
-1. 行为、协议、数据源适配器和 Agent 策略变更，请先开 issue 或 discussion。
-2. 每个 PR 聚焦一个运行时边界或功能区。
-3. 提交前运行 `npm run build` 和改动区域对应的 smoke 检查（如 `npm run smoke:docs`）。
-4. 改动 setup、API、数据源配置或用户可见输出时，同步更新文档。
-5. 不提交凭据、本地数据库、生成的 storage 或私有 benchmark 数据。
+`serve` 提供 `/healthz`、`/ready`、`/api/v1/runs`、会话和产物接口。`serve-a2a` 不提供这些 REST/健康接口。SDK 可通过 `prepare_runtime`、`create_agent` 和 `ainvoke` 直接调用；其 checkpointer、异常处理和日志配置由调用方宿主管理。
 
-详见 [CONTRIBUTING.md](CONTRIBUTING.md)。
+## A2A 调用
 
-## 💬 社区与交流
+服务提供 `GET /.well-known/agent-card.json` 与 `POST /a2a/jsonrpc`。请求必须带 `A2A-Version: 1.0`；支持默认等待结果和 `returnImmediately: true` 的异步任务查询，不支持 A2A 流式响应；[参数与调用方式](runtime/agentkit/docs/reference/a2a.md#等待结果与异步任务) 见详细示例。
 
-加入 DataAgent 社区，和我们讨论产品、路线图和落地实践；也欢迎通过 issue 和 discussion 反馈问题、提出想法。
+```bash
+curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
+  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
+  -d '{"jsonrpc":"2.0","id":"request-1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"message-1","contextId":"thread-1","parts":[{"text":"用三句话说明你现在能做什么。"}]}}}'
+```
 
-<table align="center">
-  <tr>
-    <td align="center"><strong>QQ 交流群</strong></td>
-    <td align="center"><strong>Slack Community</strong></td>
-  </tr>
-  <tr>
-    <td align="center"><img src="docs/assets/readme/community-qq-qrcode.png" alt="DataAgent QQ 交流群二维码" width="220"></td>
-    <td align="center"><img src="docs/assets/readme/community-slack-qrcode.png" alt="DataAgent Slack 社区二维码" width="300"></td>
-  </tr>
-  <tr>
-    <td align="center"><strong>交流群号</strong><br><code>1048076064</code></td>
-    <td align="center"><a href="https://join.slack.com/t/datafoundry-7bb8405/shared_invite/zt-42qikc65e-DwA~8ltIri_WYWWpRMjCFQ"><strong>加入 Slack</strong></a></td>
-  </tr>
-</table>
+设置 `DATAAGENT_A2A_AUTH_TOKEN` 后，请求还需携带 `Authorization: Bearer <token>`，Agent Card 仍可匿名读取。执行失败可能仍返回 HTTP 200，须检查 Task 状态和 `metadata.dataagent.error`，不能只看 HTTP 状态。协议与查询/取消约定见 [REST 与 A2A](docs/zh/reference/rest-api.md)。
 
-## 🙏 致谢
+## 日志与问题定位
 
-DataAgent 受益于这些优秀的开源项目与社区：
+`<Home>/runtime/logs/` 下只使用三个主文件：
 
-- 感谢 [LINUX DO](https://linux.do/) 社区的支持与讨论。
-- [Mastra](https://github.com/mastra-ai/mastra)：Agent 运行时模式。
-- [AG-UI](https://github.com/ag-ui-protocol/ag-ui)：事件流协议设计。
-- [CopilotKit](https://github.com/CopilotKit/CopilotKit)：Agent 原生交互体验。
-- [Ink](https://github.com/vadimdemedes/ink)：终端 UI 基础能力。
-- [MCP](https://modelcontextprotocol.io)：工具生态与集成模型。
+| 文件 | 内容 |
+| --- | --- |
+| `backend.log` | 后端、插件、模型、A2A、公共依赖准备及启停 |
+| `web.log` | Web 构建、服务端、代理及浏览器上报错误 |
+| `tui.log` | TUI 构建、连接、传输与交互 |
 
-## 📄 许可证
+每个文件按 5,000,000 字节轮转、保留 3 个备份。按 `X-Request-ID`、Task ID 和运行号关联记录；相关进程未写入时文件可能尚未创建。浏览器错误上报依赖 Web 可达，不保证离线保存。
 
-Apache License 2.0，见 [LICENSE](LICENSE)。
+## 安全边界
 
-> DataAgent 仍在快速开发中，以当前代码、公开文档和 smoke 检查结果为准。
+- 默认只监听本机。REST 没有访问令牌；A2A 的可选共享令牌仅保护 JSON-RPC，不构成用户登录或租户隔离。
+- 已知凭据在日志和 Trace 导出前脱敏，但对话、SQL、工具结果和 CSV 仍可能包含业务数据。
+- 工作区的只读约定和插件 SQL 规则不是操作系统沙箱。文件工具与 shell 使用后端进程权限；nl2sql 的 SQL 安全策略需要按配置启用。
+
+详情见 [安全说明](docs/zh/security.md) 和 [支持的输入](docs/zh/reference/supported-datasources.md)。
+
+## 文档与开发
+
+- [快速开始](docs/zh/quick-start.md)：部署、模型配置、启停与排查。
+- [架构概览](docs/zh/architecture/overview.md)：控制面、Web/TUI 与 A2A 的关系。
+- [配置](docs/zh/reference/configuration-api.md)、[API](docs/zh/reference/rest-api.md)：集成时的现行契约。
+- [贡献指南](CONTRIBUTING.md)。运行时、插件与 SDK 的技术文档位于仓库 `runtime/agentkit/docs/`。
+- [v0.2.0 历史发布说明](docs/zh/releases/v0.2.0.md)：记录当时的产品设计与能力，不作为当前重构后的验收清单。
+
+```bash
+npm run test:deploy
+npm run test:web
+npm run test:tui
+npm run test:product
+```
+
+Apache-2.0，见 [LICENSE](LICENSE)。
