@@ -7,6 +7,8 @@
 # Unless required by applicable law or agreed to in writing, software
 # distributed under the License is distributed on an "AS IS" BASIS,
 # WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
 # ============================================================================
 from __future__ import annotations
 
@@ -14,6 +16,29 @@ import ctypes
 from collections.abc import Callable, Mapping
 
 _ACCEPTED_TYPES = (str, bytes, bytearray, memoryview)
+# bytes.strip() 的默认空白集：空格、\t、\n、\r、\x0b(\v)、\x0c(\f)
+_ASCII_WS = b" \t\n\r\x0b\x0c"
+
+
+def _burn(buffer: bytearray) -> None:
+    """原位清零构造期产生的 bytearray 中间副本。
+
+    bytes 不可变且不独占，绝不原位改写：CPython 对单字节 bytes 维护进程级
+    characters 缓存单例（``str.encode``、``bytes([97])``、bytes 常量均命中
+    同一对象），烧写会把全进程的 ``b"a"`` 永久污染成 ``b"\\x00"``。故构造
+    路径从源头避免产生 bytes 中间副本（见 ``__init__``），烧写仅接受 bytearray。
+    """
+    if isinstance(buffer, bytearray) and buffer:
+        ctypes.memset((ctypes.c_char * len(buffer)).from_buffer(buffer), 0, len(buffer))
+
+
+def _strip_bounds(buffer: bytearray) -> tuple[int, int]:
+    start, end = 0, len(buffer)
+    while start < end and buffer[start] in _ASCII_WS:
+        start += 1
+    while end > start and buffer[end - 1] in _ASCII_WS:
+        end -= 1
+    return start, end
 
 
 class SecurePassword:
@@ -24,11 +49,24 @@ class SecurePassword:
     def __init__(self, value: str | bytes | bytearray | memoryview) -> None:
         if not isinstance(value, _ACCEPTED_TYPES):
             raise TypeError(f"cert password must be one of {_ACCEPTED_TYPES}, got {type(value).__name__}")
+        # 单次复制直达 bytearray：str 不经 encode()、memoryview 不经 tobytes()，
+        # 不产生任何 bytes 中间副本（bytes 不可清零，见 _burn 说明）
         if isinstance(value, memoryview):
-            value = value.tobytes()
-        if isinstance(value, str):
-            value = value.encode("utf-8")
-        self._buffer: bytearray | None = bytearray(value).strip()
+            buffer = bytearray(value)
+        elif isinstance(value, str):
+            buffer = bytearray(value, "utf-8")
+        else:
+            buffer = bytearray(value)
+        start, end = _strip_bounds(buffer)
+        if start == 0 and end == len(buffer):
+            self._buffer: bytearray | None = buffer
+            return
+        try:
+            owned = buffer[start:end]
+        finally:
+            # strip 路径：含空白的整份缓冲烧写，即使切片失败也不留明文
+            _burn(buffer)
+        self._buffer = owned
 
     def __bool__(self) -> bool:
         return self._buffer is not None and len(self._buffer) > 0
@@ -63,7 +101,10 @@ class SecurePassword:
         return bytes(self._require_buffer())
 
     def copy(self) -> SecurePassword:
-        """独立生命周期的一份副本（两侧口令需各自清零时使用）。"""
+        """独立生命周期的一份副本（两侧口令需各自清零时使用）。
+
+        源缓冲已 strip，重构造路径零中间副本：仅一次整份复制即持有缓冲。
+        """
         return SecurePassword(self._require_buffer())
 
     def zero(self) -> None:
