@@ -63,6 +63,18 @@ cd datafoundry
 
 部署时不要求填写 `LLM_*`。重复部署会进入维护窗口：先停止受管进程组，再执行 `npm ci` 与构建。
 
+### 日志位置
+
+部署、单独启动 Web/API、启动 TUI 都使用同一个 Home 日志目录：`<Home>/runtime/logs/`。Home 由 `DATAAGENT_HOME` 指定，默认 `~/.dataagent`。
+
+- `backend.log`：后端、插件、公共环境准备和整体启停。
+- `web.log`：Web 构建、服务端及浏览器上报的错误。
+- `tui.log`：TUI 构建、启动、连接和交互。
+
+`./deploy.sh logs` 同时跟随三个文件。日志写入前脱敏，保留完整诊断；每个文件达到 5,000,000 字节后轮转，保留 3 个备份。浏览器错误上报依赖 Web 服务可达，不保证离线保存。
+
+通过反向代理、公网域名或通配监听地址访问 Web 时，在服务端环境中设置 `DATAAGENT_WEB_ORIGIN` 为实际访问的 Origin（例如 `https://data.example.com`），用于校验浏览器错误上报来源。上报额度为每个 Web 进程每分钟 60 条、1 MiB 正文，所有来源共享。
+
 ## Windows / macOS / 其他：手动 npm 部署
 
 `./deploy.sh` **仅面向 Ubuntu / Debian**，不支持原生 Windows / macOS。在 Windows、macOS 或其他发行版上，请按下列步骤用 npm 安装、配置并启动。需要手改环境变量或拆分进程时，也可走这条路径。

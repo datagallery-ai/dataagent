@@ -17,6 +17,7 @@ import {
   useRenderTool,
 } from "@copilotkit/react-core/v2";
 import type { EvidenceRef } from "../../lib/evidence-ref";
+import { reportClientError } from "../../lib/client-errors";
 import nextDynamic from "next/dynamic";
 import { Children, cloneElement, isValidElement, useCallback, createContext, useContext, useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ComponentProps, ComponentType, MouseEvent, PointerEvent as ReactPointerEvent, ReactNode } from "react";
@@ -356,6 +357,7 @@ function reportDataGalleryRunError(
   if (typeof window === "undefined") {
     return;
   }
+  reportClientError(error, { threadId: threadId ?? undefined, stage: "client" });
   window.dispatchEvent(
     new CustomEvent("datagallery-run-error", {
       detail: {
@@ -1062,6 +1064,13 @@ function DataTasksCopilotShell() {
           return;
         }
         console.error("[data-tasks]", event);
+        const failure = event as { error?: unknown; code?: string };
+        if (failure.code !== "agent_run_error_event") {
+          reportClientError(event instanceof Error ? event : failure.error ?? message, {
+            threadId: threadIdFromDataTaskSessionAgentId(contextAgentId) ?? undefined,
+            stage: "client", code: failure.code,
+          });
+        }
         window.dispatchEvent(
           new CustomEvent("datagallery-run-error", {
             detail: {

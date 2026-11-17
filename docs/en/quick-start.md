@@ -63,6 +63,18 @@ Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL th
 
 `LLM_*` is not required during deploy. Re-running deploy uses a maintenance window: stop the managed process group before `npm ci` and builds.
 
+### Log files
+
+Deployment and independent Web/API/TUI launches use `<Home>/runtime/logs/`. `DATAAGENT_HOME` selects Home; the default is `~/.dataagent`.
+
+- `backend.log`: backend, plugins, shared environment preparation and service lifecycle.
+- `web.log`: Web builds, server diagnostics and reported browser errors.
+- `tui.log`: TUI builds, startup, connections and interaction errors.
+
+`./deploy.sh logs` follows all three files. Logs redact credentials before writing and retain diagnostic stacks. Each file rotates at 5,000,000 bytes with 3 backups. Browser reporting requires a reachable Web server and does not provide offline storage.
+
+When serving Web through a reverse proxy, public domain, or wildcard listen address, set server-side `DATAAGENT_WEB_ORIGIN` to the browser-facing origin (for example, `https://data.example.com`) to validate browser error reports. Each Web process accepts at most 60 reports and 1 MiB of report bodies per minute, shared across all sources.
+
 ## Windows / macOS / other: manual npm deploy
 
 `./deploy.sh` targets **Ubuntu / Debian only** and does not support native Windows / macOS. On Windows, macOS, or other distros, install, configure, and start with npm as below. Use the same path for hand-edited env files or split processes.
