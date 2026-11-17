@@ -23,10 +23,10 @@ deterministic fallback: a failed LLM family selection surfaces as an error.
 from __future__ import annotations
 
 import asyncio
+import logging
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from loguru import logger
 from nl2sql.constants import DEFAULT_NL2SQL_SEMANTIC_TABLE_COLUMNS_LIMIT
 from nl2sql.errors import DataAgentError
 from nl2sql.hooks import HookContext, SchemaContext
@@ -54,6 +54,8 @@ from .data.traffic_insight_table_recall import (
     tables_from_field_index,
     tables_missing_from_hybrid_columns,
 )
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dataagent import SemanticServiceClient
@@ -126,7 +128,7 @@ class TrafficInsightTableSelector:
         columns = schema[bare].get("columns") or {}
         with_values = sum(1 for info in columns.values() if str(info.get("example_values") or "").strip())
         logger.info(
-            "Traffic Insight perceptor step=assemble_schema table={} columns={} with_values={} description={}",
+            'Traffic Insight perceptor step=assemble_schema table=%s columns=%s with_values=%s description=%s',
             bare,
             len(columns),
             with_values,
@@ -150,7 +152,7 @@ class TrafficInsightTableSelector:
         )
         candidates = tables_from_field_index(table_to_fields)
         logger.info(
-            "Traffic Insight perceptor step=field_eq_index mode={} tables={}",
+            'Traffic Insight perceptor step=field_eq_index mode=%s tables=%s',
             recall_mode,
             len(candidates),
         )
@@ -162,7 +164,7 @@ class TrafficInsightTableSelector:
 
         families = build_families_from_tables(candidates, exclude_prefixes=self._exclude_prefixes)
         logger.info(
-            "Traffic Insight perceptor step=build_families count={}",
+            'Traffic Insight perceptor step=build_families count=%s',
             len(families),
         )
         if not families:
@@ -173,7 +175,7 @@ class TrafficInsightTableSelector:
 
         selected = select_families_by_max_need_hits(families, table_to_fields)
         logger.info(
-            "Traffic Insight perceptor step=select_max_need_hit_families count={}",
+            'Traffic Insight perceptor step=select_max_need_hit_families count=%s',
             len(selected),
         )
         if not selected:
@@ -185,7 +187,7 @@ class TrafficInsightTableSelector:
         rep_tables = [family["representative_table"] for family in selected]
         columns_map = await asyncio.to_thread(self._hybrid_columns_for_tables, rep_tables)
         logger.info(
-            "Traffic Insight perceptor step=fetch_hybrid_cols rep_tables={}",
+            'Traffic Insight perceptor step=fetch_hybrid_cols rep_tables=%s',
             len(rep_tables),
         )
         try:
@@ -208,7 +210,7 @@ class TrafficInsightTableSelector:
             limit=self._candidate_table_families_limit,
         )
         logger.info(
-            "Traffic Insight perceptor step=select_min_extra_families count={}",
+            'Traffic Insight perceptor step=select_min_extra_families count=%s',
             len(narrowed),
         )
         if not narrowed:
@@ -222,7 +224,7 @@ class TrafficInsightTableSelector:
         if not table:
             raise _scenario_error("Traffic Insight table family selection returned no valid table")
         logger.info(
-            "Traffic Insight perceptor step=resolve_table selection={} table={}",
+            'Traffic Insight perceptor step=resolve_table selection=%s table=%s',
             selection,
             table,
         )
@@ -235,13 +237,13 @@ class TrafficInsightTableSelector:
             "filter_traffic_insight_fields_",
             {"question": question},
         )
-        logger.info("Traffic Insight perceptor step=llm_extract_field fields={}", payload)
+        logger.info('Traffic Insight perceptor step=llm_extract_field fields=%s', payload)
         try:
             normalized = normalize_traffic_insight_fields(payload)
         except (TypeError, ValueError) as exc:
             raise _scenario_error("Traffic Insight field extraction returned invalid fields", str(exc)) from exc
         logger.info(
-            "Traffic Insight perceptor step=classify_fields need_d={} need_m={}",
+            'Traffic Insight perceptor step=classify_fields need_d=%s need_m=%s',
             sorted(normalized["need_d"]),
             sorted(normalized["need_m"]),
         )
@@ -262,7 +264,7 @@ class TrafficInsightTableSelector:
                 "tables": table_families_info,
             },
         )
-        logger.info("Traffic Insight perceptor step=llm_select_family result={}", parsed)
+        logger.info('Traffic Insight perceptor step=llm_select_family result=%s', parsed)
         if not isinstance(parsed, dict):
             return None
         family_name = str(parsed.get("family_name") or "").strip()
@@ -284,14 +286,14 @@ class TrafficInsightTableSelector:
             hit_tables = self._stream_field_eq_into_index(field, table_to_fields)
             kind = "dimension" if field in need_d else "metric"
             logger.info(
-                "Traffic Insight perceptor step=stat_field_hit_tables field={} kind={} hit_tables={}",
+                'Traffic Insight perceptor step=stat_field_hit_tables field=%s kind=%s hit_tables=%s',
                 field,
                 kind,
                 hit_tables,
             )
             if hit_tables == 0:
                 logger.warning(
-                    "field hits no tables, field={} kind={}",
+                    'field hits no tables, field=%s kind=%s',
                     field,
                     kind,
                 )
@@ -335,7 +337,7 @@ class TrafficInsightTableSelector:
                 exclude_prefixes=self._exclude_prefixes,
             )
             logger.info(
-                "Traffic Insight perceptor step=call_column_by_page field={} offset={} entities={} indexed={}",
+                'Traffic Insight perceptor step=call_column_by_page field=%s offset=%s entities=%s indexed=%s',
                 field,
                 offset,
                 page_count,
@@ -392,7 +394,7 @@ class TrafficInsightTableSelector:
                 before = len(merged)
                 merged.update(parse_hybrid_table_columns(raw))
                 logger.info(
-                    "Traffic Insight perceptor step=fetch_hybrid_cols:batch pass={} batch={}/{} keys_added={}",
+                    'Traffic Insight perceptor step=fetch_hybrid_cols:batch pass=%s batch=%s/%s keys_added=%s',
                     pass_idx + 1,
                     batch_count,
                     total_batches,
@@ -401,7 +403,7 @@ class TrafficInsightTableSelector:
             pending = tables_missing_from_hybrid_columns(qualified, merged)
             if pending:
                 logger.warning(
-                    "Traffic Insight hybrid columns missing after pass={} tables={}",
+                    'Traffic Insight hybrid columns missing after pass=%s tables=%s',
                     pass_idx + 1,
                     pending,
                 )
@@ -424,7 +426,7 @@ class TrafficInsightTableSelector:
             columns_info = self._get_table_columns_info(table_name)
         except DataAgentError as exc:
             logger.warning(
-                "Traffic Insight perceptor step=supplement_values failed table={} detail={}",
+                'Traffic Insight perceptor step=supplement_values failed table=%s detail=%s',
                 table_name,
                 exc,
             )
@@ -433,7 +435,7 @@ class TrafficInsightTableSelector:
             columns_info = {}
         enriched = enrich_schema_example_values_from_columns_info(schema, table_name, columns_info)
         logger.info(
-            "Traffic Insight perceptor step=supplement_values table={} info_cols={}",
+            'Traffic Insight perceptor step=supplement_values table=%s info_cols=%s',
             table_name,
             len(columns_info),
         )

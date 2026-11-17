@@ -4,7 +4,7 @@
   "private": true,
   "scripts": {
     "build": "next build",
-    "start": "next start",
+    "start": "node start.mjs start",
     "test": "vitest run"
   },
   "dependencies": {

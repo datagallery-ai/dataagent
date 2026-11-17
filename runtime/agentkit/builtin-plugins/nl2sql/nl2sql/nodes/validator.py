@@ -12,16 +12,17 @@
 # ============================================================================
 import asyncio
 import json
+import logging
 import re
 from typing import Any
-
-from loguru import logger
 
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.security import check_sql
 from nl2sql.state import NL2SQLState, Result
 from nl2sql.utils.nl2sql_utils import flatten_schema, metadata_parser
 from nl2sql.utils.sql_service import build_sql_service
+
+logger = logging.getLogger(__name__)
 
 
 class ValidatorNode(BaseNL2SQLNode):

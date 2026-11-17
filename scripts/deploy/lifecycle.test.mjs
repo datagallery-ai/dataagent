@@ -52,7 +52,7 @@ function createFakeDeployDeps(overrides = {}) {
       calls.push("build-web");
       if (overrides.failWebBuild) {
         const error = new Error("Web build failed");
-        error.logPath = "storage/logs/deploy-20260722-143000.log";
+        error.logPath = "runtime/logs/backend.log";
         throw error;
       }
     },
@@ -60,7 +60,7 @@ function createFakeDeployDeps(overrides = {}) {
       calls.push("build-tui");
       if (overrides.failTuiBuild) {
         const error = new Error("TUI build failed");
-        error.logPath = "storage/logs/deploy-20260722-143000.log";
+        error.logPath = "runtime/logs/backend.log";
         throw error;
       }
     },
@@ -261,12 +261,9 @@ test("runtime and deploy logs redact fixture secrets", () => {
   assert.match(text, /NOTE=3000/);
 });
 
-test("deploy failure uses beginDeployLog path", async () => {
+test("deploy failure preserves the failing command log path", async () => {
   let failure;
   const controller = createDeploymentController({
-    async beginDeployLog() {
-      return "storage/logs/deploy-20260722143000.log";
-    },
     async loadConfiguration() {
       return { env: {} };
     },
@@ -285,7 +282,7 @@ test("deploy failure uses beginDeployLog path", async () => {
     async stop() {},
     async installProject() {},
     async buildWeb() {
-      throw new Error("Web build failed");
+      throw Object.assign(new Error("Web build failed"), { logPath: "runtime/logs/web.log" });
     },
     async buildTui() {},
     async verifyPorts() {},
@@ -301,7 +298,7 @@ test("deploy failure uses beginDeployLog path", async () => {
     () => controller.run({ command: "deploy", reconfigure: false, nonInteractive: true }),
     /Web build failed/
   );
-  assert.equal(failure.logPath, "storage/logs/deploy-20260722143000.log");
+  assert.equal(failure.logPath, "runtime/logs/web.log");
 });
 
 test("deploy never auto-starts TUI client", async () => {

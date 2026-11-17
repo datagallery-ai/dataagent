@@ -11,10 +11,10 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
+import logging
 from typing import Any
 
 from langchain_core.messages import HumanMessage, SystemMessage
-from loguru import logger
 
 from dataagent import collect_model_stream
 from nl2sql.constants import (
@@ -28,6 +28,8 @@ from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.prompt_manager import PromptTemplate
 from nl2sql.state import NL2SQLState, Result
 from nl2sql.utils.nl2sql_utils import sql_parser, xml_parser
+
+logger = logging.getLogger(__name__)
 
 
 class GeneratorNode(BaseNL2SQLNode):

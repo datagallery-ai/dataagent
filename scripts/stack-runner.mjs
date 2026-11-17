@@ -1,8 +1,9 @@
-import { execSync, spawn } from "node:child_process";
+import { spawn } from "node:child_process";
 import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
+import { captureOutput, createLogger } from "./lib/logging.mjs";
 
 import {
   formatStackEndpoints,
@@ -44,9 +45,9 @@ export async function runStack({ args = [] }) {
   const apiBase = httpOrigin(runtimeConfig.apiHost, runtimeConfig.apiPort);
   const apiUp = apiOnly ? false : await controlPlaneIsRunning(apiBase);
   if (oneClick) {
-    ensurePythonEnvironment();
-    ensureArtifact("web");
-    ensureArtifact("tui");
+    await ensurePythonEnvironment();
+    await ensureArtifact("web");
+    await ensureArtifact("tui");
   }
 
   const startApi = apiOnly || !apiUp;
@@ -66,11 +67,14 @@ export async function runStack({ args = [] }) {
     throw new Error("Nothing to start. Use --api and/or --web.");
   }
 
-  console.log(formatStackEndpoints(runtimeConfig, {
+  const logger = createLogger({ file: "backend", component: "launcher" });
+  const endpoints = formatStackEndpoints(runtimeConfig, {
     startApi: startApi || apiUp,
     startWeb,
     tuiReady: oneClick,
-  }));
+  });
+  logger.info(endpoints, { stage: "start" });
+  console.log(endpoints);
   let shuttingDown = false;
   const shutdown = (signal) => {
     if (shuttingDown) return;
@@ -82,32 +86,42 @@ export async function runStack({ args = [] }) {
 
   process.on("SIGINT", () => shutdown("SIGINT"));
   process.on("SIGTERM", () => shutdown("SIGTERM"));
-  for (const { child, label } of children) {
+  for (const { child, label, logger: childLogger } of children) {
     child.on("exit", (code, signal) => {
       if (shuttingDown || signal) return;
-      console.error(`[stack] ${label} exited with code ${code ?? "unknown"}.`);
+      const message = `[stack] ${label} exited with code ${code ?? "unknown"}.`;
+      childLogger.error(message, { stage: "run" });
+      console.error(message);
       shutdown("SIGTERM");
       process.exitCode = code && code !== 0 ? code : 1;
     });
   }
 }
 
-export function ensurePythonEnvironment(rootDir = root, run = runInherited) {
+export async function ensurePythonEnvironment(rootDir = root, run = runInherited) {
   if (existsSync(join(rootDir, "runtime/agentkit/.venv"))) return false;
-  run(pythonEnvironmentSyncCommand());
+  await run(pythonEnvironmentSyncCommand());
   return true;
 }
 
 function runInherited(command) {
-  execSync(command, { cwd: root, stdio: "inherit", env: process.env, shell: true });
+  return runPreparation(command, "backend", "install");
 }
 
-function ensureArtifact(kind) {
+async function ensureArtifact(kind) {
   const ready = kind === "web"
     ? existsSync(join(root, "apps/web/.next/BUILD_ID"))
     : existsSync(join(root, "apps/tui/dist/index.js"));
   if (ready) return;
-  execSync(`npm run build:${kind}`, { cwd: root, stdio: "inherit", env: process.env, shell: true });
+  await runPreparation(`npm run build:${kind}`, kind, "build");
+}
+
+function runPreparation(command, file, stage) {
+  const { child } = spawnProcess(file, command, [], process.env, { file, stage, shell: true });
+  return new Promise((resolve, reject) => {
+    child.on("error", reject);
+    child.on("close", code => code === 0 ? resolve() : reject(new Error(`${command} failed with code ${code}`)));
+  });
 }
 
 function loadRootEnv() {
@@ -115,13 +129,19 @@ function loadRootEnv() {
   if (existsSync(envPath)) loadEnvFile(envPath);
 }
 
-function spawnProcess(label, command, args, env) {
+function spawnProcess(label, command, args, env, { file = label === "DataGallery Web" ? "web" : "backend", stage = "run", shell = process.platform === "win32" } = {}) {
+  const logger = createLogger({ file, component: "launcher" });
+  const stdout = captureOutput(logger, { stage, echo: process.stdout });
+  const stderr = captureOutput(logger, { stage, echo: process.stderr });
   const child = spawn(command, args, {
     cwd: root,
-    stdio: "inherit",
-    env,
-    shell: process.platform === "win32",
+    stdio: ["inherit", "pipe", "pipe"],
+    env: { ...env, DATAAGENT_LOG_CAPTURE: file },
+    shell,
   });
-  child.on("error", (error) => console.error(`[stack] Unable to start ${label}: ${error.message}`));
-  return { child, label };
+  child.stdout.setEncoding("utf8").on("data", chunk => stdout.append(chunk));
+  child.stderr.setEncoding("utf8").on("data", chunk => stderr.append(chunk));
+  child.on("close", () => { stdout.flush(); stderr.flush(); });
+  child.on("error", (error) => logger.error(`Unable to start ${label}`, error, { stage: "start" }));
+  return { child, label, logger };
 }

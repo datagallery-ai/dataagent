@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import logging
 import os
 import re
 import time
@@ -38,10 +39,11 @@ from pathlib import Path
 from typing import Any
 
 import httpx
-from loguru import logger
 
 from dataagent.errors import DataAgentError
 from dataagent.semantic_client import SemanticServiceClient
+
+logger = logging.getLogger(__name__)
 
 SQL_PROCESS_TYPE_NAME = "sql_process"
 MANIFEST_NAME = ".history_sql_manifest.json"
@@ -355,7 +357,7 @@ def write_corpus(
             if name in current_names or not existing.is_file() or existing.is_symlink():
                 continue
             if hashlib.sha256(existing.read_bytes()).hexdigest() != previous_hash:
-                logger.warning("history_sql_downloader: keep modified file {}", name)
+                logger.warning('history_sql_downloader: keep modified file %s', name)
                 continue
             existing.unlink()
             stats.pruned.append(name)
@@ -415,4 +417,4 @@ def _chmod_quiet(path: str, mode: int) -> None:
     try:
         os.chmod(path, mode)
     except OSError as err:
-        logger.warning("history_sql_downloader: chmod {} -> {:o} failed: {}", path, mode, err)
+        logger.warning('history_sql_downloader: chmod %s -> %o failed: %s', path, mode, err)

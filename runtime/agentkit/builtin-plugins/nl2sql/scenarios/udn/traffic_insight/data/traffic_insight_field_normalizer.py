@@ -14,12 +14,14 @@
 
 from __future__ import annotations
 
-from loguru import logger
+import logging
 
 from .traffic_insight_field_catalog import (
     TIME_PSEUDO_FIELDS,
     TRAFFIC_INSIGHT_FIELD_KINDS,
 )
+
+logger = logging.getLogger(__name__)
 
 
 def normalize_traffic_insight_fields(payload: object) -> dict[str, set[str]]:
@@ -55,7 +57,7 @@ def normalize_traffic_insight_fields(payload: object) -> dict[str, set[str]]:
             continue
         kind = TRAFFIC_INSIGHT_FIELD_KINDS.get(name)
         if kind is None:
-            logger.warning("Traffic Insight field extraction ignored unknown field: {}", name)
+            logger.warning('Traffic Insight field extraction ignored unknown field: %s', name)
             continue
         if kind == "dimension":
             need_d.add(name)

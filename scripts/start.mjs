@@ -13,10 +13,12 @@
  *   --config <path>
  */
 import { runStack } from "./stack-runner.mjs";
+import { createLogger, redactLogText } from "./lib/logging.mjs";
 
 try {
   await runStack({ args: process.argv.slice(2) });
 } catch (error) {
-  console.error(`[stack] ${error instanceof Error ? error.message : String(error)}`);
+  createLogger({ file: "backend", component: "launcher" }).error("Stack startup failed", error, { stage: "start" });
+  console.error(redactLogText(`[stack] ${error instanceof Error ? error.message : String(error)}`));
   process.exit(1);
 }

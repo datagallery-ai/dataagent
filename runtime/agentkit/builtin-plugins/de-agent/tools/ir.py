@@ -12,13 +12,16 @@
 # ============================================================================
 """Read-only access to the shared DataTaskIR contract."""
 
+import logging
+
 from langchain.tools import ToolRuntime
 from langchain_core.messages import ToolMessage
-from loguru import logger
 from utils.data_task_ir import core
 from utils.data_task_ir.runtime import ir_enabled
 
 from dataagent import AgentContext
+
+logger = logging.getLogger(__name__)
 
 
 async def read_ir(runtime: ToolRuntime[AgentContext]) -> str | ToolMessage:
@@ -32,7 +35,7 @@ async def read_ir(runtime: ToolRuntime[AgentContext]) -> str | ToolMessage:
     try:
         return core.read_ir(runtime.context)
     except Exception as exc:
-        logger.exception("DataTaskIR read failed: {}", type(exc).__name__)
+        logger.exception('DataTaskIR read failed: %s', type(exc).__name__)
         return ToolMessage(
             content=f"DataTaskIR: {exc}. Fix inputs and retry the IR update before generating SQL.",
             tool_call_id=runtime.tool_call_id or "",

@@ -6,21 +6,33 @@ A2A、REST API、TUI 和 Web 共用这些记录及会话 checkpoint、产物目�
 
 ## 日志
 
-`dataagent serve` 和 `dataagent serve-a2a` 把根日志设为 INFO，写入 `<home>/runtime/logs/backend.log` 和标准错误。轮转大小 5_000_000 字节，保留 3 个备份。已知密钥会脱敏；时间格式和时区沿用现有行为。
+所有正式入口统一使用 `<home>/runtime/logs/`，Home 来自 `DATAAGENT_HOME`，默认 `~/.dataagent`。
 
-启动行记录已启用插件和来源。流失败记录：
+| 文件 | 内容 |
+| --- | --- |
+| `backend.log` | 后端、模型、工具、插件，以及公共依赖准备、环境检查、整体启停 |
+| `web.log` | Web 构建、Next.js 服务端、代理错误、浏览器错误上报 |
+| `tui.log` | TUI 构建、启动、连接、传输和交互错误 |
 
-```text
-RUN_ERROR run=<run_id> thread=<thread_id> stage=agent_stream code=<code> message=<message>
-```
+不再生成独立的部署日志和进程输出汇总文件。`./deploy.sh logs` 同时跟随这三个文件。历史日志保留在原位置，不自动删除。
 
-`code` 是 `TIMEOUT`、`MODEL_ERROR`、`TOOL_ERROR` 等公开错误分类，异常类名另记在 `error`。空消息仍保留类型。不写原始 traceback，也不把请求体打进这条日志。
+日志每行是一个 JSON 对象，包含 `timestamp`、`level`、`component`、`message`。有上下文时附带 `stage`、`requestId`、`threadId`、`runId`、`code`。异常堆栈保存为 `stack`（Node 异常在 `error.stack` 中）。文件日志保留换行和完整堆栈；JSON 编码让每个事件仍只占一行。用户可见的 `safe_error` 仍输出不超过 1,500 字符的短摘要。
 
-TUI 日志固定写入 `<home>/runtime/logs/tui.log`，与 `backend.log` 同目录。Home 来自进程环境 `DATAAGENT_HOME`，未设置时是 `~/.dataagent`。
+三类日志均在写入前脱敏，处理已知密钥、Bearer/Basic、URL 中的凭据和签名参数。插件统一使用 `logging.getLogger(__name__)`，不自行添加文件 handler。扩展刷新会登记新凭据，并保留旧凭据的脱敏能力，以覆盖仍在执行的旧运行。
+
+已知凭据来自模型密钥、语义密码、认证 token，以及 MCP 中明确的凭据环境变量、请求头和参数（如 `API_KEY`、`Authorization`、`--token`、`--password=value`）。用户名、服务 URL 和普通命令参数保留用于诊断。短于 8 个字符的凭据只按完整值匹配，避免替换普通单词或路径中的同名片段；凭据字段和 URL 内认证信息仍会脱敏。
+
+轮转大小统一为 5_000_000 字节，保留 3 个备份；日志文件模式为 `0600`。后端日志文件无法初始化时，降级为同样脱敏、格式化的标准错误输出。写入失败会提示一次，避免日志错误掩盖原始异常。
+
+单独启动 `dataagent serve`、Web 的 `npm start` 或 TUI 时，各服务直接写对应文件。由启动器拉起时，内部启动标记 `DATAAGENT_LOG_CAPTURE` 让子进程只输出日志，启动器通过同一日志写入器落盘，避免重复记录。该标记由启动器管理，不应手动设置。TUI 对后端 stderr 的短摘要只用于错误展示，完整内容仍写入 `backend.log`。
+
+浏览器通过同源 `/api/client-errors` 上报页面异常、未处理 Promise 和客户端通信错误，最终进入 `web.log`。上报有限流、去重和大小限制；网络不可用时上报可能失败，不影响界面。runtime 失败的完整诊断以 `backend.log` 为准，客户端展示安全摘要。
+
+浏览器上报每个 Web 进程每分钟最多写入 60 条记录、接受 1 MiB 的有效上报正文，单次正文最大 32 KiB；所有来源共享额度，客户端 `x-forwarded-for` 不参与配额分组。Origin 默认与 Next 的服务监听地址核对。反向代理或通配地址部署时，将服务端 `DATAAGENT_WEB_ORIGIN` 设置为浏览器使用的 Origin（如 `https://data.example.com`），不从客户端 Host 或转发头推断。Origin 和 Fetch Metadata 用于浏览器来源校验，不作为客户端身份认证；浏览器自报的运行 ID 仍是不可信诊断数据。
 
 ## A2A 调用关联
 
-`/a2a/jsonrpc` 的接收、完成、取消和失败事件在同一个文件中记录，正文为 JSON。关联字段包括 `request_id`、`rpc_id`、`message_id`、`context_id`、`task_id`、`root_run_id`、`instance_id` 和进程 `user_id`。匿名访问不识别实际访问者，`user_id` 不能作为调用方身份。
+`/a2a/jsonrpc` 的接收、完成、取消和失败事件通过同一后端写入器记录为每行一个 JSON 对象。关联字段包括 `request_id`、`rpc_id`、`message_id`、`context_id`、`task_id`、`root_run_id`、`instance_id` 和进程 `user_id`，均保留在 JSON 顶层。匿名访问不识别实际访问者，`user_id` 不能作为调用方身份。
 
 主要事件是 `a2a.request.received/finished/aborted/rejected/failed`、`a2a.execution.queued/started/completed/failed/cancelled`、`a2a.task.cancel_requested`、`a2a.checkpoint.saved/unchanged/failed`、`a2a.cleanup.failed`、`a2a.trace.saved/failed`。HTTP 完成记录区分 `http_status`、`rpc_error_code` 和 `task_state`，HTTP 200 不等于任务成功。
 

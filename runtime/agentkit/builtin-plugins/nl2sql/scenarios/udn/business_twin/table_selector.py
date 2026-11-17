@@ -23,11 +23,11 @@ at assembly.
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from loguru import logger
 from nl2sql.errors import DataAgentError
 from nl2sql.hooks import HookContext, SchemaContext
 from nl2sql.nodes.perceptor import PerceptorNode
@@ -41,6 +41,8 @@ from .data.business_twin_business_id_selector import (
     select_business_twin_business_id,
 )
 from .data.business_twin_dimension_metadata import BUSINESS_TWIN_DIMENSION_METADATA
+
+logger = logging.getLogger(__name__)
 
 if TYPE_CHECKING:
     from dataagent import SemanticServiceClient

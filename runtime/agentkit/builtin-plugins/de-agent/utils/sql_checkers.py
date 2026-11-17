@@ -18,14 +18,13 @@ import asyncio
 import difflib
 import hashlib
 import json
+import logging
 import os
 import re
 import time
 from pathlib import Path
 from typing import Any
 from uuid import uuid4
-
-from loguru import logger
 
 from dataagent import AgentContext, DataAgentError, collect_model_stream
 from utils import dataops_validate_tool
@@ -39,6 +38,8 @@ from utils.delivery_contract import (
 from utils.sql_query_checks import load_schema_evidence
 from utils.sql_rule_detectors import COVERAGE, SCOPES, RuleDetector
 from utils.validation_model import thinking_enabled_from_config, validation_llm_kwargs
+
+logger = logging.getLogger(__name__)
 
 _REPAIR_SYSTEM = """你是 SQL 修复器，问题已由程序定位，只修复给定 issue_id，不重新寻找其他问题。
 结合完整 DDL/DML（包括 CTE）、问题位置、规范原句和已有 schema，自行决定必要的 SQL 修改。
@@ -321,7 +322,7 @@ class SQLCheckerPipeline:
         except asyncio.CancelledError:
             raise
         except Exception as exc:
-            logger.warning("[sql_checkers] cleanup failed (ignored): {}", exc)
+            logger.warning('[sql_checkers] cleanup failed (ignored): %s', exc)
 
     async def _repair_issue(
         self, candidate: dict[str, str], issue: Any, detector: RuleDetector

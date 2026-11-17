@@ -13,18 +13,20 @@
 """Adapt data-engineering evidence at NL2SQL's per-task boundaries."""
 
 import json
+import logging
 import re
 from pathlib import Path
 
 import sqlglot
 from hooks.history_sql import reference_context
-from loguru import logger
 from sqlglot import exp
 from utils.checks import _validate_ddl_comprehensive
 from utils.data_task_ir.core import get_ir_context
 from utils.data_task_ir.runtime import ir_enabled
 from utils.evidence import model_evidence
 from utils.schema_ddl import source_schemas_to_ddl
+
+logger = logging.getLogger(__name__)
 
 
 def prepare_input(state, runtime, *, params):

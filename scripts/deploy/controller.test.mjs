@@ -72,7 +72,7 @@ test("build failure after stop never starts and reports maintenance window", asy
     async installProject() {},
     async buildWeb() {
       const error = new Error("build failed");
-      error.logPath = "storage/logs/deploy-20260722.log";
+      error.logPath = "runtime/logs/backend.log";
       throw error;
     },
     async buildTui() {},

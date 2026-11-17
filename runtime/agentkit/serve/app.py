@@ -23,9 +23,12 @@ from fastapi.responses import StreamingResponse
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
 from pydantic import ConfigDict, model_validator
 from starlette.background import BackgroundTask
+from starlette.types import ASGIApp, Message, Receive, Scope, Send
 
+from a2a_server.agent_card import JSONRPC_PATH
+from a2a_server.request_context import route_path
 from dataagent import PreparedRuntime, SemanticServiceClient, load_mcp_tools, safe_error
-from dataagent.host import ERROR_CODES, OPAQUE_ID_PATTERN
+from dataagent.host import ERROR_CODES, OPAQUE_ID_PATTERN, diagnostic_traceback, log_context
 from serve.agents import ExtensionReloadError, SessionAgents
 from serve.envelopes import register_error_handlers, success
 from serve.outputs import list_outputs, preview_output
@@ -39,6 +42,38 @@ from serve.sessions import (
 )
 
 logger = logging.getLogger("dataagent.api")
+
+
+class RequestLogging:
+    """Bind correlation through the complete ASGI stream without buffering or task wrappers."""
+
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send):
+        if scope["type"] != "http" or route_path(scope) == JSONRPC_PATH:
+            return await self.app(scope, receive, send)
+        candidate = dict(scope.get("headers", ())).get(b"x-request-id", b"").decode("latin-1")
+        request_id = candidate if re.fullmatch(r"[A-Za-z0-9_-]{1,128}", candidate) else str(uuid4())
+        token = log_context.set({"requestId": request_id})
+
+        async def correlated_send(message: Message):
+            if message["type"] == "http.response.start":
+                headers = [(key, value) for key, value in message.get("headers", ()) if key.lower() != b"x-request-id"]
+                message = {**message, "headers": [*headers, (b"x-request-id", request_id.encode("ascii"))]}
+                if message["status"] >= 500:
+                    logger.error("HTTP error status=%s method=%s path=%s", message["status"],
+                                 scope["method"], scope["path"], extra={"stage": "http"})
+            await send(message)
+
+        try:
+            await self.app(scope, receive, correlated_send)
+        except Exception as error:
+            logger.error("HTTP request failed method=%s path=%s", scope["method"], scope["path"],
+                         extra={"stage": "http", "stack": diagnostic_traceback(error)})
+            raise
+        finally:
+            log_context.reset(token)
 
 
 class DisconnectAwareResponse(StreamingResponse):
@@ -368,8 +403,9 @@ async def _settle(turn: SessionTurn, graph) -> None:
     """Record a checkpoint during cleanup. The turn's own error stays in dataagent.api."""
     try:
         await turn.settle(graph)
-    except Exception:
-        logger.warning("checkpoint was not recorded for thread=%s", turn.thread_id)
+    except Exception as error:
+        logger.warning("checkpoint was not recorded for thread=%s", turn.thread_id,
+                       extra={"threadId": turn.thread_id, "stage": "settle", "stack": diagnostic_traceback(error)})
 
 
 def register_conversation_routes(
@@ -493,6 +529,9 @@ def register_conversation_routes(
             unregister=lambda: _unregister_run(app, body.run_id, handle),
         )
 
+        # The stream task inherits this context; RequestLogging resets it in this request task.
+        log_context.set({**log_context.get(), "threadId": thread_id, "runId": body.run_id, "stage": "run"})
+
         async def events():
             encoder = EventEncoder()
             started = time.monotonic()
@@ -551,6 +590,7 @@ def register_conversation_routes(
                             thread_id,
                             public.code,
                             public.message,
+                            extra={"code": public.code, "stage": "agent_stream"},
                         )
                         yield encoder.encode(public)
                         return
@@ -584,6 +624,8 @@ def register_conversation_routes(
                     details["code"],
                     type(error).__name__,
                     details["message"],
+                    extra={"code": details["code"], "stage": "agent_stream",
+                           "stack": diagnostic_traceback(error, secrets)},
                 )
                 yield encoder.encode(RunErrorEvent(**details))
             finally:
@@ -626,7 +668,8 @@ def create_app(runtime: PreparedRuntime | None, *, instance_id: str | None = Non
         except Exception as exc:
             if started:
                 raise
-            logger.warning("Conversation engine failed during startup: %s", exc)
+            logger.warning("Conversation engine failed during startup: %s", exc,
+                           extra={"stage": "start", "stack": diagnostic_traceback(exc)})
             app.state.agents = None
             app.state.sessions = None
             app.state.checkpointer = None
@@ -637,7 +680,6 @@ def create_app(runtime: PreparedRuntime | None, *, instance_id: str | None = Non
     app.state.conversation_instance_id = identity
     app.add_middleware(ConversationReadyGuard)
     if runtime is not None and runtime.a2a_auth_token:
-        from a2a_server.agent_card import JSONRPC_PATH
         from a2a_server.server import BearerGuard
 
         app.add_middleware(
@@ -650,6 +692,8 @@ def create_app(runtime: PreparedRuntime | None, *, instance_id: str | None = Non
         user_id=runtime.paths.user_id if runtime else "default",
         secrets=runtime.redaction_secrets if runtime else (),
     )
+    app.add_middleware(RequestLogging)
+
     register_error_handlers(app)
     register_product_routes(app)
     if runtime is not None:

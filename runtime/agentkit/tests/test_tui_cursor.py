@@ -98,6 +98,10 @@ def fixture(*arguments, optimize=False, expected_exit=0):
 
     try:
         output = drain()
+        # Ink can emit terminal setup before its first frame; an idle gap is not readiness.
+        deadline = time.monotonic() + 3
+        while b"test-model" not in output and process.poll() is None and time.monotonic() < deadline:
+            output += drain()
         assert b"test-model" in output
         assert not re.search(rb"\x1b\[(?:38|48);", output), "NO_COLOR must suppress palette escapes"
         yield process, master, cursor, send, drain

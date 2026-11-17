@@ -421,7 +421,7 @@ def test_a2a_long_error_keeps_json_correlation_and_redacts_each_field(runtime, c
     (record,) = [r for r in caplog.records if hasattr(r, "dataagent_event")]
     handler = configured["handlers"][0]
     try:
-        payload = json.loads(handler.format(record).split("dataagent.a2a ", 1)[1])
+        payload = json.loads(handler.format(record))
     finally:
         for handler in configured["handlers"]:
             handler.close()

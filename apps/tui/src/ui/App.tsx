@@ -1588,7 +1588,7 @@ export const App: React.FC<AppProps> = ({
           const message = error instanceof Error ? error.message : String(error);
           const code = error instanceof AguiClientError ? error.code : 'TRANSPORT_ERROR';
           store.handleLiveRunEvent({ type: 'RUN_ERROR', runId: currentAttemptRunId(), message });
-          getLogger().error('Stream failed', { threadId, runId, code, message });
+          getLogger().error('Stream failed', error, { threadId, runId, code, message });
           store.appendToAssistantMessage(`\n\nError [${code}]: ${message}`);
           store.finalizeAssistantMessage();
           store.addRunSummary(threadId, runId,

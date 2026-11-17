@@ -161,11 +161,7 @@ def test_a2a_cli_restart_keeps_history_and_operator_correlation(runtime, tmp_pat
             ]["task"]
             assert failed["metadata"]["dataagent"]["error"]["code"] == "MODEL_ERROR"
         text = (runtime.paths.state_dir / "logs/backend.log").read_text()
-        records = [
-            json.loads(line[line.index('{"event":') :])
-            for line in text.splitlines()
-            if '{"event":' in line
-        ]
+        records = [json.loads(line) for line in text.splitlines()]
         for task in (first, second, failed):
             related = [r for r in records if r.get("task_id") == task["id"]]
             assert any(r["event"] == "a2a.trace.saved" for r in related)

@@ -11,6 +11,7 @@ import type { TuiContext } from "./protocol/session-client.js";
 import { normalizeRuntimeUrl, connectTui } from "./connect.js";
 import { configuredListen, formatListenBase, startBackend } from "./backend.js";
 import { terminalText } from "./utils/terminal-text.js";
+import { getLogger } from "./utils/logger.js";
 
 export type AppExitReason = "exit";
 
@@ -268,6 +269,7 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
     }
   } catch (error) {
     if (error instanceof DOMException && error.name === "AbortError") return 130;
+    getLogger().error("TUI failed", error, { stage: "connect" });
     console.error(`DataGallery: ${terminalText(error instanceof Error ? error.message : String(error))}`);
     return 1;
   }

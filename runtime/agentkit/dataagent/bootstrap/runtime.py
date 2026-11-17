@@ -11,6 +11,7 @@ from pathlib import Path
 from dataagent.bootstrap.config_files import ENV_REFERENCE, ConfigSource
 from dataagent.bootstrap.discovery import ExtensionLocations
 from dataagent.bootstrap.paths import RuntimePaths
+from dataagent.diagnostics import is_secret_name
 from dataagent.settings import Settings
 
 
@@ -48,20 +49,21 @@ class PreparedRuntime:
         ]
         semantic = self.settings.semantic
         if semantic is not None:
-            if semantic.username:
-                secrets.append(semantic.username)
             if semantic.password is not None:
                 secrets.append(semantic.password.get_secret_value())
-            secrets.append(semantic.base_url)
         for connection in self.extensions.mcp_servers.values():
-            secrets.extend(connection.get("env", {}).values())
-            secrets.extend(connection.get("headers", {}).values())
-            # Endpoints/arguments may embed credentials; never echo them in diagnostics.
-            secrets.extend(connection.get("args", ()))
-            if connection.get("url"):
-                secrets.append(connection["url"])
+            for section in ("env", "headers"):
+                secrets.extend(value for name, value in connection.get(section, {}).items()
+                               if is_secret_name(name))
+            args = connection.get("args", ())
+            for index, argument in enumerate(args):
+                name, separator, value = argument.partition("=")
+                if name.startswith("-") and is_secret_name(name):
+                    if separator:
+                        secrets.append(value)
+                    elif index + 1 < len(args):
+                        secrets.append(args[index + 1])
         for agent in self.settings.a2a.remote_agents:
-            secrets.append(str(agent.url))
             if agent.auth_token is not None:
                 secrets.append(agent.auth_token.get_secret_value())
         if self.a2a_auth_token:

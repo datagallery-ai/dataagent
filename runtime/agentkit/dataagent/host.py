@@ -8,6 +8,12 @@ turns, choose a listen address, validate client IDs, and render stable public er
 from dataagent.bootstrap import extension_revision, refresh_extensions, server_listen
 from dataagent.declarations import OPAQUE_ID_PATTERN
 from dataagent.diagnostics import ERROR_CODES, error_code
+from dataagent.logging import (
+    configure_logging,
+    diagnostic_traceback,
+    log_context,
+    register_log_secrets,
+)
 
 __all__ = [
     "ERROR_CODES",
@@ -16,4 +22,8 @@ __all__ = [
     "extension_revision",
     "refresh_extensions",
     "server_listen",
+    "configure_logging",
+    "diagnostic_traceback",
+    "log_context",
+    "register_log_secrets",
 ]

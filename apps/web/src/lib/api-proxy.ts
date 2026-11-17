@@ -1,3 +1,5 @@
+import { webLogger } from "./web-logger";
+
 const DEFAULT_API_TARGET = "http://127.0.0.1:8790";
 
 /** Headers that tell intermediaries (reverse proxies, CDNs) not to buffer SSE. */
@@ -58,6 +60,9 @@ export async function proxyToApi(request: Request, pathname: string): Promise<Re
   const incoming = new URL(request.url);
   const targetUrl = `${getApiProxyTarget()}${pathname}${incoming.search}`;
   const headers = new Headers(request.headers);
+  const candidateId = headers.get("x-request-id") ?? "";
+  const requestId = /^[\w-]{1,128}$/.test(candidateId) ? candidateId : crypto.randomUUID();
+  headers.set("x-request-id", requestId);
   headers.delete("host");
   headers.delete("connection");
   headers.delete("content-length");
@@ -75,8 +80,19 @@ export async function proxyToApi(request: Request, pathname: string): Promise<Re
     init.body = await request.arrayBuffer();
   }
 
-  const upstream = await fetch(targetUrl, init);
+  let upstream: Response;
+  try {
+    upstream = await fetch(targetUrl, init);
+  } catch (error) {
+    webLogger.error("Backend proxy request failed", error, { requestId, stage: "proxy", method: request.method, path: pathname });
+    return Response.json({ success: false, error: { code: "UPSTREAM_UNAVAILABLE", message: "Backend is unavailable." } },
+      { status: 502, headers: { "x-request-id": requestId } });
+  }
+  if (upstream.status >= 500) webLogger.error("Backend returned an HTTP error", {
+    requestId, stage: "proxy", method: request.method, path: pathname, status: upstream.status,
+  });
   const responseHeaders = buildProxyResponseHeaders(upstream.headers, pathname);
+  responseHeaders.set("x-request-id", requestId);
 
   return new Response(upstream.body, {
     status: upstream.status,

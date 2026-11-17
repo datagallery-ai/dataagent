@@ -11,9 +11,8 @@
 # limitations under the License.
 # ============================================================================
 import asyncio
+import logging
 from typing import Any
-
-from loguru import logger
 
 from nl2sql.constants import DEFAULT_NL2SQL_PREVIEW_LIMIT
 from nl2sql.errors import DataAgentError
@@ -21,6 +20,8 @@ from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.state import NL2SQLState
 from nl2sql.utils.nl2sql_utils import truncate
 from nl2sql.utils.sql_service import build_sql_service
+
+logger = logging.getLogger(__name__)
 
 _ExecutionOutput = tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]  # noqa: UP045
 

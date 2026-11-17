@@ -20,7 +20,7 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "dataagent"
 LEAVES = {"dataagent.declarations", "dataagent.strict_json", "dataagent.diagnostics", "dataagent.errors"}
-FOUNDATION = LEAVES | {"dataagent.settings", "dataagent.plugin_config"}
+FOUNDATION = LEAVES | {"dataagent.settings", "dataagent.plugin_config", "dataagent.logging"}
 MODEL_TOOLING = ("langchain", "langgraph", "deepagents", "ag_ui", "mcp")
 EXTENSION_DEPENDENCIES = {
     "loop_detection": set(),
@@ -39,8 +39,8 @@ EXTENSION_DEPENDENCIES = {
 }
 EXTENSION_CORE_DEPENDENCIES = {
     "loop_detection": {"errors"},
-    "tracing": {"diagnostics"},
-    "trace_exporter": set(),
+    "tracing": {"diagnostics", "logging"},
+    "trace_exporter": {"diagnostics"},
     "mcp": {"bootstrap", "diagnostics"},
     "filesystem_backend": {"bootstrap", "core"},
     "loading": {"declarations", "settings", "plugin_config"},
@@ -332,7 +332,7 @@ def test_public_sdk_exports_only_the_high_level_path():
     }
     assert set(dataagent.host.__all__) == {
         "ERROR_CODES", "OPAQUE_ID_PATTERN", "error_code", "extension_revision", "refresh_extensions",
-        "server_listen",
+        "server_listen", "configure_logging", "diagnostic_traceback", "log_context", "register_log_secrets",
     }
     assert dataagent.lowlevel.__all__ == ["build_graph"]
     for name in ("build_graph", "load_extensions", "refresh_extensions", "error_code"):

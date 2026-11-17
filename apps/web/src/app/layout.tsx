@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import "./globals.css";
 import "@copilotkit/react-core/v2/styles.css";
 import { THEME_INIT_SCRIPT } from "../lib/theme";
+import { ClientErrorReporter } from "./client-error-reporter";
 
 export const metadata: Metadata = {
   title: {
@@ -21,7 +22,7 @@ export default function RootLayout({
       <head>
         <script dangerouslySetInnerHTML={{ __html: THEME_INIT_SCRIPT }} />
       </head>
-      <body className="font-sans antialiased">{children}</body>
+      <body className="font-sans antialiased"><ClientErrorReporter />{children}</body>
     </html>
   );
 }

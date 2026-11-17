@@ -12,21 +12,23 @@
 # ============================================================================
 """Connect native todo/file/tool events to the legacy DataTaskIR lifecycle."""
 
+import logging
 from collections import Counter
 from copy import deepcopy
 from dataclasses import replace
 
 from langchain_core.messages import RemoveMessage, ToolMessage
 from langgraph.types import Command
-from loguru import logger
 from utils.data_task_ir import core
 from utils.data_task_ir import session as ir_session
 from utils.data_task_ir.inputs import tool_succeeded
 from utils.data_task_ir.runtime import ir_enabled, ir_state
 
+logger = logging.getLogger(__name__)
+
 
 def _failure(request, exc, result=None):
-    logger.exception("DataTaskIR hook failed: {}", type(exc).__name__)
+    logger.exception('DataTaskIR hook failed: %s', type(exc).__name__)
     message = ToolMessage(
         content=f"DataTaskIR: {exc}. Fix the input and retry the IR update before continuing.",
         tool_call_id=request.tool_call.get("id"),

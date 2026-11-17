@@ -2,6 +2,7 @@
 
 import argparse
 import json
+import logging
 import sys
 from dataclasses import asdict
 from pathlib import Path
@@ -15,6 +16,7 @@ from dataagent.history_sql.downloader import (
     fetch_all_entities,
     write_corpus,
 )
+from dataagent.logging import diagnostic_traceback, register_log_secrets
 from dataagent.semantic_client import SemanticServiceClient
 
 
@@ -36,6 +38,7 @@ def run(args: argparse.Namespace) -> int:
         if args.if_enabled and not enabled(options):
             print(json.dumps({"status": "disabled", "written": 0}))
             return 0
+        register_log_secrets(runtime.redaction_secrets)
         if args.output_dir:
             # An explicit command-line location wins over the snapshot environment override.
             destination = Path(args.output_dir).expanduser()
@@ -47,7 +50,10 @@ def run(args: argparse.Namespace) -> int:
         if runtime.settings.semantic is None:
             raise ValueError("semantic configuration is required for downloading history SQL")
     except (ValueError, OSError) as exc:
-        print(f"History SQL configuration error: {type(exc).__name__}: {exc}", file=sys.stderr)
+        logging.getLogger("dataagent.history_sql").error(
+            "History SQL configuration failed", extra={"stage": "prepare", "stack": diagnostic_traceback(exc)},
+        )
+        print(f"History SQL configuration error: {safe_error(exc)['message']}", file=sys.stderr)
         return 2
     try:
         with SemanticServiceClient.from_settings(runtime.settings.semantic) as client:
@@ -64,6 +70,9 @@ def run(args: argparse.Namespace) -> int:
         print(json.dumps(report, ensure_ascii=False, indent=2))
         return 0
     except (CorpusDownloadError, OSError) as exc:
+        logging.getLogger("dataagent.history_sql").error(
+            "History SQL download failed", extra={"stage": "download", "stack": diagnostic_traceback(exc)},
+        )
         details = safe_error(exc, runtime.redaction_secrets)
         print(f"History SQL download failed [{details['code']}]: {details['message']}", file=sys.stderr)
         return 1

@@ -12,13 +12,12 @@
 # ============================================================================
 """Deterministic business-ID selection: 21-schema scoring plus business-preference routing."""
 
+import logging
 import re
 from collections.abc import Collection, Mapping, Sequence
 from dataclasses import dataclass
 from fnmatch import fnmatchcase
 from typing import Any
-
-from loguru import logger
 
 from .business_twin_business_id_catalog import (
     BUSINESS_RULES,
@@ -27,6 +26,8 @@ from .business_twin_business_id_catalog import (
     IGNORED_TEMPORAL_FIELDS,
     METRIC_FIELDS,
 )
+
+logger = logging.getLogger(__name__)
 
 _HIGH_RAIL_RULES = BUSINESS_RULES["high_rail"]
 _HIGH_RAIL_RIDE_METRICS = frozenset(_HIGH_RAIL_RULES["ride_metrics"])

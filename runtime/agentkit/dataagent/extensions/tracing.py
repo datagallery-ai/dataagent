@@ -19,8 +19,9 @@ from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor, SpanExporter
 from opentelemetry.sdk.trace.sampling import ALWAYS_ON
 
-from dataagent.diagnostics import log_event, safe_error
+from dataagent.diagnostics import is_secret_name, log_event, safe_error
 from dataagent.extensions.trace_exporter import LocalFileExporter, RedactingSpanExporter
+from dataagent.logging import register_log_secrets
 
 logger = logging.getLogger(__name__)
 
@@ -55,7 +56,7 @@ def _parse_otlp_headers(raw: str | None = None) -> dict[str, str] | None:
         if not part.strip():
             continue
         if "=" not in part:
-            raise ValueError(f"Invalid {_OTLP_HEADERS_ENV} entry (expected key=value): {part!r}")
+            raise ValueError(f"Invalid {_OTLP_HEADERS_ENV} entry (expected key=value)")
         key, value = part.split("=", 1)
         headers[key.strip()] = value.strip()
     return headers or None
@@ -138,6 +139,7 @@ class LocalLangChainTracer(LangChainTracer):
                     headers = dict(otlp_headers)
                 else:
                     headers = _parse_otlp_headers()
+                register_log_secrets(value for name, value in (headers or {}).items() if is_secret_name(name))
                 try:
                     remote = _build_otlp_exporter(endpoint, headers)
                     self.otlp_exporter = RedactingSpanExporter(remote, secrets)

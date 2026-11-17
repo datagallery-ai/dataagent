@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import time
 from copy import deepcopy
 from pathlib import Path
@@ -25,10 +26,11 @@ from typing import Any, Optional
 
 import yaml
 from langchain_core.language_models import BaseChatModel as LLMClient
-from loguru import logger
 
 from .json_llm import ainvoke_json_object, repair_json_object
 from .template import materialize_writable_template
+
+logger = logging.getLogger(__name__)
 
 CONCISE_RATIONALE_INSTRUCTION = (
     "\n输出精简要求：value 必须完整保留已有证据，不要求填满未知槽位，不能省略已知字段、条件、表达式或分支。"
@@ -497,7 +499,7 @@ async def fill_field_templates(
                 compact_json=compact_json,
             )
         except Exception as exc:
-            logger.warning("[IR] field {} raised {}; degrading", field_id, type(exc).__name__)
+            logger.warning('[IR] field %s raised %s; degrading', field_id, type(exc).__name__)
             return {
                 "field_id": field_id,
                 "success": False,
@@ -533,7 +535,7 @@ async def fill_field_templates(
     def _materialize(field_template: dict[str, Any], detail: dict[str, Any] | None) -> dict[str, Any]:
         field_id = str(field_template.get("field_id", ""))
         if detail is None:
-            logger.warning("[IR] field {} missing from fill results; degrading", field_id)
+            logger.warning('[IR] field %s missing from fill results; degrading', field_id)
             return _degraded_field_output(field_id, "missing fill result", previous=values.get(field_id))
         output = detail.get("output")
         if isinstance(output, dict) and isinstance(output.get("value"), dict) and (
@@ -541,7 +543,7 @@ async def fill_field_templates(
         ):
             return output
         error = str(detail.get("error") or "DataTaskIR field extraction failed")
-        logger.warning("[IR] field {} degraded: {}", field_id, error)
+        logger.warning('[IR] field %s degraded: %s', field_id, error)
         degraded = _degraded_field_output(field_id, error, previous=values.get(field_id))
         detail["output"] = degraded
         detail["degraded"] = True
@@ -669,7 +671,7 @@ async def _complete_field_batch(
         candidates = {item["field_id"]: item for item in fields}
     except Exception as exc:
         error = type(exc).__name__
-        logger.warning("[IR] batch completion failed ({}); retry individual fields", error)
+        logger.warning('[IR] batch completion failed (%s); retry individual fields', error)
     elapsed = time.perf_counter() - started
     batch_id = "_completion_" + "_".join(template["field_id"] for template in templates)
     write_field_attempt(trace_dir, batch_id, 1, messages, raw)
@@ -737,7 +739,7 @@ async def _complete_field_batch(
             write_field_meta(trace_dir, field_id, detail)
         except Exception as exc:
             error = str(exc)
-            logger.warning("[IR] completion for {} degraded: {}", field_id, error)
+            logger.warning('[IR] completion for %s degraded: %s', field_id, error)
             degraded = _degraded_field_output(
                 field_id, error, previous=current_values.get(field_id) or detail.get("output"),
             )
@@ -943,7 +945,7 @@ async def detect_field_changes(
     )
     # Never classify unseen evidence as irrelevant. Large deltas use the full fill path.
     if len(summary) + len(new_evidence) > max_input_chars:
-        logger.info("[IR] change detection budget exceeded; refill {} fields", len(field_ids))
+        logger.info('[IR] change detection budget exceeded; refill %s fields', len(field_ids))
         write_field_meta(trace_dir, "_change_detection", {
             "success": False, "attempts": 0, "error": "input_budget_exceeded",
             "output": {"reestimate": sorted(field_ids)},
@@ -971,7 +973,7 @@ async def detect_field_changes(
         result = set(detected)
     except Exception as exc:
         error = type(exc).__name__
-        logger.warning("[IR] change detection failed ({}); refill all confirmed fields", error)
+        logger.warning('[IR] change detection failed (%s); refill all confirmed fields', error)
         result = field_ids
     write_field_attempt(trace_dir, "_change_detection", 1, messages, raw)
     write_field_meta(trace_dir, "_change_detection", {

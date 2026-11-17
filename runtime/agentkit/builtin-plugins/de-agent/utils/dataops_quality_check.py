@@ -40,13 +40,12 @@ warning 文案都由 checker 自己描述，编排层无需改动。
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
-
-from loguru import logger
 
 from dataagent import AgentContext
 from utils.dataops_mcp import IntegrationClient, dataops_options, getenv
@@ -64,6 +63,8 @@ from utils.dataops_validate_tool import (
     _poll_until_done,
     partition_date_for_quality,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Constants

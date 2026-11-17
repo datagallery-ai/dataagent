@@ -12,6 +12,7 @@
 # ============================================================================
 """Run the legacy non-blocking quality trial when the root Agent finishes a turn."""
 
+import logging
 import re
 from pathlib import Path
 from typing import Any
@@ -19,10 +20,11 @@ from uuid import uuid4
 
 from langchain_core.callbacks.manager import adispatch_custom_event
 from langchain_core.messages import AIMessage, HumanMessage
-from loguru import logger
 from utils.dataops_mcp import dataops_settings
 from utils.dataops_quality_check import render_metrics_table, render_table_metrics
 from utils.dataops_trial_compute_tool import trial_compute_once
+
+logger = logging.getLogger(__name__)
 
 _REPORT_PREFIX = "[DataOps 数据质量检查] "
 
@@ -56,7 +58,7 @@ async def dataops_quality_check_post(state, runtime, *, params):
         if not reused:
             reports.append(_render_report(dml_path=path, result=result))
     except Exception as exc:
-        logger.exception("[dataops_quality_check_post] trial failed: {}", path)
+        logger.exception('[dataops_quality_check_post] trial failed: %s', path)
         reports.append(f"{_REPORT_PREFIX}试算未完成：{type(exc).__name__}: {exc}")
     report = "\n\n".join(text for text in reports if text)
     if not report:
@@ -78,7 +80,7 @@ async def _emit(content: str, message_id: str | None = None) -> None:
             {"message_id": message_id or str(uuid4()), "message": content},
         )
     except Exception as exc:
-        logger.debug("[dataops_quality_check_post] stream unavailable: {}", exc)
+        logger.debug('[dataops_quality_check_post] stream unavailable: %s', exc)
 
 
 def _render_report(*, dml_path: Path, result: dict[str, Any] | None) -> str:

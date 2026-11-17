@@ -7,6 +7,7 @@ import {
   type RunAgentInput,
 } from "@ag-ui/client";
 import { Observable } from "rxjs";
+import { reportClientError } from "./client-errors";
 import {
   STREAM_RUNTIME_PATH,
   formatStreamHttpError,
@@ -34,6 +35,7 @@ export class StreamHttpAgent extends HttpAgent {
       try {
         init = this.requestInit(input);
       } catch (error) {
+        reportClientError(error, { threadId: input.threadId, runId: input.runId, stage: "request" });
         subscriber.error(error instanceof Error ? error : new Error(String(error)));
         return;
       }
@@ -45,6 +47,7 @@ export class StreamHttpAgent extends HttpAgent {
       let reader: ReadableStreamDefaultReader<Uint8Array> | undefined;
       let settled = false;
       let sawTerminal = false;
+      let requestId: string | undefined;
       const finish = (error?: unknown) => {
         if (settled) return;
         settled = true;
@@ -63,6 +66,7 @@ export class StreamHttpAgent extends HttpAgent {
       void (async () => {
         try {
           const response = await this.fetch(this.url, { ...init, signal: controller.signal });
+          requestId = response.headers.get("x-request-id") ?? undefined;
           if (!response.ok) {
             throw new Error(formatStreamHttpError(response.status, await response.text()));
           }
@@ -92,6 +96,9 @@ export class StreamHttpAgent extends HttpAgent {
           }
           finish();
         } catch (error) {
+          if (!isAbort(error, controller)) reportClientError(error, {
+            threadId: input.threadId, runId: input.runId, requestId, stage: "transport",
+          });
           finish(error);
         }
       })();

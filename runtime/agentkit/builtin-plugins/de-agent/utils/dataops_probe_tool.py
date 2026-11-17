@@ -26,12 +26,11 @@ Highlights:
 from __future__ import annotations
 
 import asyncio
+import logging
 import re
 import time
 from datetime import date, timedelta
 from typing import Any
-
-from loguru import logger
 
 from dataagent import AgentContext
 
@@ -45,6 +44,8 @@ from utils.dataops_validate_tool import (
     _check_skip_conditions,
     _get_dataops_env,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Constants

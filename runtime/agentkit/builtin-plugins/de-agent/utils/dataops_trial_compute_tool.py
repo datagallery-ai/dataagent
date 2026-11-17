@@ -66,11 +66,11 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
 from langchain_core.messages import HumanMessage
-from loguru import logger
 
 from dataagent import AgentContext
 from utils.dataops_log_utils import bound_error_excerpt
@@ -84,6 +84,8 @@ from utils.dataops_validate_tool import (
     dataops_validate_sql,
     partition_date_for_quality,
 )
+
+logger = logging.getLogger(__name__)
 
 # ============================================================================
 # Public entry
@@ -274,7 +276,7 @@ async def _drop_scratch_table(
     except asyncio.CancelledError:
         raise
     except Exception as exc:
-        logger.warning("[trial_compute] scratch table cleanup failed (ignored): {}", exc)
+        logger.warning('[trial_compute] scratch table cleanup failed (ignored): %s', exc)
         return
     if job_ids:
         payload["cleanup_job_ids"] = job_ids
