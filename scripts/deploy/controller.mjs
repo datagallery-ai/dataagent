@@ -1,3 +1,4 @@
+import { logPath as resolveLogPath } from "../lib/logging.mjs";
 import { deploymentHelp } from "./args.mjs";
 
 export function createDeploymentController(deps) {
@@ -7,13 +8,9 @@ export function createDeploymentController(deps) {
     let serviceStopped = false;
     let stage = "load-config";
     let config;
-    let logPath = "storage/logs/deploy-latest.log";
+    const logPath = resolveLogPath("backend");
 
     try {
-      if (deps.beginDeployLog) {
-        logPath = await deps.beginDeployLog();
-      }
-
       stage = "load-config";
       config = await deps.loadConfiguration({ reconfigure: parsed.reconfigure });
       calls.push("load-config");

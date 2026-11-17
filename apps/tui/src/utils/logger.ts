@@ -1,6 +1,6 @@
 import fs from 'fs';
 import path from 'path';
-import { resolveTuiLogPath } from '../log-path.js';
+import { createLogger, logPath } from '../../../../scripts/lib/logging.mjs';
 
 export enum LogLevel {
   DEBUG = 0,
@@ -21,22 +21,20 @@ class Logger {
   private config: LoggerConfig;
   private logFilePath: string;
   private currentLogLevel: LogLevel;
+  private writer: ReturnType<typeof createLogger>;
 
   constructor(config?: Partial<LoggerConfig>) {
-    const defaultLogPath = resolveTuiLogPath();
-
     this.config = {
-      logDir: config?.logDir || path.dirname(defaultLogPath),
-      logFileName: config?.logFileName || path.basename(defaultLogPath),
-      maxLogSize: config?.maxLogSize || 10 * 1024 * 1024, // 10MB
-      maxLogFiles: config?.maxLogFiles || 5,
+      logDir: config?.logDir || path.dirname(logPath('tui')),
+      logFileName: 'tui.log',
+      maxLogSize: config?.maxLogSize || 5_000_000,
+      maxLogFiles: config?.maxLogFiles || 3,
       debugMode: config?.debugMode || false,
     };
-
     this.logFilePath = path.join(this.config.logDir, this.config.logFileName);
+    this.writer = createLogger({ file: 'tui', directory: this.config.logDir,
+      maxBytes: this.config.maxLogSize, backups: this.config.maxLogFiles });
     this.currentLogLevel = this.config.debugMode ? LogLevel.DEBUG : LogLevel.INFO;
-
-    this.ensureLogDirectory();
   }
 
   /**
@@ -55,98 +53,11 @@ class Logger {
   }
 
   /**
-   * Ensure log directory exists
-   */
-  private ensureLogDirectory(): void {
-    try {
-      if (!fs.existsSync(this.config.logDir)) {
-        fs.mkdirSync(this.config.logDir, { recursive: true });
-      }
-    } catch (error) {
-      // Silently fail - logging should not crash the app
-      void error;
-    }
-  }
-
-  /**
-   * Format log message with timestamp and level
-   */
-  private formatMessage(level: string, message: string, metadata?: any): string {
-    const timestamp = new Date().toISOString();
-    const metaStr = metadata ? ` ${JSON.stringify(metadata)}` : '';
-    return `[${timestamp}] [${level}] ${message}${metaStr}\n`;
-  }
-
-  /**
-   * Write log message to file
-   */
-  private writeToFile(message: string): void {
-    try {
-      // Check if log rotation is needed
-      this.rotateLogsIfNeeded();
-
-      // Append to log file
-      fs.appendFileSync(this.logFilePath, message, 'utf8');
-    } catch (error) {
-      // Silently fail - logging should not crash the app
-      void error;
-    }
-  }
-
-  /**
-   * Rotate logs if file size exceeds maximum
-   */
-  private rotateLogsIfNeeded(): void {
-    try {
-      if (!fs.existsSync(this.logFilePath)) {
-        return;
-      }
-
-      const stats = fs.statSync(this.logFilePath);
-
-      if (stats.size >= this.config.maxLogSize) {
-        // Rotate existing log files
-        for (let i = this.config.maxLogFiles - 1; i > 0; i--) {
-          const oldPath = path.join(
-            this.config.logDir,
-            `${this.config.logFileName}.${i}`
-          );
-          const newPath = path.join(
-            this.config.logDir,
-            `${this.config.logFileName}.${i + 1}`
-          );
-
-          if (fs.existsSync(oldPath)) {
-            if (i === this.config.maxLogFiles - 1) {
-              // Delete oldest log
-              fs.unlinkSync(oldPath);
-            } else {
-              // Rename log file
-              fs.renameSync(oldPath, newPath);
-            }
-          }
-        }
-
-        // Rotate current log file
-        const rotatedPath = path.join(
-          this.config.logDir,
-          `${this.config.logFileName}.1`
-        );
-        fs.renameSync(this.logFilePath, rotatedPath);
-      }
-    } catch (error) {
-      // Silently fail - rotation errors should not crash the app
-      void error;
-    }
-  }
-
-  /**
    * Log debug message
    */
   debug(message: string, metadata?: any): void {
     if (this.currentLogLevel <= LogLevel.DEBUG) {
-      const formattedMessage = this.formatMessage('DEBUG', message, metadata);
-      this.writeToFile(formattedMessage);
+      this.writer.debug(message, metadata);
     }
   }
 
@@ -155,8 +66,7 @@ class Logger {
    */
   info(message: string, metadata?: any): void {
     if (this.currentLogLevel <= LogLevel.INFO) {
-      const formattedMessage = this.formatMessage('INFO', message, metadata);
-      this.writeToFile(formattedMessage);
+      this.writer.info(message, metadata);
     }
   }
 
@@ -165,8 +75,7 @@ class Logger {
    */
   warn(message: string, metadata?: any): void {
     if (this.currentLogLevel <= LogLevel.WARN) {
-      const formattedMessage = this.formatMessage('WARN', message, metadata);
-      this.writeToFile(formattedMessage);
+      this.writer.warn(message, metadata);
     }
   }
 
@@ -175,14 +84,7 @@ class Logger {
    */
   error(message: string, error?: Error | any, metadata?: any): void {
     if (this.currentLogLevel <= LogLevel.ERROR) {
-      const errorDetails = error ? {
-        message: error.message,
-        stack: error.stack,
-        ...metadata,
-      } : metadata;
-
-      const formattedMessage = this.formatMessage('ERROR', message, errorDetails);
-      this.writeToFile(formattedMessage);
+      this.writer.error(message, error, metadata);
     }
   }
 

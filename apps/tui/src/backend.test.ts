@@ -4,6 +4,9 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { resolve } from "node:path";
 import { it } from "node:test";
 import { fileURLToPath } from "node:url";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import {
   ensureWindowsBackendPython,
   startBackend,
@@ -103,6 +106,25 @@ it("backend startup failure preserves a sanitized diagnostic", async () => {
     spawnBackend: fake("process.stderr.write('model failed sk-abcdefghijklmnopqrstuv'); process.exit(1);"),
   }), /model failed \[REDACTED\]/);
   assert.equal(terminalText("/中文 path/\x1b[31mbad\n\x07"), "/中文 path/bad");
+});
+
+it("persists complete backend stderr beyond the display excerpt", async () => {
+  const home = mkdtempSync(join(tmpdir(), "backend-output-"));
+  const previous = process.env.DATAAGENT_HOME;
+  process.env.DATAAGENT_HOME = home;
+  try {
+    await assert.rejects(startBackend({ spawnBackend: fake(
+      "process.stderr.write('ROOT_CAUSE_START\\n' + 'x'.repeat(6000) + '\\nAuthorization: Bearer fixture-token\\n'); process.exit(1);",
+    ) }));
+    const log = readFileSync(join(home, "runtime/logs/backend.log"), "utf8");
+    assert.match(log, /ROOT_CAUSE_START/);
+    assert(!log.includes("fixture-token"));
+    assert.equal(log.split("ROOT_CAUSE_START").length - 1, 1);
+  } finally {
+    if (previous === undefined) delete process.env.DATAAGENT_HOME;
+    else process.env.DATAAGENT_HOME = previous;
+    rmSync(home, { recursive: true, force: true });
+  }
 });
 
 function fakeSyncChild(result: {

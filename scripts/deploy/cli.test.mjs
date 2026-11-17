@@ -10,7 +10,6 @@ import { parseDeployArgs } from "./args.mjs";
 import {
   configureDeploymentInteractively,
   collectManagedPorts,
-  createDeployLogWriter,
   formatStartBlocked,
   apiListenFromState,
   healthProbeUrls,
@@ -493,31 +492,6 @@ test("reconfigure leaves an existing public URL line unchanged", async () => {
   });
   assert.equal(result.env.LLM_MODEL, "qwen-plus");
   assert.match(result.envText, /LLM_MODEL=qwen-plus/);
-});
-
-test("createDeployLogWriter redacts secrets and updates deploy-latest.log", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-log-"));
-  const writer = await createDeployLogWriter(root, { timestamp: "20260722143000" });
-  await writer.append("LLM_API_KEY=fixture-deploy-secret-at-least-32-chars\nnpm ci output\n");
-  await writer.finalize();
-  const logText = await readFile(path.join(root, "storage/logs/deploy-20260722143000.log"), "utf8");
-  const latestText = await readFile(path.join(root, "storage/logs/deploy-latest.log"), "utf8");
-  assert.doesNotMatch(logText, /fixture-deploy-secret-at-least-32-chars/);
-  assert.match(logText, /npm ci output/);
-  assert.equal(latestText, logText);
-  assert.equal(writer.logPath, "storage/logs/deploy-20260722143000.log");
-});
-
-test("createDeployLogWriter redacts secrets split across append chunks", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-log-chunk-"));
-  const writer = await createDeployLogWriter(root, { timestamp: "20260722143001" });
-  await writer.append("LLM_API_KEY=fixture-deploy-secret-");
-  await writer.append("at-least-32-chars\nnpm ci output\n");
-  await writer.finalize();
-  const logText = await readFile(path.join(root, "storage/logs/deploy-20260722143001.log"), "utf8");
-  assert.doesNotMatch(logText, /fixture-deploy-secret-at-least-32-chars/);
-  assert.match(logText, /LLM_API_KEY=\*{4,8}/);
-  assert.match(logText, /npm ci output/);
 });
 
 test("runDeploymentDoctor reports os, deps, config, ports, permissions, disk, pid, and health", async () => {

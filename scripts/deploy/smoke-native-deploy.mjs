@@ -1,11 +1,11 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { createDeployLogWriter } from "./cli.mjs";
+import { captureOutput, createLogger } from "../lib/logging.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const FIXTURE_SECRET = "fixture-deploy-secret-at-least-32-chars";
@@ -81,29 +81,13 @@ function scanForSecrets(text) {
   }
 }
 
-async function preserveFailureLogs(tempRoot) {
-  const sourceDir = path.join(tempRoot, "storage/logs");
-  const targetDir = path.join(ROOT, "storage/logs");
-  try {
-    const entries = await readdir(sourceDir);
-    await mkdir(targetDir, { recursive: true });
-    for (const entry of entries) {
-      const content = await readFile(path.join(sourceDir, entry), "utf8");
-      scanForSecrets(content);
-      await writeFile(path.join(targetDir, entry), content, { encoding: "utf8", mode: 0o600 });
-    }
-  } catch (error) {
-    if (error?.code !== "ENOENT") {
-      console.error(`[smoke:native-deploy] failed to preserve logs: ${error.message}`);
-    }
-  }
-}
 
 async function main() {
   const webPort = await reservePort();
   const apiPort = await reservePort();
   const tempRoot = await mkdtemp(path.join(os.tmpdir(), "datagallery-native-deploy-"));
   let stopped = false;
+  let failed = false;
 
   const env = {
     ...process.env,
@@ -126,9 +110,9 @@ async function main() {
       `${JSON.stringify({ server: { host: "127.0.0.1", port: apiPort } })}\n`
     );
 
-    // Inject fixture secret into the same redacting deploy-log path used in production.
-    const redactProbe = await createDeployLogWriter(tempRoot, { timestamp: "smoke-redact-probe" });
-    await redactProbe.append(
+    // Inject fixture secret into the shared redacting backend log used in production.
+    const redactProbe = captureOutput(createLogger({ file: "backend", env: { DATAAGENT_HOME: home } }));
+    redactProbe.append(
       [
         `LLM_API_KEY=${FIXTURE_SECRET}`,
         `Authorization: Bearer ${FIXTURE_SECRET}`,
@@ -138,14 +122,14 @@ async function main() {
         ""
       ].join("\n")
     );
-    await redactProbe.finalize();
+    redactProbe.flush();
     const probeLog = await readFile(
-      path.join(tempRoot, "storage/logs/deploy-smoke-redact-probe.log"),
+      path.join(home, "runtime/logs/backend.log"),
       "utf8"
     );
     scanForSecrets(probeLog);
-    assert.match(probeLog, /LLM_API_KEY=\*+/);
-    assert.match(probeLog, /Authorization: Bearer \*+/i);
+    assert.match(probeLog, /LLM_API_KEY=\[REDACTED\]/);
+    assert.match(probeLog, /Authorization:.*REDACTED/i);
 
     run("bash", ["./deploy.sh", "deploy", "--non-interactive", "--web-port", String(webPort)], {
       cwd: tempRoot,
@@ -190,9 +174,9 @@ async function main() {
     );
 
     for (const relative of [
-      "storage/logs/datagallery.log",
-      "storage/logs/deploy-latest.log",
-      "storage/logs/deploy-smoke-redact-probe.log"
+      "dataagent-home/runtime/logs/backend.log",
+      "dataagent-home/runtime/logs/web.log",
+      "dataagent-home/runtime/logs/tui.log"
     ]) {
       try {
         const logs = await readFile(path.join(tempRoot, relative), "utf8");
@@ -204,7 +188,8 @@ async function main() {
 
     console.log("[smoke:native-deploy] ok");
   } catch (error) {
-    await preserveFailureLogs(tempRoot);
+    failed = true;
+    console.error(`[smoke:native-deploy] logs retained at ${path.join(tempRoot, "dataagent-home/runtime/logs")}`);
     throw error;
   } finally {
     if (!stopped) {
@@ -219,7 +204,7 @@ async function main() {
         // best effort
       }
     }
-    await rm(tempRoot, { recursive: true, force: true });
+    if (!failed) await rm(tempRoot, { recursive: true, force: true });
   }
 }
 

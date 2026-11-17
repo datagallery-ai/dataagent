@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { resolveDataagentHome } from "./log-path.js";
 import { terminalText } from "./utils/terminal-text.js";
+import { captureOutput, createLogger, redactLogText } from "../../../scripts/lib/logging.mjs";
 
 const DEFAULT_SERVER_HOST = "127.0.0.1";
 const DEFAULT_SERVER_PORT = "8790";
@@ -111,6 +112,9 @@ export function ensureWindowsBackendPython(
   const exists = deps.existsSync ?? existsSync;
   const spawnImpl = deps.spawn ?? spawn;
   const python = windowsVenvPython(backendPackage);
+  const logger = createLogger({ file: "backend", component: "launcher",
+    env: { ...options.env, DATAAGENT_LOG_CAPTURE: undefined } });
+  const output = captureOutput(logger, { stage: "install" });
   return new Promise((done, fail) => {
     const child = spawnImpl("uv", ["sync", "--project", backendPackage], {
       cwd: options.cwd,
@@ -120,12 +124,18 @@ export function ensureWindowsBackendPython(
     });
     let stderr = "";
     child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+      output.append(chunk);
       stderr = (stderr + chunk).slice(-2000);
     });
-    child.once("error", fail);
+    child.once("error", error => { output.flush(); logger.error("Backend dependency preparation failed", error, { stage: "install" }); fail(error); });
     child.once("close", (code) => {
+      output.flush();
       if (code === 0 && exists(python)) done(python);
-      else fail(new Error(stderr.trim() || `uv sync failed with code ${code ?? "null"}`));
+      else {
+        const error = new Error(redactLogText(stderr.trim()) || `uv sync failed with code ${code ?? "null"}`);
+        logger.error("Backend dependency preparation failed", error, { stage: "install" });
+        fail(error);
+      }
     });
   });
 }
@@ -172,7 +182,7 @@ export async function startBackend(options: {
   for (const path of workspaces) args.push("--workspace", resolve(cwd, path));
   if (options.user) args.push("--user", options.user);
   if (options.session) args.push("--session", options.session);
-  const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_INSTANCE_ID: instanceId };
+  const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_INSTANCE_ID: instanceId, DATAAGENT_LOG_CAPTURE: "backend" };
   const launchOpts = { cwd, env };
   let windowsPython: string | undefined;
   if (!options.spawnBackend && process.platform === "win32") {
@@ -192,9 +202,14 @@ export async function startBackend(options: {
   let closing = false;
   let finished = false;
   let stderr = "";
-  const safe = (message: string) => terminalText(message
-    .replace(/\bsk-[A-Za-z0-9_-]+/g, "[REDACTED]"));
-  child.stderr.setEncoding("utf8").on("data", (chunk: string) => { stderr = (stderr + chunk).slice(-4000); });
+  const logger = createLogger({ file: "backend", component: "launcher" });
+  const output = captureOutput(logger, { stage: "run" });
+  const stdout = captureOutput(logger, { stage: "run" });
+  const safe = (message: string) => terminalText(redactLogText(message));
+  child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
+    output.append(chunk);
+    stderr = (stderr + chunk).slice(-4000); // Display excerpt only; complete output is persisted above.
+  });
   child.stdin.on("error", (error) => { if (!closing) shutdown.abort(error); });
   const closed = new Promise<void>((done) => {
     child.once("error", (error) => {
@@ -203,6 +218,8 @@ export async function startBackend(options: {
       done();
     });
     child.once("close", () => {
+      output.flush();
+      stdout.flush();
       finished = true;
       if (!closing) shutdown.abort(new Error(safe(
         "Backend exited. " + (stderr.trim() || "Inspect Home runtime/logs/backend.log."),
@@ -251,6 +268,7 @@ export async function startBackend(options: {
       if (shutdown.signal.aborted) { aborted(); return; }
       timer = setTimeout(() => reject(new Error("Backend readiness timed out")), options.readinessTimeoutMs ?? 30_000);
       readOutput = (chunk) => {
+        stdout.append(chunk);
         if (settled) return;
         buffer += chunk;
         try {
@@ -276,8 +294,10 @@ export async function startBackend(options: {
       };
       child.stdout.setEncoding("utf8").on("data", readOutput);
     });
+    child.stdout.on("data", (chunk: string) => stdout.append(chunk));
     return { runtimeUrl, instanceId, signal: shutdown.signal, stop };
   } catch (error) {
+    logger.error("Backend startup failed", error, { stage: "start" });
     shutdown.abort(error);
     await stop();
     if (error instanceof DOMException && error.name === "AbortError") throw error;

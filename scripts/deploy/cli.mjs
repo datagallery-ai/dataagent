@@ -1,12 +1,13 @@
 import { spawn } from "node:child_process";
 import { constants, existsSync } from "node:fs";
-import { access, appendFile, copyFile, mkdir, readFile, stat, statfs, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, stat, statfs, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { httpOrigin, readServerListen, writeServerListen } from "../server-listen.mjs";
+import { captureOutput, createLogger, logPath } from "../lib/logging.mjs";
 import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 import {
   deploymentConfigGaps,
@@ -22,7 +23,6 @@ import { ensureDependencies, inspectDependencies } from "./dependencies.mjs";
 import { collectDeploymentHealth, probeHttp, waitForDeployment } from "./health.mjs";
 import { probePort, selectDeploymentPort, verifySelectedPorts } from "./ports.mjs";
 import {
-  deploymentPaths,
   healStaleDeploymentState,
   inspectManagedRuntime,
   isProcessAlive,
@@ -141,58 +141,6 @@ export async function collectManagedPorts(env = {}, state = null, options = {}) 
     if (Number.isInteger(port) && port > 0) ports.add(port);
   }
   return ports;
-}
-
-function formatDeployLogTimestamp(date = new Date()) {
-  return date.toISOString().replace(/[-:TZ.]/g, "").slice(0, 14);
-}
-
-export async function createDeployLogWriter(root, options = {}) {
-  const logsDir = path.join(root, "storage/logs");
-  await mkdir(logsDir, { recursive: true });
-  const stamp = options.timestamp ?? formatDeployLogTimestamp();
-  const logFile = path.join(logsDir, `deploy-${stamp}.log`);
-  const latestFile = path.join(logsDir, "deploy-latest.log");
-  const relativeLogPath = path.join("storage/logs", `deploy-${stamp}.log`);
-
-  await writeFile(logFile, `[${new Date().toISOString()}] deploy started\n`, {
-    encoding: "utf8",
-    mode: 0o600
-  });
-
-  let pendingLine = "";
-
-  async function flushBufferedLines(text, { finalize = false } = {}) {
-    pendingLine += String(text ?? "");
-    let ready = "";
-
-    while (true) {
-      const newlineIndex = pendingLine.indexOf("\n");
-      if (newlineIndex === -1) break;
-      ready += pendingLine.slice(0, newlineIndex + 1);
-      pendingLine = pendingLine.slice(newlineIndex + 1);
-    }
-
-    if (finalize && pendingLine.length > 0) {
-      ready += pendingLine;
-      pendingLine = "";
-    }
-
-    if (ready.length > 0) {
-      await appendFile(logFile, redactSensitiveText(ready), { encoding: "utf8", mode: 0o600 });
-    }
-  }
-
-  return {
-    logPath: relativeLogPath,
-    async append(text) {
-      await flushBufferedLines(text);
-    },
-    async finalize() {
-      await flushBufferedLines("", { finalize: true });
-      await copyFile(logFile, latestFile);
-    }
-  };
 }
 
 const MAX_PORT_MENU_INVALID_CHOICES = 5;
@@ -359,15 +307,15 @@ function runCommand(command, args, options = {}) {
     const child = spawn(command, args, {
       cwd: options.cwd ?? ROOT,
       env: options.env ?? process.env,
-      stdio: options.log ? ["ignore", "pipe", "pipe"] : (options.stdio ?? "inherit")
+      stdio: options.logger ? ["ignore", "pipe", "pipe"] : (options.stdio ?? "inherit")
     });
 
-    if (options.log) {
+    const outputs = [];
+    if (options.logger) {
       const tee = (stream, target) => {
-        stream.on("data", (chunk) => {
-          target.write(chunk);
-          options.log.append(chunk).catch(() => {});
-        });
+        const output = captureOutput(options.logger, { stage: options.stage, echo: target });
+        outputs.push(output);
+        stream.setEncoding("utf8").on("data", chunk => output.append(chunk));
       };
       tee(child.stdout, process.stdout);
       tee(child.stderr, process.stderr);
@@ -375,6 +323,7 @@ function runCommand(command, args, options = {}) {
 
     child.on("error", reject);
     child.on("close", (code) => {
+      for (const output of outputs) output.flush();
       if (code === 0) resolve();
       else {
         const error = new Error(`${command} ${args.join(" ")} failed with code ${code}`);
@@ -389,22 +338,14 @@ function createRealDeps(context) {
   const { root, parsed, ask, print } = context;
 
   let config = null;
-  let deployLog = null;
+  const loggingEnv = () => ({ ...process.env, ...config?.env });
 
-  const commandOptions = () => ({
-    cwd: root,
-    log: deployLog ?? undefined,
-    logPath: deployLog?.logPath
-  });
+  const commandOptions = (file = "backend", stage = "install") => {
+    const logger = createLogger({ file, component: "launcher", env: loggingEnv() });
+    return { cwd: root, logger, stage, logPath: logger.path };
+  };
 
   return {
-    async beginDeployLog() {
-      deployLog = await createDeployLogWriter(root);
-      return deployLog.logPath;
-    },
-    async finalizeDeployLog() {
-      if (deployLog) await deployLog.finalize();
-    },
     async loadConfiguration() {
       const sourceText = await loadRootEnvText(root);
       const ensured = ensureDeploymentEnvironment(sourceText);
@@ -444,7 +385,11 @@ function createRealDeps(context) {
       await ensureDependencies({
         nonInteractive: parsed.nonInteractive,
         ask,
-        print
+        print,
+        install: async (action, { nonInteractive } = {}) => runCommand("bash", [
+          path.join(root, "scripts/deploy/install-dependency.sh"), action,
+          ...(nonInteractive ? ["--non-interactive"] : []),
+        ], commandOptions()),
       });
     },
     async selectPorts(current) {
@@ -469,15 +414,18 @@ function createRealDeps(context) {
       return inspection.running;
     },
     async stop() {
+      const env = { ...process.env, ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")) };
+      createLogger({ component: "launcher", env }).info("Stopping managed stack", { stage: "stop" });
       await stopManagedStack(root);
     },
     async installProject() {
       await runCommand("npm", ["ci"], commandOptions());
     },
     async buildWeb() {
-      await runCommand("npm", ["run", "build"], commandOptions());
+      await runCommand("npm", ["run", "build:web"], commandOptions("web", "build"));
     },
     async buildTui() {
+      await runCommand("npm", ["run", "build:tui"], commandOptions("tui", "build"));
       const entry = path.join(root, TUI_ENTRY);
       if (!existsSync(entry)) {
         throw new Error(`TUI build did not produce ${TUI_ENTRY}`);
@@ -570,7 +518,6 @@ function createRealDeps(context) {
         throw new Error("Managed process is not alive; refusing to mark deployment healthy");
       }
       await writeDeploymentState(root, { ...inspection.state, status: "healthy" });
-      if (deployLog) await deployLog.finalize();
       const web = current.web ?? { host: "127.0.0.1", port: "3000" };
       const api = readServerListen(current.env, parsed.config);
       const probes = healthProbeUrls(current.env, web, api);
@@ -605,10 +552,10 @@ function createRealDeps(context) {
       return summary;
     },
     async logs() {
-      const logPath = deploymentPaths(root).runtimeLog;
-      await mkdir(path.dirname(logPath), { recursive: true });
-      if (!existsSync(logPath)) await runCommand("touch", [logPath]);
-      await runCommand("tail", ["-n", "200", "-F", logPath]);
+      const env = { ...process.env, ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")) };
+      const paths = ["backend", "web", "tui"].map(file => logPath(file, env));
+      for (const file of paths) { await mkdir(path.dirname(file), { recursive: true }); if (!existsSync(file)) await writeFile(file, "", { mode: 0o600 }); }
+      await runCommand("tail", ["-n", "200", "-F", ...paths]);
     },
     async doctor() {
       await runDeploymentDoctor(root, { print, web: webListenFromArgs(parsed) });
@@ -617,7 +564,10 @@ function createRealDeps(context) {
       print(text);
     },
     async reportFailure(failure) {
-      if (deployLog) await deployLog.finalize().catch(() => {});
+      const file = failure.stage === "build-web" ? "web" : failure.stage === "build-tui" ? "tui" : "backend";
+      const logger = createLogger({ file, component: "launcher", env: loggingEnv() });
+      logger.error("Deployment failed", failure.error, { stage: failure.stage });
+      failure.logPath = logger.path;
       for (const line of formatDeploymentFailure(failure).split("\n")) {
         print(line);
       }
@@ -793,7 +743,12 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     await controller.run(parsed);
     return 0;
   } catch (error) {
-    if (!error?.failure) print(redactSensitiveText(error.message ?? String(error)));
+    if (!error?.failure) {
+      const env = { ...process.env, ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")) };
+      createLogger({ file: parsed.command === "tui" ? "tui" : "backend", component: "launcher", env })
+        .error("Service command failed", error, { stage: parsed.command });
+      print(redactSensitiveText(error.message ?? String(error)));
+    }
     return 1;
   } finally {
     ask.close?.();

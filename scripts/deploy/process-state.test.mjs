@@ -7,7 +7,6 @@ import {
   deploymentPaths,
   isProcessAlive,
   readDeploymentState,
-  rotateRuntimeLog,
   startManagedStack,
   stopManagedStack,
   validateDeploymentState,
@@ -42,18 +41,6 @@ test("isProcessAlive detects live and stale pids", () => {
   assert.equal(isProcessAlive(99999999), false);
 });
 
-test("rotateRuntimeLog keeps five archives at 20 MiB", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-log-"));
-  const logPath = path.join(root, "datagallery.log");
-  await writeFile(logPath, "x".repeat(20 * 1024 * 1024 + 1));
-  for (let i = 1; i <= 5; i += 1) {
-    await writeFile(`${logPath}.${i}`, `old-${i}`);
-  }
-  await rotateRuntimeLog(logPath, { maxBytes: 20 * 1024 * 1024, retain: 5 });
-  await assert.rejects(() => readFile(`${logPath}.6`, "utf8"), /ENOENT/);
-  assert.match(await readFile(`${logPath}.1`, "utf8"), /x/);
-  assert.equal(await readFile(logPath, "utf8"), "");
-});
 
 test("start and stop managed stack are idempotent and refuse foreign pids", async (t) => {
   if (process.platform === "win32") {

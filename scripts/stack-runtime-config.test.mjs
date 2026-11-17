@@ -90,13 +90,13 @@ test("control plane probe accepts the conversation health envelope", async () =>
   assert.equal(down, false);
 });
 
-test("one click syncs the python environment only when it is missing", () => {
+test("one click syncs the python environment only when it is missing", async () => {
   const rootDir = mkdtempSync(join(tmpdir(), "dataagent-start-"));
   const calls = [];
   try {
-    assert.equal(ensurePythonEnvironment(rootDir, (command) => calls.push(command)), true);
+    assert.equal(await ensurePythonEnvironment(rootDir, (command) => calls.push(command)), true);
     mkdirSync(join(rootDir, "runtime/agentkit/.venv"), { recursive: true });
-    assert.equal(ensurePythonEnvironment(rootDir, (command) => calls.push(command)), false);
+    assert.equal(await ensurePythonEnvironment(rootDir, (command) => calls.push(command)), false);
   } finally {
     rmSync(rootDir, { recursive: true, force: true });
   }

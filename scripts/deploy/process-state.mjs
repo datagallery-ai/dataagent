@@ -1,16 +1,17 @@
 import { spawn } from "node:child_process";
 import { randomBytes } from "node:crypto";
-import { existsSync } from "node:fs";
-import { mkdir, open, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+
+import { createLogger, logPath } from "../lib/logging.mjs";
 
 const SENSITIVE_KEY = /KEY|SECRET|TOKEN|PASSWORD|COOKIE|AUTHORIZATION/i;
 
-export function deploymentPaths(root) {
+export function deploymentPaths(root, env = process.env) {
   return {
-    logsDir: path.join(root, "storage/logs"),
+    logsDir: path.dirname(logPath("backend", env)),
     runDir: path.join(root, "storage/run"),
-    runtimeLog: path.join(root, "storage/logs/datagallery.log"),
+    runtimeLog: logPath("backend", env),
     pidFile: path.join(root, "storage/run/datagallery.pid"),
     deploymentJson: path.join(root, "storage/run/deployment.json")
   };
@@ -62,31 +63,6 @@ export function isProcessAlive(pid) {
   } catch {
     return false;
   }
-}
-
-export async function rotateRuntimeLog(logPath, options = {}) {
-  const maxBytes = options.maxBytes ?? 20 * 1024 * 1024;
-  const retain = options.retain ?? 5;
-  await mkdir(path.dirname(logPath), { recursive: true });
-  try {
-    const info = await stat(logPath);
-    if (info.size <= maxBytes) return;
-  } catch (error) {
-    if (error?.code === "ENOENT") {
-      await writeFile(logPath, "", { encoding: "utf8", mode: 0o600 });
-      return;
-    }
-    throw error;
-  }
-
-  await rm(`${logPath}.${retain}`, { force: true });
-  for (let i = retain - 1; i >= 1; i -= 1) {
-    const from = `${logPath}.${i}`;
-    const to = `${logPath}.${i + 1}`;
-    if (existsSync(from)) await rename(from, to);
-  }
-  await rename(logPath, `${logPath}.1`);
-  await writeFile(logPath, "", { encoding: "utf8", mode: 0o600 });
 }
 
 async function readLaunchIdFromProcAsync(pid) {
@@ -178,32 +154,28 @@ export async function startManagedStack(root, options = {}) {
     await clearDeploymentState(root);
   }
 
-  const paths = deploymentPaths(root);
+  const paths = deploymentPaths(root, options.env ?? process.env);
   await mkdir(paths.logsDir, { recursive: true });
   await mkdir(paths.runDir, { recursive: true });
-  await rotateRuntimeLog(paths.runtimeLog);
+  const logger = createLogger({ component: "launcher", env: options.env ?? process.env });
+  logger.info("Starting managed stack", { stage: "start" });
 
   const launchId = options.launchId ?? randomBytes(16).toString("hex");
-  const command = options.command ?? "npm";
-  const args = options.args ?? ["run", "start"];
+  const command = options.command ?? process.execPath;
+  const requested = options.args ?? [];
+  const args = options.command ? requested : [path.join(root, "scripts/start.mjs"), ...(requested.includes("--") ? requested.slice(requested.indexOf("--") + 1) : [])];
   const env = {
     ...(options.env ?? process.env),
     DATAAGENT_LAUNCH_ID: launchId
   };
 
-  const logFd = await open(paths.runtimeLog, "a", 0o600);
-  let child;
-  try {
-    child = spawn(command, args, {
-      cwd: root,
-      env,
-      detached: true,
-      stdio: ["ignore", logFd.fd, logFd.fd]
-    });
-  } finally {
-    await logFd.close();
-  }
-
+  const child = spawn(command, args, {
+    cwd: root, env, detached: true, stdio: "ignore",
+  });
+  await new Promise((resolve, reject) => {
+    child.once("spawn", resolve);
+    child.once("error", error => { logger.error("Managed stack could not start", error, { stage: "start" }); reject(error); });
+  });
   child.unref();
 
   const state = {
