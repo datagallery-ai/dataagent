@@ -14,7 +14,7 @@
 
 Ported from the legacy ``business_twin_perceptor``. Schema fetching reuses the
 base :class:`PerceptorNode` (an instance bound to the same config and to the
-scenario-tagged semantic client view), so table/column/join retrieval and its
+same scenario-carrying semantic client), so table/column/join retrieval and its
 error paths stay identical to the default flow. The pack's heavy assets
 (business-ID catalog, administrative divisions, prompts, SQL rules) load once
 at assembly.

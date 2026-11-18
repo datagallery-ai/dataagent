@@ -6,17 +6,22 @@
 
 ## 配置
 
-```yaml
-semantic:
-  base_url: https://semantic.example.com
-  username: $env{SEMANTIC_USERNAME}
-  password: $env{SEMANTIC_PASSWORD}
-  timeout_seconds: 30
-  tls:
-    verify_server: true
-    ca_file: certs/ca.pem
-    client_cert: certs/client.pem
-    client_key: certs/client.key
+```json
+{
+  "semantic": {
+    "base_url": "https://semantic.example.com",
+    "username": "$env{SEMANTIC_USERNAME}",
+    "password": "$env{SEMANTIC_PASSWORD}",
+    "timeout_seconds": 30,
+    "semantic_scenario": "business_twin",
+    "tls": {
+      "verify_server": true,
+      "ca_file": "certs/ca.pem",
+      "client_cert": "certs/client.pem",
+      "client_key": "certs/client.key"
+    }
+  }
+}
 ```
 
 字段和默认值见 [配置参考](../reference/configuration.md) 的 `semantic` 一节。
@@ -24,6 +29,7 @@ semantic:
 - `base_url` 不能为空白。客户端会规范成服务根，请求打到 `/api/semantic/v1/...`
 - `username` 和 `password` 必须同时出现或同时省略。出现时使用 HTTP Basic
 - `timeout_seconds` 默认 30 秒，必须是正的有限数
+- `semantic_scenario` 省略时请求不带场景头；配置时作为 `X-Semantic-Scenario` 头标在除 health 外的每个请求上
 - TLS 文件路径相对声明它们的配置文件目录，支持 `~/`
 
 ## TLS
@@ -72,7 +78,7 @@ def lookup(query: str, runtime: ToolRuntime[AgentContext]) -> str:
 | `list_retrieval_tables` | `retrieval/tables` |
 | `hybrid_table_columns(tables)` | `hybrid/table-columns`，批量取表的物理列 |
 
-`with_scenario(scenario)` 返回共用同一连接的客户端视图，它的请求带上场景请求头。
+配置了 `semantic_scenario`（或构造时传 `scenario=`）的客户端本身就在除 health 外的请求上带 `X-Semantic-Scenario` 头。`with_scenario(scenario)` 返回共用同一连接的客户端视图，用于在同一个客户端上临时换场景头。
 
 列标识使用 `db.table.column`。`get_columns_sample_values` 的 `sample_count` 范围是 0 到 100，只能按关键字传。
 

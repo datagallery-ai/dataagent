@@ -63,6 +63,7 @@ def test_explicit_config_replaces_home_and_resolves_its_own_tls_paths(tmp_path):
                     "base_url": "http://semantic.test",
                     "username": "reader",
                     "password": "$env{SEMANTIC_PASSWORD}",
+                    "semantic_scenario": "business_twin",
                     "tls": {
                         "verify_server": True,
                         "ca_file": "ca.pem",
@@ -78,6 +79,7 @@ def test_explicit_config_replaces_home_and_resolves_its_own_tls_paths(tmp_path):
     assert semantic.base_url == "http://semantic.test"
     assert semantic.timeout_seconds == 30
     assert semantic.password.get_secret_value() == "private-password"
+    assert semantic.semantic_scenario == "business_twin"
     assert semantic.tls.ca_file == explicit / "ca.pem"
     assert semantic.tls.client_cert == explicit / "cert.pem"
     assert semantic.tls.client_key == explicit / "key.pem"
@@ -111,6 +113,7 @@ def test_null_semantic_can_disable_or_be_overridden(tmp_path):
         {"base_url": "http://semantic.test", "password": "private-password"},
         {"base_url": "http://semantic.test", "timeout_seconds": 0},
         {"base_url": "http://semantic.test", "timeout_seconds": float("inf")},
+        {"base_url": "http://semantic.test", "semantic_scenario": "   "},
         {"base_url": "http://semantic.test", "tls": {"client_cert": "cert.pem"}},
     ],
 )

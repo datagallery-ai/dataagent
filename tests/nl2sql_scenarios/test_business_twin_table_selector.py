@@ -112,11 +112,11 @@ def table_selector(
     model: ScriptedModel, handler: Callable[[httpx.Request], httpx.Response]
 ) -> Iterator[BusinessTwinTableSelector]:
     """Yield a selector wired the way ``build_scenario`` wires it in the pack."""
-    with semantic_client(handler) as client:
+    with semantic_client(handler, scenario=SEMANTIC_SCENARIO) as client:
         yield BusinessTwinTableSelector(
             make_context("udn.business_twin", model, client),
             base=PACK_DIR,
-            semantic_client=client.with_scenario(SEMANTIC_SCENARIO),
+            semantic_client=client,
         )
 
 

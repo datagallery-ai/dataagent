@@ -12,7 +12,7 @@
 # ============================================================================
 """business_twin scenario pack: wiring only.
 
-One constant, two constructors, three hook points. The table-selection
+Two constructors, three hook points. The table-selection
 pipeline lives in :mod:`.table_selector`; the shared dimension-join rewriter
 in :mod:`..common.dimension_join`.
 """
@@ -30,21 +30,16 @@ from nl2sql.hooks import (
 from ..common.dimension_join import dimension_join_rewriter, load_dimensions
 from .table_selector import BusinessTwinTableSelector
 
-SEMANTIC_SCENARIO = "business_twin"
-# 场景头（X-Semantic-Scenario）由此常量提供：build_scenario 把宿主语义客户端包装成
-# 场景视图，除 health 外的所有请求自动带头；默认流程不包装，不带场景头。
-
 
 def build_scenario(ctx: HookContext) -> dict[str, Any]:
     """Wire the business_twin pack: table selection plus the shared dimension rewriter."""
     base = Path(__file__).resolve().parent
     rewrite = dimension_join_rewriter(
-        mappings=load_dimensions(base / "dimensions.yaml", SEMANTIC_SCENARIO),
+        mappings=load_dimensions(base / "dimensions.json"),
         model=ctx.model,
         dialect=ctx.config.get("database.dialect", "sqlite"),
     )
-    semantic = ctx.semantic_client.with_scenario(SEMANTIC_SCENARIO) if ctx.semantic_client else None
-    selector = BusinessTwinTableSelector(ctx, base=base, semantic_client=semantic)
+    selector = BusinessTwinTableSelector(ctx, base=base, semantic_client=ctx.semantic_client)
     return {
         PERCEPTOR_SCHEMA_CONTEXT: selector.select,
         GENERATOR_POST_SQL: rewrite,

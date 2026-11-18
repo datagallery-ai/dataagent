@@ -18,7 +18,7 @@ UDN 场景是 nl2sql 插件内置的两个场景包：`business_twin`（业务�
 3. 两场景共用的知识与机制（维度 join、LLM JSON 解析、时间粒度与当前日期规则）在命名空间共用目录 `scenarios/udn/common/`；
 4. 不配置 `scenario` 时走默认 `PerceptorNode`（full_schema / schema_linking），现有行为不变。
 
-边界：UDN 场景不启用 executor / selector（纯生成不执行）；不包含 cloud_core 执行引擎与旧观测设施（观测由宿主 tracing 体系承接）。宿主侧唯一配套是 `dataagent/semantic_client.with_scenario()` 场景视图——共享宿主客户端的连接池与关闭语义，除 health 外的请求自动带 `X-Semantic-Scenario` 头；不配置场景时行为不变。
+边界：UDN 场景不启用 executor / selector（纯生成不执行）；不包含 cloud_core 执行引擎与旧观测设施（观测由宿主 tracing 体系承接）。宿主侧唯一配套是语义客户端的场景头：根级 `semantic.semantic_scenario` 配置让宿主客户端在除 health 外的请求上自动带 `X-Semantic-Scenario` 头，场景包原样透传宿主客户端；未配置时行为不变。
 
 一轮问题的运行流：
 
@@ -129,23 +129,22 @@ HOOK_POINTS = frozenset({PERCEPTOR_SCHEMA_CONTEXT, GENERATOR_POST_SQL, REFLECTOR
 | --- | --- |
 | `scenario` | 场景点名（如 `udn.business_twin`） |
 | `model` | 宿主解析的模型（`_BudgetedModel` 同一实例：场景 LLM 调用自动计入 `model_call_budget`） |
-| `semantic_client` | 宿主语义客户端；根级 `semantic` 未配置为 `None`（选表器首次使用时自行报配置错） |
+| `semantic_client` | 宿主语义客户端；根级 `semantic` 未配置为 `None`（选表器首次使用时自行报配置错）。客户端按根级 `semantic.semantic_scenario` 自带场景头 |
 | `config` | `NL2SQLConfig`（dotted 访问 `database.db_id` / `database.dialect` 等） |
 
 演进规则：场景特有数据 → 场景包自带（常量或构造器默认值，改一处场景包代码，基座零改动）；新宿主能力 → `HookContext` 加字段（基座两行加法）。处理器是结构类型、场景包与基座同仓同编译，加字段不破坏既有场景。
 
 ```python
-# scenarios/udn/business_twin/scenario.py —— 纯接线：一个常量、两个构造、三处点位
-SEMANTIC_SCENARIO = "business_twin"        # 模块常量：X-Semantic-Scenario 值
+# scenarios/udn/business_twin/scenario.py —— 纯接线：两个构造、三处点位
+# 场景头随宿主客户端：根级 semantic.semantic_scenario 配置，除 health 外自动带头
 
 def build_scenario(ctx: HookContext) -> dict[str, Handler]:
     base = Path(__file__).resolve().parent
     rewrite = dimension_join_rewriter(     # 命名空间 common/ 装配
-        mappings=load_dimensions(base / "dimensions.yaml", SEMANTIC_SCENARIO),
+        mappings=load_dimensions(base / "dimensions.json"),
         model=ctx.model, dialect=ctx.config.get("database.dialect", "sqlite"))
-    semantic = ctx.semantic_client.with_scenario(SEMANTIC_SCENARIO) if ctx.semantic_client else None
     selector = BusinessTwinTableSelector(  # 重资产装配期加载（手册 / 行政区划 / 提示词）
-        ctx, base=base, semantic_client=semantic)  # 场景视图：选表查询自动带场景头
+        ctx, base=base, semantic_client=ctx.semantic_client)  # 透传宿主客户端（自带场景头）
     return {
         PERCEPTOR_SCHEMA_CONTEXT: selector.select,  # (question) -> SchemaContext
         GENERATOR_POST_SQL: rewrite,                # (results, state) -> list[Result]
@@ -196,7 +195,7 @@ def build_scenario(ctx: HookContext) -> dict[str, Handler]:
 
 ## 5. 配置
 
-这份 YAML 不是独立文件：`plugins` 段属于宿主 **Agent 配置文件**——`$DATAAGENT_HOME/config.yaml`（默认 `~/.dataagent/config.yaml`；`init_home` 从模板生成，启动可显式指定替代文件）。完整可运行示例见 `examples/config-udn.yaml`（business_twin 场景，含模型别名、语义服务连接与入口声明）；`nl2sql` 及以下全部内容进入该文件的 `plugins.config.nl2sql` 段（`model` 别名来自同级 `models` 段，语义服务连接在根级 `semantic` 段、由宿主建客户端注入，均非插件参数）：
+这份 JSON 不是独立文件：`plugins` 段属于宿主 **Agent 配置文件**——`$DATAAGENT_HOME/config.json`（默认 `~/.dataagent/config.json`；`init_home` 从模板生成，启动可显式指定替代文件）。完整可运行示例见 `examples/config-udn.json`（business_twin 场景，含模型别名、语义服务连接与入口声明）；`nl2sql` 及以下全部内容进入该文件的 `plugins.config.nl2sql` 段（`model` 别名来自同级 `models` 段，语义服务连接与场景头在根级 `semantic` 段、由宿主建客户端注入，均非插件参数）：
 
 ```yaml
 plugins:
@@ -224,6 +223,7 @@ plugins:
 | `scenario` 缺省 | 默认模式，走现有 `PerceptorNode`（full_schema / schema_linking），行为不变 |
 | 取值 | 点分名，一段对应一级目录（`udn.business_twin` → `scenarios/udn/business_twin/`）；每段为标识符、一段及以上即合法，单段场景不设命名空间（`traffic` → `scenarios/traffic/`）；存在性 = 目录含 `scenario.py` 入口，装配时校验 |
 | 场景参数 | 不经配置：场景自带数据（选表旋钮、模式）为场景包常量或构造器默认值，改场景包一处代码即调整 |
+| 场景头 | `X-Semantic-Scenario` 由根级 `semantic.semantic_scenario` 提供（business_twin 部署为 `"business_twin"`、traffic_insight 部署为 `"traffic_insight"`）；未配置时不带场景头，语义请求打到服务端默认场景 |
 | 节点段 | 复用现有逐节点段机制（`perceptor`…`selector`，出现时须构成前缀链）；两场景均启用四节点（无 executor / selector，纯生成不执行）。`validator.sql_security_enabled` 须显式开启——基座默认关；`generator.strategies` / `reflector.threshold` 的默认值与场景需求一致，显式写出仅为自述 |
 
 ## 6. 环境配置与启动示例
@@ -278,4 +278,4 @@ npm run start:tui
 
 ### 6.5 切换到 traffic_insight
 
-复制 `examples/config-udn.yaml` 后改两处：`plugins.config.nl2sql.scenario` → `"udn.traffic_insight"`，`database.db_id` → `"yunhe"`，再按 §6.4 启动。
+复制 `examples/config-udn.json` 后改三处：`plugins.config.nl2sql.scenario` → `"udn.traffic_insight"`，`database.db_id` → `"yunhe"`，`semantic.semantic_scenario` → `"traffic_insight"`，再按 §6.4 启动。
