@@ -4,6 +4,7 @@ import { loadEnvFile } from "node:process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { captureOutput, createLogger } from "./lib/logging.mjs";
+import { venvPython } from "./python-environment.mjs";
 
 import {
   formatStackEndpoints,
@@ -14,16 +15,6 @@ import {
 } from "./stack-runtime-config.mjs";
 
 const root = join(dirname(fileURLToPath(import.meta.url)), "..");
-
-export function pythonEnvironmentSyncCommand(env = process.env) {
-  const python = String(env.UV_PYTHON || env.PYTHON_VERSION || "3.12").trim();
-  if (!/^\d+(?:\.\d+){1,2}$/.test(python)) {
-    throw new Error(`Python version must look like 3.12, received ${python}`);
-  }
-  return `uv sync --project runtime/agentkit --frozen --no-dev --python ${python}`;
-}
-
-export const PYTHON_ENVIRONMENT_SYNC = pythonEnvironmentSyncCommand({ UV_PYTHON: "3.12" });
 
 export async function controlPlaneIsRunning(baseUrl, fetchImpl = globalThis.fetch) {
   try {
@@ -38,25 +29,25 @@ export async function controlPlaneIsRunning(baseUrl, fetchImpl = globalThis.fetc
 
 export async function runStack({ args = [] }) {
   loadRootEnv();
-  const apiOnly = args.includes("--api");
-  const webOnly = args.includes("--web");
-  const oneClick = !apiOnly && !webOnly;
+  const apiRequested = args.includes("--api");
+  const webRequested = args.includes("--web");
+  const oneClick = !apiRequested && !webRequested;
   const runtimeConfig = resolveStackRuntimeConfig(process.env, args);
   const apiBase = httpOrigin(runtimeConfig.apiHost, runtimeConfig.apiPort);
-  const apiUp = apiOnly ? false : await controlPlaneIsRunning(apiBase);
+  const apiUp = apiRequested ? false : await controlPlaneIsRunning(apiBase);
   if (oneClick) {
     await ensurePythonEnvironment();
     await ensureArtifact("web");
     await ensureArtifact("tui");
   }
 
-  const startApi = apiOnly || !apiUp;
-  const startWeb = !apiOnly;
+  const startApi = apiRequested || !apiUp;
+  const startWeb = webRequested || !apiRequested;
 
   const children = [];
   if (startApi) {
     const launch = pythonControlPlaneLaunch(root, process.env, false, runtimeConfig.configPath);
-    children.push(spawnProcess("DataGallery API", launch.command, launch.args, launch.env));
+    children.push(spawnProcess("DataGallery API", launch.command, launch.args, launch.env, { shell: false }));
   }
   if (startWeb) {
     const launch = webLaunch(runtimeConfig, process.env);
@@ -99,13 +90,13 @@ export async function runStack({ args = [] }) {
 }
 
 export async function ensurePythonEnvironment(rootDir = root, run = runInherited) {
-  if (existsSync(join(rootDir, "runtime/agentkit/.venv"))) return false;
-  await run(pythonEnvironmentSyncCommand());
+  if (existsSync(venvPython(join(rootDir, "runtime/agentkit")))) return false;
+  await run(process.execPath, ["scripts/python-environment.mjs", "--no-dev"]);
   return true;
 }
 
-function runInherited(command) {
-  return runPreparation(command, "backend", "install");
+function runInherited(command, args) {
+  return runPreparation(command, "backend", "install", args);
 }
 
 async function ensureArtifact(kind) {
@@ -116,8 +107,8 @@ async function ensureArtifact(kind) {
   await runPreparation(`npm run build:${kind}`, kind, "build");
 }
 
-function runPreparation(command, file, stage) {
-  const { child } = spawnProcess(file, command, [], process.env, { file, stage, shell: true });
+function runPreparation(command, file, stage, args = []) {
+  const { child } = spawnProcess(file, command, args, process.env, { file, stage, shell: args.length === 0 });
   return new Promise((resolve, reject) => {
     child.on("error", reject);
     child.on("close", code => code === 0 ? resolve() : reject(new Error(`${command} failed with code ${code}`)));

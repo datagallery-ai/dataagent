@@ -1,38 +1,18 @@
 #!/usr/bin/env bash
 # Shared bootstrap helpers for native deploy (sourced by ./deploy.sh).
 
-check_supported_system() {
-  local os_release="${DATAAGENT_OS_RELEASE_FILE:-/etc/os-release}"
-  if [[ ! -r "${os_release}" ]]; then
-    echo "Unsupported operating system: ${os_release} is missing. DataGallery native deploy supports Ubuntu/Debian only." >&2
-    exit 1
-  fi
-  # shellcheck disable=SC1090,SC1091
-  source "${os_release}"
-  case "${ID:-}" in
-    ubuntu|debian) ;;
-    *)
-      echo "Unsupported operating system: ${ID:-unknown}. DataGallery native deploy supports Ubuntu/Debian only." >&2
-      exit 1
-      ;;
-  esac
+MIN_NODE_VERSION="22.12.0"
 
-  local arch
-  arch="${DATAAGENT_UNAME_M:-$(uname -m)}"
-  case "${arch}" in
-    x86_64|amd64|aarch64|arm64) ;;
-    *)
-      echo "Unsupported architecture: ${arch}. DataGallery native deploy supports x86_64/amd64 and aarch64/arm64 only." >&2
-      exit 1
-      ;;
-  esac
-}
-
-command_is_readonly() {
-  local token
-  for token in "$@"; do
-    case "${token}" in
-      status|logs|stop|doctor|help) return 0 ;;
+command_skips_install() {
+  while [[ "$#" -gt 0 ]]; do
+    case "$1" in
+      --config|--runtime-url|--web-host|--web-port)
+        shift
+        if [[ "$#" -gt 0 ]]; then shift; fi
+        ;;
+      start|restart|status|logs|stop|doctor|help) return 0 ;;
+      deploy|tui) return 1 ;;
+      *) shift ;;
     esac
   done
   return 1
@@ -46,14 +26,13 @@ has_non_interactive_flag() {
   return 1
 }
 
-node_major_version() {
-  local version
-  version="$(node --version 2>/dev/null || true)"
-  if [[ "${version}" =~ ^v([0-9]+) ]]; then
-    echo "${BASH_REMATCH[1]}"
-    return 0
-  fi
-  return 1
+node_version_supported() {
+  local version="${1#v}" major minor patch minimum_major minimum_minor minimum_patch
+  [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || return 1
+  IFS=. read -r major minor patch <<< "${version}"
+  IFS=. read -r minimum_major minimum_minor minimum_patch <<< "${MIN_NODE_VERSION}"
+  (( major > minimum_major || (major == minimum_major &&
+    (minor > minimum_minor || (minor == minimum_minor && patch >= minimum_patch))) ))
 }
 
 can_install_noninteractive() {
@@ -67,14 +46,10 @@ can_install_noninteractive() {
 }
 
 install_node_22() {
-  local setup
-  local nodesource_url="https://deb.nodesource.com/setup_22.x"
-  echo "Node.js 22 is required."
-  echo "Installer source: ${nodesource_url}"
-  echo "Commands:"
-  echo "  curl -fsSL ${nodesource_url} -o /tmp/nodesource_setup.sh"
-  echo "  bash /tmp/nodesource_setup.sh"
-  echo "  apt-get install -y nodejs"
+  local installer
+  installer="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)/install-dependency.sh"
+  echo "Node.js ${MIN_NODE_VERSION}+ is required."
+  echo "Installer: bash ${installer} node (DATAAGENT_NODE_PACKAGE_URL or NodeSource; apt-get, dnf or yum)."
 
   if has_non_interactive_flag "$@"; then
     if ! can_install_noninteractive; then
@@ -83,61 +58,37 @@ install_node_22() {
     fi
   else
     local answer
-    read -r -p "Install Node.js 22 from NodeSource now? [y/N]: " answer
+    read -r -p "Install Node.js ${MIN_NODE_VERSION}+ now? [y/N]: " answer
     case "${answer}" in
       y|Y|yes|YES) ;;
       *)
-        echo "Node.js 22 is required. Install it and re-run ./deploy.sh." >&2
+        echo "Node.js ${MIN_NODE_VERSION}+ is required. Install it and re-run ./deploy.sh." >&2
         exit 1
         ;;
     esac
   fi
 
-  setup="$(mktemp)"
-  trap 'rm -f "${setup}"' RETURN
-  curl -fsSL "${nodesource_url}" -o "${setup}"
-  if [[ "$(id -u)" -eq 0 ]]; then
-    bash "${setup}"
-    apt-get install -y nodejs
-  elif has_non_interactive_flag "$@"; then
-    sudo -n bash "${setup}"
-    sudo -n apt-get install -y nodejs
+  if has_non_interactive_flag "$@"; then
+    bash "${installer}" node --non-interactive
   else
-    sudo bash "${setup}"
-    sudo apt-get install -y nodejs
-  fi
-  rm -f "${setup}"
-  trap - RETURN
-
-  if ! node --version >/dev/null 2>&1 || ! npm --version >/dev/null 2>&1; then
-    echo "Node.js 22 installation did not produce working node/npm commands." >&2
-    exit 1
-  fi
-  local major
-  major="$(node_major_version || true)"
-  if [[ -z "${major}" || "${major}" -lt 22 ]]; then
-    echo "Node.js 22+ is required after installation; found $(node --version 2>/dev/null || echo none)." >&2
-    exit 1
+    bash "${installer}" node
   fi
 }
 
 ensure_node_22() {
-  local major=""
-  if command -v node >/dev/null 2>&1; then
-    major="$(node_major_version || true)"
-  fi
-
-  if [[ -n "${major}" && "${major}" -ge 22 ]]; then
+  local version
+  version="$(node --version 2>/dev/null || true)"
+  if node_version_supported "${version}"; then
     return 0
   fi
 
-  if command_is_readonly "$@"; then
-    echo "Node.js 22+ is required for this command. Install Node.js 22 and re-run ./deploy.sh $*." >&2
+  if command_skips_install "$@"; then
+    echo "Node.js ${MIN_NODE_VERSION}+ is required for this command. Install it and re-run ./deploy.sh $*." >&2
     exit 1
   fi
 
-  if [[ -n "${major}" && "${major}" -lt 22 ]]; then
-    echo "Unsupported Node.js version: $(node --version). DataGallery requires Node.js 22.x." >&2
+  if [[ -n "${version}" ]]; then
+    echo "Unsupported Node.js version: ${version}. DataGallery requires Node.js ${MIN_NODE_VERSION}+." >&2
   fi
 
   install_node_22 "$@"

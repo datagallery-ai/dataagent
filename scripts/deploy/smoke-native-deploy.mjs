@@ -92,7 +92,7 @@ async function main() {
   const env = {
     ...process.env,
     CI: "true",
-    SKIP_POSTINSTALL_BUILD: "1",
+    SKIP_POSTINSTALL_BUILD: "0",
     DATAAGENT_HOME: path.join(tempRoot, "dataagent-home")
   };
   for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) {
@@ -105,9 +105,11 @@ async function main() {
     await copyCheckout(tempRoot);
     const home = path.join(tempRoot, "dataagent-home");
     await mkdir(home, { recursive: true });
+    const template = JSON.parse(await readFile(path.join(tempRoot, "runtime/agentkit/dataagent/bootstrap/templates/config.json"), "utf8"));
+    template.server = { host: "127.0.0.1", port: apiPort };
     await writeFile(
       path.join(home, "config.json"),
-      `${JSON.stringify({ server: { host: "127.0.0.1", port: apiPort } })}\n`
+      `${JSON.stringify(template)}\n`
     );
 
     // Inject fixture secret into the shared redacting backend log used in production.

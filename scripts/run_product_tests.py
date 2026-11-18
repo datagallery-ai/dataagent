@@ -8,10 +8,10 @@ Tiers:
 
 CI example::
 
-    uv run --project runtime/agentkit python scripts/run_product_tests.py --tier test --no-sync
-    uv run --project runtime/agentkit python scripts/run_product_tests.py --tier ut --scope agentkit
+    npm run test:product -- --tier test --no-sync
+    npm run test:product -- --tier ut --scope agentkit
 
-``--no-sync`` skips the agentkit ``uv`` install. Node suites expect ``npm ci``.
+``--no-sync`` skips Python dependency preparation. Node suites expect ``npm ci``.
 
 ``--pytest-args`` and ``--node-test-args`` are shell strings. They are split with
 ``shlex.split`` and appended to the pytest or Node command. An empty string adds
@@ -71,7 +71,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = {
         name: _command(
             name,
-            no_sync=args.no_sync,
+            no_sync=True,
             pytest_args=serial_pytest_args if name == "agentkit-st" else pytest_args,
             node_args=node_args,
         )
@@ -86,6 +86,15 @@ def main(argv: Sequence[str] | None = None) -> int:
     _require_tools(selected)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     results: list[SuiteResult] = []
+    if not args.no_sync and any(name.startswith("agentkit") or name == "api" for name in selected):
+        node = shutil.which("node")
+        if node is None:
+            raise SystemExit("node is not on PATH (required to prepare Python dependencies)")
+        prepared = _run("python-prepare", (node, str(ROOT / "scripts/python-environment.mjs"), "--dev"))
+        if prepared.exit_code != 0:
+            _write_summary([prepared])
+            _print_summary([prepared])
+            return prepared.exit_code
     for name in selected:
         if name == "agentkit-st":
             built = _run("tui-build", ("npm", "run", "build:tui"))
@@ -122,7 +131,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--no-sync",
         action="store_true",
-        help="Pass --no-sync to uv. Use when the agentkit environment already exists.",
+        help="Skip Python dependency preparation. Use an already prepared environment.",
     )
     parser.add_argument("--fail-fast", action="store_true", help="Stop after the first failing suite.")
     parser.add_argument("--list", action="store_true", help="Print the selected commands and exit.")

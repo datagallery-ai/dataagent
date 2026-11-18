@@ -26,7 +26,7 @@
     "copilotkit"
   ],
   "engines": {
-    "node": ">=22"
+    "node": ">=22.12.0"
   },
   "workspaces": [
     "apps/web",
@@ -34,17 +34,18 @@
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
+    "prepare:python": "node scripts/python-environment.mjs",
     "build": "npm run build:web && npm run build:tui",
     "build:web": "npm --workspace @datagallery/web run build",
     "build:tui": "npm --workspace @datagallery/tui run build",
     "start:api": "node scripts/start.mjs --api",
     "start:web": "node scripts/start.mjs --web",
     "start": "node scripts/start.mjs",
-    "test:deploy": "node --test scripts/lib/logging.test.mjs scripts/deploy/*.test.mjs scripts/stack-runtime-config.test.mjs scripts/password-only-cutover.test.mjs",
+    "test:deploy": "node --test scripts/lib/logging.test.mjs scripts/deploy/*.test.mjs scripts/python-environment.test.mjs scripts/makefile.test.mjs scripts/stack-runtime-config.test.mjs scripts/password-only-cutover.test.mjs",
     "smoke:native-deploy": "node scripts/deploy/smoke-native-deploy.mjs",
     "test:web": "npm --workspace @datagallery/web run test",
     "test:tui": "npm --workspace @datagallery/tui run test",
-    "test:product": "uv run --project runtime/agentkit python scripts/run_product_tests.py",
+    "test:product": "uv run --no-project --no-sync python scripts/run_product_tests.py",
     "start:tui": "node -- apps/tui/dist/index.js",
     "docs:dev": "python -m mkdocs serve -a 127.0.0.1:8000",
     "docs:build": "python -m mkdocs build --strict",

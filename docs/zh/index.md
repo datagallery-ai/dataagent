@@ -23,7 +23,7 @@
 ## 推荐体验路径
 
 1. 阅读 [产品概览](overview.md)，确认 DataAgent 解决的问题和能力边界。
-2. 按 [快速开始](quick-start.md)：Ubuntu / Debian 推荐 `./deploy.sh`；Windows / macOS 及其他环境用手动 npm（`npm install` → 配置 → `build` / `start`）。把模型密钥写入 `.env`，打开 `/data-tasks` 或 TUI 提问。
+2. 按 [快速开始](quick-start.md)：Linux（包括 openEuler）推荐 `./deploy.sh`；Windows / macOS 可用手动 npm（`npm install` → 配置 → `build` / `start`）。把模型密钥写入 `.env`，打开 `/data-tasks` 或 TUI 提问。
 3. 查看 [能力全览](capabilities.md)，了解 Web、TUI 和控制面实际提供的接口。
 4. 根据使用入口选择 [Web 工作台指南](guides/web-workbench.md) 或 [TUI 指南](guides/tui.md)。
 5. 需要让模型读本机目录时，阅读 [数据从哪里来](guides/data-sources.md)。

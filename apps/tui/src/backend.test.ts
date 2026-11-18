@@ -1,16 +1,13 @@
 import assert from "node:assert/strict";
-import { EventEmitter } from "node:events";
-import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
+import { spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { it } from "node:test";
-import { fileURLToPath } from "node:url";
-import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
+import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import {
-  ensureWindowsBackendPython,
   startBackend,
-  windowsVenvPython,
 } from "./backend.js";
 import { terminalText } from "./utils/terminal-text.js";
 
@@ -41,10 +38,7 @@ it("startup only forwards explicit paths, user and session without an interactiv
     },
   });
   try {
-    assert.deepEqual(captured.slice(0, 6), [
-      "run", "--project", fileURLToPath(new URL("../../../runtime/agentkit", import.meta.url)),
-      "dataagent", "serve", "--stdio-ready",
-    ]);
+    assert.deepEqual(captured.slice(0, 2), ["serve", "--stdio-ready"]);
     assert(!captured.includes("--config"));
     assert(captured.indexOf("--env-file") > captured.indexOf("serve"));
     assert.equal(captured[captured.indexOf("--env-file") + 1], resolve(cwd, "provider.env"));
@@ -127,78 +121,86 @@ it("persists complete backend stderr beyond the display excerpt", async () => {
   }
 });
 
-function fakeSyncChild(result: {
-  code: number | null;
-  stderr?: string;
-  error?: Error;
-}): ChildProcessWithoutNullStreams {
-  const child = new EventEmitter() as ChildProcessWithoutNullStreams;
-  const stderr = new EventEmitter() as ChildProcessWithoutNullStreams["stderr"];
-  (stderr as { setEncoding: (encoding: BufferEncoding) => typeof stderr }).setEncoding = () => stderr;
-  child.stderr = stderr;
-  queueMicrotask(() => {
-    if (result.error) {
-      child.emit("error", result.error);
-      return;
+it("missing Python environments report the preparation command without creating an environment", async () => {
+  const directory = mkdtempSync(join(tmpdir(), "tui-missing-python-"));
+  const previous = process.env.UV_PROJECT_ENVIRONMENT;
+  const environment = join(directory, "missing");
+  process.env.UV_PROJECT_ENVIRONMENT = environment;
+  try {
+    await assert.rejects(startBackend(), /Python environment is missing.*npm run prepare:python/);
+    assert.equal(existsSync(environment), false);
+  } finally {
+    if (previous === undefined) delete process.env.UV_PROJECT_ENVIRONMENT;
+    else process.env.UV_PROJECT_ENVIRONMENT = previous;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("startup uses the selected interpreter directly without invoking uv", async t => {
+  if (process.platform === "win32") return t.skip("POSIX fixture executable");
+  const directory = mkdtempSync(join(tmpdir(), "tui-selected-python-"));
+  const previous = process.env.UV_PROJECT_ENVIRONMENT;
+  process.env.UV_PROJECT_ENVIRONMENT = directory;
+  mkdirSync(join(directory, "bin"));
+  writeFileSync(join(directory, "bin/python"), `#!${process.execPath}
+require('node:assert/strict').deepEqual(process.argv.slice(2), ['-m', 'serve', 'serve', '--stdio-ready']);
+${header}
+emit(ready);
+`, { mode: 0o755 });
+  try {
+    const backend = await startBackend();
+    await backend.stop();
+  } finally {
+    if (previous === undefined) delete process.env.UV_PROJECT_ENVIRONMENT;
+    else process.env.UV_PROJECT_ENVIRONMENT = previous;
+    rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+it("TUI loads project env defaults while preserving terminal model and interpreter settings", () => {
+  const root = mkdtempSync(join(tmpdir(), "tui-project-env-"));
+  const source = fileURLToPath(new URL("../../../", import.meta.url));
+  try {
+    for (const file of ["apps/tui/dist/backend.js", "apps/tui/dist/log-path.js", "apps/tui/dist/utils/terminal-text.js",
+      "scripts/python-environment.mjs", "scripts/lib/logging.mjs", "scripts/lib/log-redaction.mjs"]) {
+      mkdirSync(resolve(root, file, ".."), { recursive: true });
+      copyFileSync(join(source, file), join(root, file));
     }
-    if (result.stderr) stderr.emit("data", result.stderr);
-    child.emit("close", result.code);
+    symlinkSync(join(source, "node_modules"), join(root, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+    writeFileSync(join(root, "package.json"), '{"type":"module"}');
+    writeFileSync(join(root, ".env"), "LLM_MODEL=project-model\nUV_PROJECT_ENVIRONMENT=project-env\n");
+    mkdirSync(join(root, "home"));
+    writeFileSync(join(root, "home/.env"), "LLM_MODEL=home-model\n");
+    const script = `
+import assert from 'node:assert/strict';
+import { spawn } from 'node:child_process';
+import { startBackend } from './apps/tui/dist/backend.js';
+const backend = await startBackend({ spawnBackend: (args, options) => {
+  assert.equal(options.env.LLM_MODEL, process.env.EXPECTED_MODEL);
+  assert.equal(options.env.UV_PROJECT_ENVIRONMENT, process.env.EXPECTED_ENVIRONMENT);
+  return spawn(process.execPath, ['-e', ${JSON.stringify(header + "emit(ready);")}], {
+    ...options, detached: process.platform !== 'win32', stdio: ['pipe', 'pipe', 'pipe'], windowsHide: true,
   });
-  return child;
-}
-
-it("Windows ensure always uv-syncs even when the venv interpreter already exists", async () => {
-  const backendPackage = "C:\\fake\\agentkit";
-  const python = windowsVenvPython(backendPackage);
-  const syncCalls: string[][] = [];
-  const path = await ensureWindowsBackendPython(
-    backendPackage,
-    { cwd: "C:\\cwd", env: { PATH: "x" } },
-    {
-      existsSync: (candidate) => candidate === python,
-      spawn: ((command, args, options) => {
-        assert.equal(command, "uv");
-        syncCalls.push(args as string[]);
-        assert.equal(options?.windowsHide, true);
-        assert.deepEqual(options?.stdio, ["ignore", "ignore", "pipe"]);
-        return fakeSyncChild({ code: 0 });
-      }) as typeof spawn,
-    },
-  );
-  assert.equal(path, python);
-  assert.deepEqual(syncCalls, [["sync", "--project", backendPackage]]);
-});
-
-it("Windows ensure rejects when sync fails despite a pre-existing interpreter", async () => {
-  const backendPackage = "/tmp/agentkit";
-  const python = windowsVenvPython(backendPackage);
-  await assert.rejects(
-    ensureWindowsBackendPython(
-      backendPackage,
-      { cwd: "/tmp", env: {} },
-      {
-        // Interpreter present (empty/partial/outdated venv) but sync reports failure.
-        existsSync: (candidate) => candidate === python,
-        spawn: (() => fakeSyncChild({
-          code: 1,
-          stderr: "error: Failed to install pydantic==2.12.0",
-        })) as unknown as typeof spawn,
-      },
-    ),
-    /Failed to install pydantic/,
-  );
-});
-
-it("Windows ensure rejects when sync succeeds but the interpreter is still missing", async () => {
-  await assert.rejects(
-    ensureWindowsBackendPython(
-      "/tmp/agentkit",
-      { cwd: "/tmp", env: {} },
-      {
-        existsSync: () => false,
-        spawn: (() => fakeSyncChild({ code: 0 })) as unknown as typeof spawn,
-      },
-    ),
-    /uv sync failed/,
-  );
+}});
+await backend.stop();
+`;
+    for (const terminal of [false, true]) {
+      const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_HOME: join(root, "home"),
+        EXPECTED_MODEL: terminal ? "terminal-model" : "project-model",
+        EXPECTED_ENVIRONMENT: terminal ? "terminal-env" : "project-env" };
+      delete env.LLM_MODEL;
+      delete env.UV_PROJECT_ENVIRONMENT;
+      if (terminal) {
+        env.LLM_MODEL = "terminal-model";
+        env.UV_PROJECT_ENVIRONMENT = "terminal-env";
+      }
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], {
+        cwd: root, env, encoding: "utf8", timeout: 10_000,
+      });
+      assert.equal(result.status, 0, result.stderr);
+    }
+    assert.equal(readFileSync(join(root, "home/.env"), "utf8"), "LLM_MODEL=home-model\n");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
 });
