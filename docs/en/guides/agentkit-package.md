@@ -12,9 +12,19 @@ npm run package:agentkit
 
 `make package` calls the same command. Packaging does not build Web/TUI or require frontend dependencies to be installed; `npm run build` / `make build` compile the frontends.
 
+To build without the npm / Make wrapper, run the same native uv commands. This path requires uv and Python 3.12, without Node.js:
+
+```bash
+uv build --project runtime/agentkit --out-dir dist/agentkit
+uv export --project runtime/agentkit --no-dev --all-extras \
+  --no-emit-project --no-hashes --output-file dist/agentkit/constraints.txt
+```
+
 The default output directory is `dist/agentkit/`, containing `datagallery_dataagent-0.1.0-py3-none-any.whl`, `datagallery_dataagent-0.1.0.tar.gz`, and `constraints.txt`. The version comes from `runtime/agentkit/pyproject.toml`. The builder creates the source distribution first, then builds the wheel from it. Exported constraints pin runtime dependencies and all extras, excluding development dependencies and dependency files. Constraints do not install optional packages. `constraints.txt` pins versions without hashes; it is a version snapshot for this build, not a hashed integrity manifest. Dependencies are downloaded from the configured index during installation. Reuse uv/pip mirror configuration.
 
 Set `UV_DEFAULT_INDEX` for uv or `--index-url` for pip to select the installation index. Constraints do not carry source lockfile artifact URLs, so package installation does not require rewriting the lockfile or running a `sed` command.
+
+The wheel and constraints do not include third-party dependency artifacts. Installation on a private network still requires a reachable package index. Fully offline installation requires dependency artifacts prepared separately for the target OS, architecture, Python version, and selected extras.
 
 ## Install and start the backend
 
@@ -42,7 +52,7 @@ First startup creates missing templates in Home (`~/.dataagent`, or process vari
 
 ## Optional dependencies
 
-The default installation includes service startup, model conversations, SQL parsing, and SQLite, MySQL, and PostgreSQL drivers. MySQL uses `PyMySQL[rsa]` with SHA-2 authentication support; PostgreSQL uses `psycopg2-binary`, imported as `psycopg2`, with the current engine name `gaussvector`. These base data dependencies are installed by regular installation and `uv sync` without selecting an extra.
+The default installation includes service startup, model conversations, SQL parsing, and SQLite, MySQL, and PostgreSQL drivers. MySQL uses `PyMySQL[rsa]` with SHA-2 authentication support; PostgreSQL uses `psycopg2-binary`, imported as `psycopg2`, with execution engine `gaussvector` and SQL dialect `postgres`; see the [nl2sql GV configuration](https://gitcode.com/datagallery/dataagent/blob/deepagents_refactor_new/runtime/agentkit/builtin-plugins/nl2sql/README.md#gaussvector-配置). These base data dependencies are installed by regular installation and `uv sync` without selecting an extra.
 
 `psycopg2-binary` reduces deployment build prerequisites but bundles libraries such as libpq and OpenSSL. Maintain these through driver package updates; system library upgrades alone do not update them. `PyMySQL[rsa]` also installs cryptography for SHA-2 authentication.
 

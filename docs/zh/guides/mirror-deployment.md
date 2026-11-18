@@ -54,6 +54,31 @@ Python 准备采用 `uv sync` 的精确同步语义：按本次选择安装依�
 
 Makefile 继续兼容流水线中的 `PYTHON_VERSION`、`PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL`、`PIP_FIND_LINKS` 和 `NPM_REGISTRY`，仅将它们映射为工具原生配置。已有原生配置优先，不会被兼容参数覆盖。`make prepare`、`make build`、`make ut`、`make st` 的调用方式不变；测试阶段通过共享入口准备开发依赖，各套件不再重复隐式同步。环境已准备好时使用 `make ut UV_RUN_OPTS=--no-sync` 或 `npm run test:product -- --no-sync` 跳过准备；同样适用于 `make st`。
 
+<a id="staged-installation"></a>
+
+## 分阶段安装与原生命令
+
+在仓库根目录、同一终端中先按上文配置解释器与内网下载源，再执行以下阶段：
+
+```bash
+# 跳过根安装钩子的 Python 准备，单独观察每一阶段。
+SKIP_POSTINSTALL_BUILD=1 npm ci
+uv sync --project runtime/agentkit --no-dev
+npm run build
+```
+
+第二步也可用 `npm run prepare:python -- --no-dev`；直接执行 uv 时需先导出所需环境变量，不会额外载入根 `.env`。需要视频时在同步命令中加 `--extra video`；需要 Spark/Hive 和视频时选择 `--extra all` 并准备相应外部环境。已有环境执行同步也会移除未选中的依赖。
+
+然后按 [配置说明](../quick-start.md) 准备模型与 Home 配置，再启动已准备的源码后端：
+
+```bash
+uv run --no-sync --project runtime/agentkit dataagent serve
+```
+
+只提供 A2A 时将 `serve` 换成 `serve-a2a`；仅运行后端可跳过 npm 安装和前端构建。`serve-a2a` 没有 REST 健康、会话和产物接口。需要前端时，连接已有后端的命令见 [Web/TUI 连接](agentkit-package.md#connect-web-and-tui)。
+
+内网镜像安装仍要能访问依赖制品；完全离线环境需另行准备匹配平台的依赖。安装完成不代表模型、语义服务或数据库已通过真实调用验证。
+
 ## 模型与检查
 
 仓库根 `.env` 中的 `LLM_BASE_URL` 改为部署环境可达的兼容模型网关，并配置对应的 `LLM_MODEL`、`LLM_API_KEY`。可从仓库根 `.env.example` 复制模板。模型网关与包镜像是不同用途的地址。

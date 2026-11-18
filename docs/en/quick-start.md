@@ -36,9 +36,9 @@ Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL th
 
 ### Configuration rules
 
-- First run: the script generates `.env`, then confirms ports / public URL. No model key is required at deploy time.
+- First run: the script generates `.env`, then confirms ports / client-reachable URL. No model key is required at deploy time.
 - Later interactive `./deploy.sh` / `./deploy.sh deploy`: if a complete `.env` already exists, configuration questions are skipped.
-- To change ports or the public URL again (existing secrets are kept; `.env` is backed up first):
+- To change ports or the client-reachable URL again (existing secrets are kept; `.env` is backed up first):
 
 ```bash
 ./deploy.sh deploy --reconfigure
@@ -79,7 +79,7 @@ Deployment and independent Web/API/TUI launches use `<Home>/runtime/logs/`. `DAT
 
 `./deploy.sh logs` follows all three files. Logs redact credentials before writing and retain diagnostic stacks. Each file rotates at 5,000,000 bytes with 3 backups. Browser reporting requires a reachable Web server and does not provide offline storage.
 
-When serving Web through a reverse proxy, public domain, or wildcard listen address, set server-side `DATAAGENT_WEB_ORIGIN` to the browser-facing origin (for example, `https://data.example.com`) to validate browser error reports. Each Web process accepts at most 60 reports and 1 MiB of report bodies per minute, shared across all sources.
+When serving Web through a reverse proxy, private-network domain, or wildcard listen address, set server-side `DATAAGENT_WEB_ORIGIN` to the browser-facing origin (for example, `https://data.example.com`) to validate browser error reports. Each Web process accepts at most 60 reports and 1 MiB of report bodies per minute, shared across all sources.
 
 ## Windows / macOS / other: manual npm deploy
 
@@ -90,7 +90,7 @@ Formal environments:
 | Environment | Use for |
 | --- | --- |
 | **Formal test** | Local / private acceptance |
-| **Real production** | Public service, behind a reverse proxy |
+| **Production** | Persistent service in the deployment environment; use a private-network domain and a reverse proxy as required |
 
 ### 1. Prepare tools and download sources
 
@@ -131,6 +131,8 @@ npm install
 ```
 
 The `postinstall` hook also syncs the control-plane Python dependencies into `runtime/agentkit/.venv`. Continue after the entire command exits successfully, including Python sync. Timing depends on your machine and download sources.
+
+For separate frontend installation, Python preparation, and build stages, see [staged installation and native commands](guides/mirror-deployment.md#staged-installation).
 
 ### 3. Configure the model service
 

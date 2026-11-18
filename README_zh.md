@@ -93,12 +93,14 @@ Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI
 | `--env-file` | 显式替代 Home `.env`；需要时用于直接 Python CLI |
 | `server.host / port` | 后端默认 `127.0.0.1:8790`；Web 默认端口为 3000 |
 
+按所需 extras 准备源码环境后，以下命令直接使用已有环境，不重新同步依赖；首次准备见 [分阶段安装](docs/zh/guides/mirror-deployment.md#staged-installation)。
+
 ```bash
 # 只启动后端；也提供 A2A 路由
-uv run --project runtime/agentkit dataagent serve
+uv run --no-sync --project runtime/agentkit dataagent serve
 
 # 只启动 A2A。与 serve 二选一，同一 Home 不能并行启动两个后端
-uv run --project runtime/agentkit dataagent serve-a2a
+uv run --no-sync --project runtime/agentkit dataagent serve-a2a
 ```
 
 `serve` 提供 `/healthz`、`/ready`、`/api/v1/runs`、会话和产物接口。`serve-a2a` 不提供这些 REST/健康接口。SDK 可通过 `prepare_runtime`、`create_agent` 和 `ainvoke` 直接调用；其 checkpointer、异常处理和日志配置由调用方宿主管理。

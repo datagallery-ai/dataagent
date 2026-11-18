@@ -12,9 +12,19 @@ npm run package:agentkit
 
 `make package` 调用同一命令。出包不编译 Web/TUI，也不要求先安装前端依赖；`npm run build` / `make build` 负责前端编译。
 
+不使用 npm / Make 封装时，可直接执行相同的 uv 命令；此路径只需 uv 和 Python 3.12，无需 Node.js：
+
+```bash
+uv build --project runtime/agentkit --out-dir dist/agentkit
+uv export --project runtime/agentkit --no-dev --all-extras \
+  --no-emit-project --no-hashes --output-file dist/agentkit/constraints.txt
+```
+
 默认输出到 `dist/agentkit/`，当前生成 `datagallery_dataagent-0.1.0-py3-none-any.whl`、`datagallery_dataagent-0.1.0.tar.gz` 和 `constraints.txt`。版本来自 `runtime/agentkit/pyproject.toml`。构建器先生成源码包，再从源码包构建 wheel。导出的约束固定运行依赖及全部 extras 的版本，不包含开发测试依赖或依赖包本身；约束不会主动安装可选包。`constraints.txt` 仅固定版本，不包含哈希；它是本次出包的版本快照，不是带哈希的完整性清单。安装时从配置的索引下载，镜像设置沿用 uv/pip 的配置。
 
 包安装可用 `UV_DEFAULT_INDEX`（uv）或 `--index-url`（pip）指定索引。约束文件不携带源码锁文件的制品 URL，因此包安装不需要改写锁文件或执行 `sed`。
+
+wheel 和约束文件不包含第三方依赖制品，内网安装仍需可达的包索引。完全离线安装还需按目标系统、架构、Python 版本与所选 extras 另行准备依赖制品。
 
 ## 安装并启动后端
 
@@ -42,7 +52,7 @@ export LLM_API_KEY=replace-with-your-key
 
 ## 可选能力依赖
 
-默认安装包含服务启动、模型对话、SQL 解析及 SQLite、MySQL、PostgreSQL 驱动。MySQL 的 `PyMySQL[rsa]` 包含 SHA-2 认证支持；PostgreSQL 使用 `psycopg2-binary`，导入名为 `psycopg2`，当前引擎名为 `gaussvector`。这些基础数据依赖随普通安装和 `uv sync` 安装，无需选择 extra。
+默认安装包含服务启动、模型对话、SQL 解析及 SQLite、MySQL、PostgreSQL 驱动。MySQL 的 `PyMySQL[rsa]` 包含 SHA-2 认证支持；PostgreSQL 使用 `psycopg2-binary`，导入名为 `psycopg2`，当前执行引擎名为 `gaussvector`，SQL 方言使用 `postgres`，完整配置见 [nl2sql 的 GV 示例](https://gitcode.com/datagallery/dataagent/blob/deepagents_refactor_new/runtime/agentkit/builtin-plugins/nl2sql/README.md#gaussvector-配置)。这些基础数据依赖随普通安装和 `uv sync` 安装，无需选择 extra。
 
 选择 `psycopg2-binary` 是为了减少部署所需的编译环境；它自带 libpq、OpenSSL 等库，应随驱动包发布维护更新，不能仅依赖系统库升级。`PyMySQL[rsa]` 会同时安装 SHA-2 认证所需的 cryptography。
 
@@ -86,6 +96,8 @@ npm run prepare:python -- --no-dev --extra all
 ```
 
 直接安装独立包时选择 `[spark]` 或 `[all]`。锁定的 PySpark 源码包约 434 MB，冷安装需要下载和构建；已有可用 uv 缓存时可复用。源码首次解析或切换索引时，即使没有选装 Spark，uv 也可能下载该源码包来读取可选依赖的元数据；保留解析快照可减少这类解析。后续再次执行默认 `deploy` 会按默认选择移除 Spark，需要时重复显式准备。安装依赖不会自动配置数据库或启用插件。
+
+<a id="connect-web-and-tui"></a>
 
 ## 连接 Web 和 TUI
 
