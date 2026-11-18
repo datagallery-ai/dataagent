@@ -23,9 +23,9 @@ Python SDK → 同一套配置准备与 Agent 装配（可跳过 HTTP）
 
 ## 🚀 正式态跑通
 
-需要 Node.js ≥22 和 uv，后端使用 Python 3.12。安装与运行应处于同一环境；Windows 与 WSL 不要共用 `node_modules`。本版本不提供 Docker / Compose 部署。
+需要 Node.js ≥22.12.0 和 uv，后端使用 Python 3.12。安装与运行应处于同一环境；Windows 与 WSL 不要共用 `node_modules`。本版本不提供 Docker / Compose 部署。
 
-### Ubuntu / Debian 一键部署
+### Linux 一键部署
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -34,6 +34,8 @@ cd datafoundry
 ```
 
 脚本准备依赖、配置与构建，并在后台启动 Web/API。部署阶段不要求填写模型密钥；对话前仍需在仓库根 `.env` 或 Home `.env` 填入可用模型，再重启服务。TUI 已构建但不会后台常驻，需另开终端运行 `./deploy.sh tui`。
+
+脚本不设置发行版或 CPU 架构白名单。需要安装 Node.js 时，自动选择 `apt-get`、`dnf` 或 `yum`，默认使用 NodeSource 仓库，也可通过 `DATAAGENT_NODE_PACKAGE_URL` 指定自定义安装包；安装环境不支持或依赖执行失败时直接报错。已有 Node.js ≥22.12.0 和 npm 时不要求包管理器。自定义下载源、工具预装、Python 解释器、包镜像及模型网关配置见 [自定义镜像部署](docs/zh/guides/mirror-deployment.md)。
 
 ```bash
 ./deploy.sh status
@@ -49,12 +51,16 @@ cd datafoundry
 
 原生 Windows、macOS、其他 Linux，或需要手动配置时：
 
+安装前确认 Node.js ≥22.12.0 和 uv 已加入 `PATH`。受限网络还需先指定可用的 Python 3.12 和下载源，按 [手动部署准备步骤](docs/zh/quick-start.md#manual-prerequisites) 设置进程环境变量，再执行下面的 `npm install`；安装钩子也会同步 Python 依赖。
+
 ```bash
 npm install
 cp .env.example .env
 ```
 
 编辑仓库根 `.env`：
+
+模型地址需由后端所在机器访问；将示例地址和模型名替换为实际服务配置。
 
 ```bash
 LLM_MODEL=your-model-name
@@ -70,6 +76,8 @@ npm run start:tui
 ```
 
 直接打开 `http://127.0.0.1:3000/data-tasks`，无需注册或创建网页模型 Profile。先提问“用三句话说明你现在能做什么”；数据库问题要先启用并配置相应插件。
+
+`/healthz` 返回 200 表示控制面存活，`/ready` 返回 200 表示会话引擎配置加载成功；完整步骤见 [手动部署验证](docs/zh/quick-start.md#manual-verification)。
 
 ## 配置与独立启动
 

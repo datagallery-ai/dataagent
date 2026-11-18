@@ -4,21 +4,25 @@ This guide is for a first deploy. Formal mode has two paths. Both start the same
 
 | Path | Hosts | Entry |
 | --- | --- | --- |
-| **Recommended: one-click** | Ubuntu / Debian | `./deploy.sh` (config, dependencies, build including TUI, detached Web/API start, and health checks in one flow) |
-| **Manual npm** | Windows, macOS, other Linux, or hand-edited env files | `npm install` → configure `.env` → `npm run build` → `npm run start` |
+| **Recommended: one-click** | Linux (including openEuler) | `./deploy.sh` (config, dependencies, build including TUI, detached Web/API start, and health checks in one flow) |
+| **Manual npm** | Windows, macOS, or hand-edited env files | Prepare tools and download sources → `npm install` → configure model → `npm run build` → `npm run start` |
 
 After deploy, put `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in the repository `.env` (`npm run start` loads it into the process environment) or in Home `~/.dataagent/.env`. Then ask from the Web UI or the TUI. Docker / Compose is **not** shipped, and the control plane has no registration.
 
 ## Requirements
 
-- **One-click deploy**: Ubuntu or Debian (x86_64 / aarch64); Node.js 22 (the script can help install it after consent) and uv
-- **Manual npm**: Linux, macOS, or Windows; Node.js >= 22, npm, and uv
+- **One-click deploy**: Linux; Node.js ≥22.12.0, npm, and uv. If Node.js is missing or too old, the script can install it through `apt-get`, `dnf`, or `yum` after consent
+- **Manual npm**: Linux, macOS, or Windows; Node.js >= 22.12.0, npm, and uv
+
+The backend uses Python 3.12. On restricted networks, prepare an interpreter and reachable download sources before installation. See the manual steps below and [deployment with custom mirrors](guides/mirror-deployment.md).
+
+The minimum version reflects the locked TUI and build/test dependencies.
 
 Install and run the project in the same environment. On Windows, do not share `node_modules` between Windows and WSL.
 
-## Recommended: Ubuntu / Debian one-click deploy
+## Recommended: Linux one-click deploy
 
-`./deploy.sh` does **not** support native Windows / macOS (use manual npm below).
+`./deploy.sh` does not reject distributions or CPU architectures in advance. Node.js installation uses NodeSource by default, or the package specified by `DATAAGENT_NODE_PACKAGE_URL`: DEB packages through `apt-get`, or RPM packages through `dnf` / `yum`. If no supported package manager is available, it asks you to install Node.js manually. Incompatible dependencies, insufficient permissions, or installation failures stop with an error. See [deployment with custom mirrors](guides/mirror-deployment.md) for mirror and interpreter configuration. Manual npm is recommended on Windows / macOS.
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -61,6 +65,8 @@ Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL th
 ./deploy.sh help
 ```
 
+`deploy` prepares dependencies and builds. `start` / `restart` use the existing Python environment and build artifacts; missing prerequisites direct you to run `deploy` again. Managed startup does not install dependencies or build missing artifacts. Manual `npm start` retains its convenience behavior of preparing missing environments and builds.
+
 `LLM_*` is not required during deploy. Re-running deploy uses a maintenance window: stop the managed process group before `npm ci` and builds.
 
 ### Log files
@@ -77,7 +83,7 @@ When serving Web through a reverse proxy, public domain, or wildcard listen addr
 
 ## Windows / macOS / other: manual npm deploy
 
-`./deploy.sh` targets **Ubuntu / Debian only** and does not support native Windows / macOS. On Windows, macOS, or other distros, install, configure, and start with npm as below. Use the same path for hand-edited env files or split processes.
+On Windows, macOS, or Linux with manually prepared dependencies, install, configure, and start with npm as below. Use the same path for hand-edited env files or split processes.
 
 Formal environments:
 
@@ -86,40 +92,63 @@ Formal environments:
 | **Formal test** | Local / private acceptance |
 | **Real production** | Public service, behind a reverse proxy |
 
-### 1. Install dependencies
+### 1. Prepare tools and download sources
 
-From the repository root:
+Obtain Node.js ≥22.12.0 and uv for your OS and architecture from a reachable source, install them, and add their executable directories to `PATH`. Check existing tools from the repository root:
 
 ```bash
-node -v
+node --version
+npm --version
+uv --version
+```
+
+On restricted networks, preinstall Python 3.12, select its executable, and disable automatic downloads so a missing interpreter fails immediately. Replace this path and run in the same shell as `npm install`:
+
+```bash
+export UV_PYTHON=/opt/python3.12/bin/python3.12
+export UV_PYTHON_DOWNLOADS=never
+uv python find "$UV_PYTHON" --no-python-downloads --show-version
+```
+
+When mirrors are needed, configure these process variables before installation, replacing the example addresses:
+
+```bash
+export npm_config_registry="https://mirror.example/npm/"
+export UV_DEFAULT_INDEX="https://mirror.example/pypi/simple/"
+npm config get registry
+```
+
+In PowerShell, set variables with `$env:NAME="value"` and use an interpreter path such as `C:\Python312\python.exe`; replace `$UV_PYTHON` with `$env:UV_PYTHON` in the check command. If Python must be downloaded, configure `UV_PYTHON_INSTALL_MIRROR` and allow downloads as described in the [mirror guide](guides/mirror-deployment.md).
+
+`npm_config_registry` selects the frontend registry; `UV_DEFAULT_INDEX` selects the Python runtime/build dependency index. These process variables do not require global registry changes. The npm registry needs process variables or native npm configuration; Python preparation also reads repository `.env` defaults, with existing process variables taking precedence.
+
+The install hook delegates to native `uv sync`, resolving and installing dependencies from the configured index according to `pyproject.toml`. The repository retains `uv.lock` as a resolution snapshot to reduce initial optional-dependency metadata downloads. Installation uses neither `--frozen` nor `--locked`; uv updates the snapshot when the configuration or index changes. No `sed` or manual URL rewrite is required, and transitive versions need not be identical across environments.
+
+### 2. Install dependencies
+
+```bash
 npm install
 ```
 
-`node -v` must report 22 or higher. uv must already be installed. Install syncs the control-plane Python dependencies; time depends on your machine and network.
+The `postinstall` hook also syncs the control-plane Python dependencies into `runtime/agentkit/.venv`. Continue after the entire command exits successfully, including Python sync. Timing depends on your machine and download sources.
 
-### 2. Configure environment variables
+### 3. Configure the model service
 
 ```bash
 cp .env.example .env
 ```
 
-Edit the root `.env` and set the model. The Web UI cannot change it:
+Edit the root `.env` for a compatible model service reachable from the deployment machine. Replace the example address, model name, and credential with your service settings. The Web UI cannot change them:
 
 ```bash
-LLM_MODEL=qwen-plus
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_API_KEY=your-api-key
+LLM_MODEL=your-model-name
+LLM_BASE_URL=https://your-openai-compatible-host/v1
+LLM_API_KEY=replace-with-your-key
 ```
 
-DeepSeek example:
+The model endpoint is a runtime setting, configured separately from npm / Python download sources. Services and pages can start before the model is configured. Complete model configuration before conversations and restart after changes.
 
-```bash
-LLM_MODEL=deepseek-chat
-LLM_BASE_URL=https://api.deepseek.com
-LLM_API_KEY=your-api-key
-```
-
-### 3. Build and start (same for formal test and real production)
+### 4. Build and start (same for formal test and real production)
 
 `npm run build` compiles the web app and TUI. `npm run start` starts the control plane when that address is down, serves the web app, and leaves the TUI ready for another terminal:
 
@@ -141,12 +170,17 @@ npm run start:api
 npm run start:web
 ```
 
-Checks:
+### 5. Verify health and model calls
+
+Check from another terminal, adjusting ports to match the actual configuration:
 
 ```bash
 curl http://127.0.0.1:8790/healthz
 curl http://127.0.0.1:8790/ready
+curl -I http://127.0.0.1:3000/data-tasks
 ```
+
+`/healthz` should return 200 for a live control plane. `/ready` returns 200 when conversation engine configuration loads successfully, or 503 when the model is not configured; check the model settings and backend logs. A successful page response establishes page availability. Follow the next section to send a question and verify an actual model response.
 
 Open [http://127.0.0.1:3000/data-tasks](http://127.0.0.1:3000/data-tasks). The control plane has no registration or login.
 
@@ -163,6 +197,8 @@ In three sentences, say what you can do right now.
 If a read-only workspace is configured, ask which files are in that directory. A streamed reply means the Web path to the control plane is working. Database questions only make sense after the matching plugin is enabled.
 
 ## Start the TUI
+
+When the TUI starts its own backend, it loads the repository root `.env`, like `npm start`. Existing terminal variables take precedence. Nonempty model values loaded from the project file enter the process environment and override the same variables from the backend Home `.env`. Different `LLM_MODEL` or `LLM_BASE_URL` values in these files can therefore change the selected model. Attaching with `--runtime-url` does not reload an existing backend configuration.
 
 One-click deploy builds the TUI during the build stage, but does **not** auto-start it and does **not** treat it as a managed background service. Start it directly and let the TUI launch the backend:
 
@@ -206,7 +242,7 @@ node -v
 ./deploy.sh doctor
 ```
 
-Upgrade to Node.js 22 or higher, then retry. One-click deploy can also install Node after consent; on the manual path, re-run `npm install`.
+Upgrade to Node.js 22.12.0 or higher, then retry. One-click deploy can also install Node after consent; on the manual path, re-run `npm install`.
 
 ### Page does not load
 

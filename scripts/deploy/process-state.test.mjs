@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat, writeFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { managedWebStartArgs } from "./cli.mjs";
 import {
   deploymentPaths,
   isProcessAlive,
@@ -13,6 +15,57 @@ import {
   verifyManagedProcessForStop,
   writeDeploymentState
 } from "./process-state.mjs";
+
+test("managed startup launches Web and API without preparing missing artifacts", async (t) => {
+  if (process.platform !== "linux") return t.skip("managed process verification uses procfs");
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-managed-launch-"));
+  t.after(async () => {
+    await stopManagedStack(root, { timeoutMs: 2000 });
+    await rm(root, { recursive: true, force: true });
+  });
+  const repository = fileURLToPath(new URL("../../", import.meta.url));
+  for (const file of ["scripts/start.mjs", "scripts/stack-runner.mjs", "scripts/stack-runtime-config.mjs",
+    "scripts/server-listen.mjs", "scripts/python-environment.mjs", "scripts/lib/logging.mjs", "scripts/lib/log-redaction.mjs"]) {
+    await mkdir(path.dirname(path.join(root, file)), { recursive: true });
+    await copyFile(path.join(repository, file), path.join(root, file));
+  }
+  await mkdir(path.join(root, "bin"));
+  await mkdir(path.join(root, "home"));
+  await writeFile(path.join(root, "home/config.json"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
+  const log = path.join(root, "commands.jsonl");
+  for (const command of ["python", "npm"]) {
+    const location = command === "python" ? path.join(root, "runtime/agentkit/.venv/bin/python") : path.join(root, "bin", command);
+    await mkdir(path.dirname(location), { recursive: true });
+    await writeFile(location, `#!/usr/bin/env node
+const fs = require('node:fs');
+const path = require('node:path');
+fs.appendFileSync(process.env.CALL_LOG, JSON.stringify({
+  name: path.basename(process.argv[1]), args: process.argv.slice(2), noSync: process.env.UV_NO_SYNC,
+}) + '\\n');
+// Keep both fixture services alive until their launch commands have been recorded.
+setInterval(() => {
+  if (fs.readFileSync(process.env.CALL_LOG, 'utf8').trim().split('\\n').length >= 2) process.exit(0);
+}, 10);
+setTimeout(() => process.exit(0), 1000);
+`, { mode: 0o755 });
+  }
+  const started = await startManagedStack(root, {
+    env: { ...process.env, DATAAGENT_HOME: path.join(root, "home"), CALL_LOG: log,
+      PATH: `${path.join(root, "bin")}${path.delimiter}${process.env.PATH}` },
+    args: managedWebStartArgs({ host: "127.0.0.1", port: "3310" }),
+  });
+  const deadline = Date.now() + 5000;
+  while (isProcessAlive(started.pid) && Date.now() < deadline) {
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  assert.equal(isProcessAlive(started.pid), false, "fixture services must exit after recording their commands");
+  const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
+  assert.equal(calls.length, 2, JSON.stringify(calls));
+  assert(calls.every(call => call.noSync === undefined));
+  assert(calls.some(call => call.name === "python" && call.args.includes("serve")));
+  assert(calls.some(call => call.name === "npm" && call.args.includes("start")));
+  assert(!calls.some(call => call.args.includes("sync") || call.args.some(arg => arg.startsWith("build"))));
+});
 
 test("validateDeploymentState rejects sensitive fields", () => {
   assert.throws(

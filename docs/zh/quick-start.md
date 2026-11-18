@@ -4,21 +4,25 @@
 
 | 路径 | 适用环境 | 入口 |
 | --- | --- | --- |
-| **推荐：一键部署** | Ubuntu / Debian | `./deploy.sh`（配置、依赖、构建含 TUI、detached 后台启动 Web/API 与健康检查一次完成） |
-| **手动 npm** | Windows、macOS、其他 Linux，或需要手改环境变量时 | `npm install` → 配置 `.env` → `npm run build` → `npm run start` |
+| **推荐：一键部署** | Linux（包括 openEuler） | `./deploy.sh`（配置、依赖、构建含 TUI、detached 后台启动 Web/API 与健康检查一次完成） |
+| **手动 npm** | Windows、macOS，或需要手改环境变量时 | 准备工具和下载源 → `npm install` → 模型配置 → `npm run build` → `npm run start` |
 
 部署完成后把 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY` 写入仓库根目录 `.env`（`npm run start` 会载入进程环境）或 Home `~/.dataagent/.env`。然后打开网页或 TUI 提问。本版本**不提供** Docker / Compose，控制面也没有注册登录。
 
 ## 环境要求
 
-- **一键部署**：Ubuntu 或 Debian（x86_64 / aarch64）；Node.js 22（缺失时脚本可在确认后协助安装）和 uv
-- **手动 npm**：Linux、macOS 或 Windows；Node.js >= 22、npm 和 uv
+- **一键部署**：Linux；Node.js ≥22.12.0、npm 和 uv。Node.js 缺失或版本过低时，脚本可在确认后通过 `apt-get`、`dnf` 或 `yum` 安装
+- **手动 npm**：Linux、macOS 或 Windows；Node.js >= 22.12.0、npm 和 uv
+
+后端使用 Python 3.12。受限网络环境先准备可用解释器和下载源，再执行安装命令；具体步骤见下文手动部署和 [自定义镜像部署](guides/mirror-deployment.md)。
+
+最低版本由当前锁定的 TUI 与构建/测试依赖共同决定。
 
 请在同一环境内安装和运行项目。Windows 用户不要在 Windows 和 WSL 之间共用 `node_modules`。
 
-## 推荐：Ubuntu / Debian 一键部署
+## 推荐：Linux 一键部署
 
-`./deploy.sh` **不支持**原生 Windows / macOS（请改用下文手动 npm）。
+`./deploy.sh` 不按发行版或 CPU 架构提前拒绝运行。需要安装 Node.js 时默认使用 NodeSource，也可用 `DATAAGENT_NODE_PACKAGE_URL` 指定自定义安装包：`apt-get` 走 DEB 安装，`dnf` / `yum` 走 RPM 安装；找不到可用包管理器时提示手动安装。依赖不兼容、权限不足或安装失败时直接报错。镜像和解释器配置见 [自定义镜像部署](guides/mirror-deployment.md)。Windows / macOS 推荐使用下文手动 npm。
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -61,6 +65,8 @@ cd datafoundry
 ./deploy.sh help
 ```
 
+`deploy` 负责依赖准备和构建。`start` / `restart` 只使用已有的 Python 环境和构建产物，缺少依赖时提示重新执行 `deploy`；托管启动不会补装依赖或自动构建。手动 `npm start` 仍保留按需准备环境和构建产物的便利行为。
+
 部署时不要求填写 `LLM_*`。重复部署会进入维护窗口：先停止受管进程组，再执行 `npm ci` 与构建。
 
 ### 日志位置
@@ -77,49 +83,74 @@ cd datafoundry
 
 ## Windows / macOS / 其他：手动 npm 部署
 
-`./deploy.sh` **仅面向 Ubuntu / Debian**，不支持原生 Windows / macOS。在 Windows、macOS 或其他发行版上，请按下列步骤用 npm 安装、配置并启动。需要手改环境变量或拆分进程时，也可走这条路径。
+Windows、macOS，或希望手动准备依赖的 Linux 环境，可按下列步骤用 npm 安装、配置并启动。需要手改环境变量或拆分进程时，也可走这条路径。
 
 正式态对照：
 
 | 环境 | 用途 |
 | --- | --- |
-| **正式测试** | 本机或内网验收、联调 |
+| **正式测试** | 本机或部署环境验收、联调 |
 | **真实生产** | 对外服务，前面加反代 |
 
-### 1. 安装依赖
+<a id="manual-prerequisites"></a>
 
-在仓库根目录执行：
+### 1. 准备工具和下载源
+
+先从可达的下载源获取匹配系统和架构的 Node.js ≥22.12.0 及 uv，安装后将可执行文件目录加入 `PATH`。已有工具时，在仓库根目录检查：
 
 ```bash
-node -v
+node --version
+npm --version
+uv --version
+```
+
+受限网络环境先预装 Python 3.12，指定解释器，并关闭自动下载以便缺失时直接报错。以下路径需替换为本机实际路径，命令在执行 `npm install` 的同一终端运行：
+
+```bash
+export UV_PYTHON=/opt/python3.12/bin/python3.12
+export UV_PYTHON_DOWNLOADS=never
+uv python find "$UV_PYTHON" --no-python-downloads --show-version
+```
+
+需要使用镜像时，在安装前配置下列进程环境变量；示例地址需替换为实际下载源：
+
+```bash
+export npm_config_registry="https://mirror.example/npm/"
+export UV_DEFAULT_INDEX="https://mirror.example/pypi/simple/"
+npm config get registry
+```
+
+PowerShell 使用 `$env:NAME="value"` 设置对应变量，解释器路径例如 `C:\Python312\python.exe`；检查命令中的 `$UV_PYTHON` 对应 `$env:UV_PYTHON`。如果需要下载 Python，可按 [镜像指南](guides/mirror-deployment.md) 配置 `UV_PYTHON_INSTALL_MIRROR` 并允许下载。
+
+`npm_config_registry` 控制前端依赖来源；`UV_DEFAULT_INDEX` 控制 Python 运行依赖和构建依赖的索引。设置这些进程变量即可，不要求修改全局源配置。npm 下载源需要进程变量或 npm 原生配置；Python 准备也会读取根 `.env` 的默认值，同名进程变量优先。
+
+安装钩子直接调用原生 `uv sync`，根据 `pyproject.toml` 的版本约束从配置的索引解析并安装依赖。仓库保留 `uv.lock` 作为解析快照，以减少首次解析可选依赖的下载成本；安装不使用 `--frozen` 或 `--locked`，配置或索引变化时由 uv 更新快照。无需执行 `sed` 或手动改写下载地址，不要求不同环境的全部传递依赖版本一致。
+
+### 2. 安装依赖
+
+```bash
 npm install
 ```
 
-`node -v` 输出需要不低于 22。本机需要已安装 uv。安装结束会同步控制面的 Python 依赖，耗时取决于机器和网络。
+安装尾部的 `postinstall` 会自动同步控制面的 Python 依赖到 `runtime/agentkit/.venv`。确认整个命令成功退出、Python 同步完成后再继续；耗时取决于机器和下载源。
 
-### 2. 配置环境变量
+### 3. 配置模型服务
 
 ```bash
 cp .env.example .env
 ```
 
-打开根目录 `.env`，填写模型。网页里不能改模型：
+打开根目录 `.env`，填写部署机器可达的兼容模型服务。以下为配置格式示例，地址、模型名和密钥都需按实际服务替换；网页里不能改模型：
 
 ```bash
-LLM_MODEL=qwen-plus
-LLM_BASE_URL=https://dashscope.aliyuncs.com/compatible-mode/v1
-LLM_API_KEY=你的_API_Key
+LLM_MODEL=your-model-name
+LLM_BASE_URL=https://your-openai-compatible-host/v1
+LLM_API_KEY=replace-with-your-key
 ```
 
-DeepSeek 示例：
+模型服务地址属于运行配置，与 npm / Python 下载源分开设置。服务可以在未配置模型时启动并提供页面；对话前需补齐模型配置，修改后重启服务。
 
-```bash
-LLM_MODEL=deepseek-chat
-LLM_BASE_URL=https://api.deepseek.com
-LLM_API_KEY=你的_API_Key
-```
-
-### 3. 构建并启动（正式测试 / 真实生产相同）
+### 4. 构建并启动（正式测试 / 真实生产相同）
 
 `npm run build` 编译网页和 TUI。`npm run start` 在控制面没有时拉起它，网页开始提供页面，TUI 编译好后另开终端连接：
 
@@ -141,12 +172,19 @@ npm run start:api
 npm run start:web
 ```
 
-检查：
+<a id="manual-verification"></a>
+
+### 5. 验证健康与模型调用
+
+在另一个终端检查，端口按实际监听配置调整：
 
 ```bash
 curl http://127.0.0.1:8790/healthz
 curl http://127.0.0.1:8790/ready
+curl -I http://127.0.0.1:3000/data-tasks
 ```
+
+`/healthz` 应返回 200，表示控制面存活。`/ready` 返回 200 表示会话引擎配置加载成功；未配置好模型时返回 503，应检查模型配置和后端日志。网页返回成功状态只表示页面可达，实际模型调用还需按下一节发送问题并确认收到回复。
 
 打开 [http://127.0.0.1:3000/data-tasks](http://127.0.0.1:3000/data-tasks)。控制面没有注册登录。
 
@@ -163,6 +201,8 @@ curl http://127.0.0.1:8790/ready
 如果配置了只读工作区，可以改问那个目录里有哪些文件。看到流式回复后，说明网页到控制面的链路已经跑通。数据库类问题只有在相应插件启用之后才有意义。
 
 ## 启动 TUI
+
+TUI 自行启动后端时，会与 `npm start` 一样加载仓库根 `.env`。终端已有的同名变量优先；根 `.env` 中载入的非空模型变量，优先于后端 Home `.env` 中的同名值。因此两处配置不同的 `LLM_MODEL`、`LLM_BASE_URL` 时，实际模型可能变化。使用 `--runtime-url` 连接已有后端不会重新加载其配置。
 
 一键部署会在构建阶段准备好 TUI，但**不会**自动启动，也不会把它当作后台受管进程。直接启动，由 TUI 拉起后端：
 
@@ -206,7 +246,7 @@ node -v
 ./deploy.sh doctor
 ```
 
-升级到 Node.js 22 或更高版本后重试。一键部署也可让 `./deploy.sh` 在确认后协助安装；手动路径则重新执行 `npm install`。
+升级到 Node.js 22.12.0 或更高版本后重试。一键部署也可让 `./deploy.sh` 在确认后协助安装；手动路径则重新执行 `npm install`。
 
 ### 页面打不开
 

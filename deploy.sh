@@ -6,7 +6,6 @@ ROOT_DIR="$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)"
 source "${ROOT_DIR}/scripts/deploy/bootstrap.sh"
 
 main() {
-  check_supported_system
   ensure_node_22 "$@"
   exec node "$ROOT_DIR/scripts/deploy/cli.mjs" "$@"
 }

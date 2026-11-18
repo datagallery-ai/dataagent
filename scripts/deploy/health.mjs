@@ -80,7 +80,9 @@ export async function waitForDeployment(config, options = {}) {
   let summary;
 
   while (Date.now() <= deadline) {
-    summary = await collectDeploymentHealth(config, options);
+    const processAlive = await resolveProcessAlive(config);
+    if (!processAlive) throw new Error("Managed process exited before deployment became healthy");
+    summary = await collectDeploymentHealth({ ...config, checkProcessAlive: undefined, processAlive }, options);
     if (summary.ok) return summary;
     await sleep(intervalMs);
   }

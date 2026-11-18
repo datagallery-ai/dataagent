@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { readFileSync } from "node:fs";
+import { MIN_NODE_VERSION, isSupportedNodeVersion } from "../platform-hints.mjs";
 import { ensureDependencies, inspectDependencies } from "./dependencies.mjs";
 
 function runner(map) {
@@ -17,7 +19,19 @@ function runner(map) {
   };
 }
 
-test("requires Node 22, npm, and uv", async () => {
+test("all workspace manifests and lock metadata declare the same Node minimum", () => {
+  assert.equal(MIN_NODE_VERSION, "22.12.0");
+  const lock = JSON.parse(readFileSync(new URL("../../package-lock.json", import.meta.url), "utf8"));
+  for (const member of ["", "apps/tui", "apps/web"]) {
+    const manifest = JSON.parse(readFileSync(new URL(`../../${member ? member + "/" : ""}package.json`, import.meta.url), "utf8"));
+    assert.equal(manifest.engines.node, `>=${MIN_NODE_VERSION}`);
+    assert.equal(lock.packages[member].engines.node, manifest.engines.node);
+  }
+  assert.equal(isSupportedNodeVersion("22.12.0"), true);
+  assert.equal(isSupportedNodeVersion("22.11.9"), false);
+});
+
+test("requires Node 22.12.0, npm, and uv", async () => {
   const entries = await inspectDependencies({
     run: runner({
       "node --version": { stdout: "v22.14.0\n" },
@@ -31,21 +45,49 @@ test("requires Node 22, npm, and uv", async () => {
   assert.equal(entries.find((e) => e.name === "python"), undefined);
 });
 
-test("missing uv fails before any install", async () => {
+for (const [version, expected] of [["v20.19.0", "missing"], ["v22.0.0", "missing"], ["v22.11.9", "missing"], ["v22.12.0", "ok"], ["v22.12.1", "ok"], ["v24.0.0", "ok"]]) {
+  test(`dependency inspection reports ${version} as ${expected}`, async () => {
+    const entries = await inspectDependencies({ run: runner({
+      "node --version": { stdout: version },
+      "npm --version": { stdout: "10.9.0" },
+      "uv --version": { stdout: "uv 0.8.0" },
+    }) });
+    assert.equal(entries[0].minimumVersion, "22.12.0");
+    assert.equal(entries[0].status, expected);
+  });
+}
+
+test("missing uv fails before installing missing Node or npm", async () => {
   await assert.rejects(
     () => ensureDependencies({
       nonInteractive: true,
       uid: 0,
       ask: async () => assert.fail("must not prompt"),
       run: runner({
-        "node --version": { stdout: "v22.14.0\n" },
-        "npm --version": { stdout: "10.9.0\n" },
+        "node --version": { stdout: "v22.11.9\n" },
+        "npm --version": Object.assign(new Error("npm missing"), { code: "ENOENT" }),
         "uv --version": Object.assign(new Error("uv missing"), { code: "ENOENT" })
       }),
       install: async () => assert.fail("must not install uv")
     }),
     /uv/
   );
+});
+
+test("missing Node and npm share one installer invocation", async () => {
+  const installs = [];
+  let installed = false;
+  await ensureDependencies({
+    nonInteractive: true, uid: 0, print: () => {},
+    run: async command => {
+      if (command === "uv") return { stdout: "uv 0.8.0" };
+      if (command === "node") return { stdout: installed ? "v22.12.0" : "v22.11.9" };
+      if (command === "npm" && installed) return { stdout: "10.9.0" };
+      throw new Error("missing npm");
+    },
+    install: async action => { installs.push(action); installed = true; },
+  });
+  assert.deepEqual(installs, ["node"]);
 });
 
 test("interactive refusal returns corrective install command", async () => {

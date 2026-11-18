@@ -23,9 +23,9 @@ The current backend has no registration/login, Web model management, datasource 
 
 ## 🚀 Run It Locally
 
-Requirements: Node.js ≥22 and uv; the backend uses Python 3.12. Install and run in the same environment. Do not share `node_modules` between Windows and WSL. This version has no Docker / Compose deployment.
+Requirements: Node.js ≥22.12.0 and uv; the backend uses Python 3.12. Install and run in the same environment. Do not share `node_modules` between Windows and WSL. This version has no Docker / Compose deployment.
 
-### Ubuntu / Debian one-click deployment
+### Linux one-click deployment
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -34,6 +34,8 @@ cd datafoundry
 ```
 
 The script prepares configuration, dependencies, and builds, then starts Web/API in the background. Deployment does not require a model key, but conversations require a working model in the repository `.env` or Home `.env`; restart the service after configuring it. TUI is built but does not run in the background; open another terminal and run `./deploy.sh tui`.
+
+The script has no distribution or CPU architecture allowlist. If Node.js needs installing, it selects `apt-get`, `dnf`, or `yum`, using NodeSource by default or a custom package through `DATAAGENT_NODE_PACKAGE_URL`. Unsupported installation environments and dependency failures stop with an error; existing Node.js ≥22.12.0 and npm do not require a package manager. See [deployment with custom mirrors](docs/en/guides/mirror-deployment.md) for tool provisioning, Python selection, package mirrors, and the model gateway.
 
 ```bash
 ./deploy.sh status
@@ -49,12 +51,16 @@ Closing a terminal or stopping log following does not stop the managed service. 
 
 For native Windows, macOS, other Linux distributions, or manual configuration:
 
+Before installation, ensure Node.js ≥22.12.0 and uv are on `PATH`. On restricted networks, select an available Python 3.12 interpreter and download sources using the [manual preparation steps](docs/en/quick-start.md#1-prepare-tools-and-download-sources) before running `npm install` below. The install hook also syncs Python dependencies.
+
 ```bash
 npm install
 cp .env.example .env
 ```
 
 Edit the repository `.env`:
+
+The backend machine must be able to reach the model endpoint. Replace the example address and model name with your service settings.
 
 ```bash
 LLM_MODEL=your-model-name
@@ -70,6 +76,8 @@ npm run start:tui
 ```
 
 Open `http://127.0.0.1:3000/data-tasks` directly, without registering or creating a Web model profile. Start by asking the agent to describe its capabilities. Database questions require the relevant plugin to be enabled and configured first.
+
+A 200 from `/healthz` means the control plane is live; a 200 from `/ready` means conversation engine configuration loaded successfully. See [manual deployment validation](docs/en/quick-start.md#5-verify-health-and-model-calls).
 
 ## Configuration and independent services
 

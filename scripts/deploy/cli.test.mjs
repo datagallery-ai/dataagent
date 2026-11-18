@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp, readdir, readFile, writeFile, mkdir } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -135,7 +136,7 @@ test("a relative --config stays the caller's file after the stack cwd changes", 
       JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }),
     );
     assert.equal(readServerListen({}, "review-team.json").port, "1");
-    const child = resolveStackRuntimeConfig({}, startArgs.slice(startArgs.indexOf("--")));
+    const child = resolveStackRuntimeConfig({}, startArgs);
     assert.equal(child.configPath, selected);
     assert.equal(child.apiPort, "8877");
     assert.deepEqual(
@@ -151,13 +152,13 @@ test("a relative --config stays the caller's file after the stack cwd changes", 
 
 test("deploy start uses the same web host and port flags as npm run start", () => {
   assert.deepEqual(managedWebStartArgs({ host: "127.0.0.1", port: "3310" }), [
-    "run", "start", "--", "--web-host", "127.0.0.1", "--web-port", "3310"
+    "--api", "--web", "--web-host", "127.0.0.1", "--web-port", "3310"
   ]);
   assert.deepEqual(managedWebStartArgs({}), [
-    "run", "start", "--", "--web-host", "127.0.0.1", "--web-port", "3000"
+    "--api", "--web", "--web-host", "127.0.0.1", "--web-port", "3000"
   ]);
   assert.deepEqual(managedWebStartArgs({ host: "127.0.0.1", port: "3000" }, "team.json"), [
-    "run", "start", "--", "--web-host", "127.0.0.1", "--web-port", "3000", "--config", "team.json"
+    "--api", "--web", "--web-host", "127.0.0.1", "--web-port", "3000", "--config", "team.json"
   ]);
 });
 
@@ -530,6 +531,84 @@ test("runDeploymentDoctor reports os, deps, config, ports, permissions, disk, pi
   assert.ok(afterEntries.every((entry) => !entry.startsWith(".doctor-write-")));
 });
 
+test("doctor probes configured sources without downloads or credential disclosure", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-doctor-sources-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const home = path.join(root, "home");
+  await mkdir(home);
+  await writeFile(path.join(home, "config.json"), JSON.stringify({ server: { host: "127.0.0.1", port: 38473 } }));
+  const requests = [];
+  const commands = [];
+  const result = await runDeploymentDoctor(root, {
+    env: { DATAAGENT_HOME: home, UV_PYTHON: "/opt/python 3.12/bin/python", UV_DEFAULT_INDEX: "https://mirror.example/simple/" },
+    run: async (command, args) => {
+      commands.push([command, ...args]);
+      if (args.join(" ") === "config get registry") return { stdout: "https://svc:fixture-password@registry.example/npm/?token=fixture-query\n" };
+      if (command === "uv" && args[0] === "python") return { stdout: "3.12.10\n" };
+      return { stdout: command === "node" ? "v22.14.0" : command === "uv" ? "uv 0.8.0" : "10.9.0" };
+    },
+    fetch: async (url, options) => {
+      assert.equal(options.method, "HEAD");
+      assert.equal(url.username + url.password, "");
+      if (url.host === "registry.example") {
+        assert.equal(options.headers.Authorization, `Basic ${Buffer.from("svc:fixture-password").toString("base64")}`);
+      }
+      requests.push(url.href);
+      return new Response(null, { status: 200 });
+    },
+    probe: async () => ({ available: true }),
+  });
+  assert.equal(requests.length, 2);
+  assert.ok(commands.some(args => args.includes("/opt/python 3.12/bin/python") && args.includes("--no-python-downloads")));
+  assert.match(result.lines.join("\n"), /source npm: https:\/\/registry\.example\/npm\/ HTTP 200/);
+  assert.match(result.lines.join("\n"), /python local: 3.12.10/);
+  assert.match(result.lines.join("\n"), /api=http:\/\/127\.0\.0\.1:38473/);
+  assert.doesNotMatch(result.lines.join("\n"), /fixture-password|fixture-query/);
+});
+
+for (const override of [false, true]) {
+  test(`doctor ${override ? "prefers process variables" : "uses project env defaults"} for Python and download sources`, async t => {
+    const root = await mkdtemp(path.join(os.tmpdir(), "df-doctor-env-"));
+    t.after(() => rm(root, { recursive: true, force: true }));
+    await writeFile(path.join(root, ".env"), [
+      'UV_DEFAULT_INDEX="https://file.example/simple/" # mirror',
+      'UV_PYTHON="/file/python" # interpreter',
+      "npm_config_registry=https://file.example/npm/",
+      "DATAAGENT_NODE_PACKAGE_URL=https://file.example/node.rpm",
+    ].join("\n"));
+    const env = override ? {
+      UV_DEFAULT_INDEX: "https://process.example/simple/",
+      UV_PYTHON: "/process/python",
+      npm_config_registry: "https://process.example/npm/",
+      DATAAGENT_NODE_PACKAGE_URL: "https://process.example/node.rpm",
+    } : {};
+    const expected = override ? "process" : "file";
+    const requests = [];
+    const result = await runDeploymentDoctor(root, {
+      env,
+      run: async (command, args, options) => {
+        if (args.join(" ") === "config get registry") {
+          assert.equal(options.env.UV_DEFAULT_INDEX, `https://${expected}.example/simple/`);
+          return { stdout: options.env.npm_config_registry };
+        }
+        if (command === "uv" && args[0] === "python") {
+          assert.equal(args[2], `/${expected}/python`);
+          assert.equal(options.env.UV_PYTHON, `/${expected}/python`);
+          return { stdout: "3.12.10" };
+        }
+        return { stdout: command === "node" ? "v22.12.0" : command === "uv" ? "uv 0.11.11" : "10.9.0" };
+      },
+      fetch: async url => { requests.push(url.href); return new Response(null, { status: 200 }); },
+      probe: async () => ({ available: true }),
+    });
+    assert(requests.includes(`https://${expected}.example/simple/`));
+    assert(requests.includes(`https://${expected}.example/npm/`));
+    assert(!requests.includes("https://file.example/node.rpm"));
+    assert.equal(requests.includes("https://process.example/node.rpm"), override);
+    assert.match(result.lines.join("\n"), /python local: 3.12.10/);
+  });
+}
+
 test("inspectWritablePath checks access without creating files", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-writable-"));
   const missingChild = path.join(root, "storage", "nested");
@@ -642,10 +721,19 @@ const COMPLETE_ENV = {
   LLM_MODEL: "qwen-plus"
 };
 
+async function preparePython(root) {
+  const directory = process.platform === "win32" ? "Scripts" : "bin";
+  const python = process.platform === "win32" ? "python.exe" : "python";
+  const location = path.join(root, "runtime/agentkit/.venv", directory);
+  await mkdir(location, { recursive: true });
+  await writeFile(path.join(location, python), "fixture");
+}
+
 test("start names missing .env variables and does not write .env.local", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
   await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
   await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
+  await preparePython(root);
   await prepareStartEnvironment(root, {});
   assert.equal(
     formatStartBlocked(["EXAMPLE"], ["apps/web/.next/BUILD_ID"]),
@@ -657,7 +745,83 @@ test("start with a complete .env does not write a web env file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
   await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
   await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
+  await preparePython(root);
   await prepareStartEnvironment(root, COMPLETE_ENV);
   assert.equal(existsSync(path.join(root, "apps/web/.env.local")), false);
   assert.equal(existsSync(path.join(root, ".env")), false);
+});
+
+test("start refuses a missing Python environment instead of preparing it", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-start-python-"));
+  try {
+    await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
+    await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "fixture");
+    await assert.rejects(() => prepareStartEnvironment(root, {}), /\.venv.*python.*deploy/);
+    assert.equal(existsSync(path.join(root, "runtime/agentkit/.venv")), false);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("start preflight gives process environment precedence over the project env file", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-start-env-priority-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const previous = process.env.UV_PROJECT_ENVIRONMENT;
+  t.after(() => {
+    if (previous === undefined) delete process.env.UV_PROJECT_ENVIRONMENT;
+    else process.env.UV_PROJECT_ENVIRONMENT = previous;
+  });
+  await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "fixture");
+  await preparePython(root);
+  process.env.UV_PROJECT_ENVIRONMENT = path.join(root, "runtime/agentkit/.venv");
+  await prepareStartEnvironment(root, { UV_PROJECT_ENVIRONMENT: path.join(root, "missing-disk-env") });
+});
+
+test("start reports missing dependencies without entering the installer", async (t) => {
+  if (process.platform === "win32") return t.skip("fixture commands use bash");
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-start-dependencies-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  await preparePython(root);
+  await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "fixture");
+  await mkdir(path.join(root, "bin"));
+  await writeFile(path.join(root, "bin/npm"), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
+  await writeFile(path.join(root, "bin/uv"), "#!/bin/bash\necho 'uv 0.8.0'\n", { mode: 0o755 });
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import { main } from ${JSON.stringify(new URL("./cli.mjs", import.meta.url).href)};
+    process.exitCode = await main(["start"], {
+      root: process.env.TEST_DEPLOY_ROOT,
+      ask: async () => { throw new Error("unexpected install prompt"); },
+    });
+  `], {
+    env: { ...process.env, TEST_DEPLOY_ROOT: root, DATAAGENT_HOME: path.join(root, "home"),
+      PATH: `${path.join(root, "bin")}${path.delimiter}${process.env.PATH}` },
+    encoding: "utf8", timeout: 5000,
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stdout, /Missing dependencies: npm.*deploy/);
+  assert.doesNotMatch(result.stdout, /unexpected install prompt/);
+});
+
+test("status uses the terminal Home before the project env Home", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-status-env-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  for (const [home, port] of [["file-home", 8877], ["terminal-home", 9988]]) {
+    await mkdir(path.join(root, home));
+    await writeFile(path.join(root, home, "config.json"), JSON.stringify({ server: { host: "127.0.0.1", port } }));
+  }
+  await writeFile(path.join(root, ".env"), `DATAAGENT_HOME=${JSON.stringify(path.join(root, "file-home"))}\n`);
+  const result = spawnSync(process.execPath, ["--input-type=module", "-e", `
+    import assert from "node:assert/strict";
+    import { main } from ${JSON.stringify(new URL("./cli.mjs", import.meta.url).href)};
+    const requests = [];
+    globalThis.fetch = async url => { requests.push(url); return new Response(null, { status: 200 }); };
+    assert.equal(await main(["status"], { root: process.env.TEST_DEPLOY_ROOT, print() {} }), 0);
+    assert.equal(requests[0], "http://127.0.0.1:9988/healthz");
+  `], {
+    env: { ...process.env, TEST_DEPLOY_ROOT: root, DATAAGENT_HOME: path.join(root, "terminal-home") },
+    encoding: "utf8", timeout: 5000,
+  });
+  assert.equal(result.status, 0, result.stderr);
 });

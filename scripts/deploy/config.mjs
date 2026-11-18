@@ -1,24 +1,10 @@
 import { mkdir, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { parseEnv } from "node:util";
 
-/** Minimal dotenv parser — avoids requiring a root `dotenv` dependency for deploy scripts. */
+/** Use the same dotenv syntax as Node's loadEnvFile in the launchers. */
 export function parseDeploymentEnvironment(sourceText = "") {
-  const env = {};
-  for (const rawLine of String(sourceText).split(/\r?\n/u)) {
-    const line = rawLine.trim();
-    if (!line || line.startsWith("#")) continue;
-    const matched = /^([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/u.exec(line);
-    if (!matched) continue;
-    let value = matched[2] ?? "";
-    if (
-      (value.startsWith('"') && value.endsWith('"')) ||
-      (value.startsWith("'") && value.endsWith("'"))
-    ) {
-      value = value.slice(1, -1);
-    }
-    env[matched[1]] = value;
-  }
-  return env;
+  return parseEnv(String(sourceText));
 }
 
 const PLACEHOLDER_SECRETS = new Set(["", "change-me", "replace-me"]);

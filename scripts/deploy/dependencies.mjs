@@ -1,6 +1,7 @@
 import { spawn } from "node:child_process";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { isSupportedNodeVersion, MIN_NODE_VERSION } from "../platform-hints.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 
@@ -33,12 +34,6 @@ async function defaultRun(command, args = [], options = {}) {
   });
 }
 
-function parseNodeVersion(text) {
-  const match = /v?(\d+)\.(\d+)\.(\d+)/.exec(text ?? "");
-  if (!match) return null;
-  return { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]), raw: match[0] };
-}
-
 async function safeRun(run, command, args = []) {
   try {
     return await run(command, args);
@@ -52,13 +47,13 @@ export async function inspectDependencies(options = {}) {
   const entries = [];
 
   const node = await safeRun(run, "node", ["--version"]);
-  const nodeVersion = parseNodeVersion(node.stdout || node.stderr);
+  const nodeVersion = (node.stdout || node.stderr).trim();
   entries.push({
     name: "node",
     required: true,
-    foundVersion: nodeVersion?.raw ?? null,
-    minimumVersion: "22",
-    status: nodeVersion && nodeVersion.major >= 22 ? "ok" : "missing",
+    foundVersion: nodeVersion || null,
+    minimumVersion: MIN_NODE_VERSION,
+    status: !node.error && isSupportedNodeVersion(nodeVersion) ? "ok" : "missing",
     installAction: "node"
   });
 
@@ -110,13 +105,16 @@ export async function ensureDependencies(options = {}) {
   const missing = entries.filter((entry) => entry.status !== "ok");
   if (missing.length === 0) return entries;
 
+  if (missing.some(entry => entry.name === "uv")) {
+    throw new Error(
+      "缺少 uv。请先将 uv 安装到 PATH 后重试；自定义下载源配置方法见 docs/zh/guides/mirror-deployment.md；官方安装说明：https://docs.astral.sh/uv/getting-started/installation/"
+    );
+  }
+  const actions = new Set();
   for (const entry of missing) {
-    if (entry.name === "uv") {
-      throw new Error(
-        "缺少 uv。请先安装（https://docs.astral.sh/uv/getting-started/installation/）后重试。"
-      );
-    }
     const action = entry.installAction;
+    if (actions.has(action)) continue;
+    actions.add(action);
     const commandHint = `bash scripts/deploy/install-dependency.sh ${action}`;
     if (options.nonInteractive) {
       const allowed = await canInstallNonInteractive(options, run);

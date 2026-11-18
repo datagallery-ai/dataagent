@@ -1,4 +1,5 @@
-import { spawn } from "node:child_process";
+import { execFile, spawn } from "node:child_process";
+import { promisify } from "node:util";
 import { constants, existsSync } from "node:fs";
 import { access, mkdir, readFile, stat, statfs, writeFile } from "node:fs/promises";
 import { createInterface } from "node:readline";
@@ -7,6 +8,7 @@ import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import { httpOrigin, readServerListen, writeServerListen } from "../server-listen.mjs";
+import { venvPython } from "../python-environment.mjs";
 import { captureOutput, createLogger, logPath } from "../lib/logging.mjs";
 import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 import {
@@ -112,7 +114,7 @@ export function webListenFromArgs(parsed = {}) {
 export function managedWebStartArgs(web = {}, configPath) {
   const webHost = String(web.host || "127.0.0.1").trim() || "127.0.0.1";
   const webPort = String(web.port || "3000").trim() || "3000";
-  const args = ["run", "start", "--", "--web-host", webHost, "--web-port", webPort];
+  const args = ["--api", "--web", "--web-host", webHost, "--web-port", webPort];
   if (configPath) args.push("--config", configPath);
   return args;
 }
@@ -290,13 +292,15 @@ export function formatStartBlocked(gaps, missingFiles = []) {
   return `${parts.join("；")}。请先运行 ./deploy.sh deploy`;
 }
 
-/** Start refuses a missing web build. */
+/** Lifecycle commands require existing Web and Python artifacts; only deploy prepares them. */
 export async function prepareStartEnvironment(root, diskEnv = {}) {
   const gaps = deploymentConfigGaps(diskEnv);
   const missingFiles = [];
   if (!existsSync(path.join(root, "apps/web/.next/BUILD_ID"))) {
     missingFiles.push("apps/web/.next/BUILD_ID");
   }
+  const interpreter = venvPython(path.join(root, "runtime/agentkit"), { ...diskEnv, ...process.env });
+  if (!existsSync(interpreter)) missingFiles.push(interpreter);
   if (gaps.length > 0 || missingFiles.length > 0) {
     throw new Error(formatStartBlocked(gaps, missingFiles));
   }
@@ -338,11 +342,11 @@ function createRealDeps(context) {
   const { root, parsed, ask, print } = context;
 
   let config = null;
-  const loggingEnv = () => ({ ...process.env, ...config?.env });
+  const loggingEnv = () => ({ ...config?.env, ...process.env });
 
   const commandOptions = (file = "backend", stage = "install") => {
     const logger = createLogger({ file, component: "launcher", env: loggingEnv() });
-    return { cwd: root, logger, stage, logPath: logger.path };
+    return { cwd: root, env: loggingEnv(), logger, stage, logPath: logger.path };
   };
 
   return {
@@ -350,7 +354,7 @@ function createRealDeps(context) {
       const sourceText = await loadRootEnvText(root);
       const ensured = ensureDeploymentEnvironment(sourceText);
       config = {
-        env: ensured.env,
+        env: { ...ensured.env, ...process.env },
         envText: ensured.text,
         sourceText,
         generatedKeys: ensured.generatedKeys,
@@ -373,15 +377,23 @@ function createRealDeps(context) {
         nonInteractive: parsed.nonInteractive,
         ask,
         print,
-        processEnv: process.env,
+        processEnv: current.env,
         write: false,
         web: webListenFromArgs(parsed),
         configPath: parsed.config
       });
-      config = { ...current, ...configured };
+      config = { ...current, ...configured, env: { ...configured.env, ...process.env } };
       return config;
     },
-    async checkDependencies() {
+    async checkDependencies(_current, options) {
+      if (options?.command === "start") {
+        const entries = await inspectDependencies();
+        const missing = entries.filter(entry => entry.status !== "ok");
+        if (missing.length) {
+          throw new Error(`Missing dependencies: ${missing.map(entry => entry.name).join(", ")}. Run ./deploy.sh deploy to install them.`);
+        }
+        return;
+      }
       await ensureDependencies({
         nonInteractive: parsed.nonInteractive,
         ask,
@@ -402,7 +414,7 @@ function createRealDeps(context) {
         backupExistingSecrets: !parsed.reconfigure
       });
       if (current.listen && !parsed.config) {
-        writeServerListen(process.env, current.listen);
+        writeServerListen(current.env, current.listen);
       }
     },
     async isRunning() {
@@ -414,7 +426,7 @@ function createRealDeps(context) {
       return inspection.running;
     },
     async stop() {
-      const env = { ...process.env, ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")) };
+      const env = { ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")), ...process.env };
       createLogger({ component: "launcher", env }).info("Stopping managed stack", { stage: "stop" });
       await stopManagedStack(root);
     },
@@ -484,7 +496,7 @@ function createRealDeps(context) {
       const args = managedWebStartArgs(web, parsed.config);
       const api = readServerListen(current.env, parsed.config);
       await startManagedStack(root, {
-        env: { ...process.env, ...current.env },
+        env: { ...current.env, ...process.env },
         args,
         ports: {
           web: Number(web.port),
@@ -538,7 +550,7 @@ function createRealDeps(context) {
       const state = inspection.state;
       const env =
         config?.env ??
-        ensureDeploymentEnvironment(await loadRootEnvText(root)).env;
+        { ...ensureDeploymentEnvironment(await loadRootEnvText(root)).env, ...process.env };
       const web = inspection.running
         ? webListenFromState(state, config?.web ?? webListenFromArgs(parsed))
         : (config?.web ?? webListenFromArgs(parsed));
@@ -552,7 +564,7 @@ function createRealDeps(context) {
       return summary;
     },
     async logs() {
-      const env = { ...process.env, ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")) };
+      const env = { ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")), ...process.env };
       const paths = ["backend", "web", "tui"].map(file => logPath(file, env));
       for (const file of paths) { await mkdir(path.dirname(file), { recursive: true }); if (!existsSync(file)) await writeFile(file, "", { mode: 0o600 }); }
       await runCommand("tail", ["-n", "200", "-F", ...paths]);
@@ -588,13 +600,51 @@ export async function runDeploymentDoctor(root, options = {}) {
 
   const envText = await loadRootEnvText(root).catch(() => "");
   const ensured = ensureDeploymentEnvironment(envText);
-  const env = ensured.env;
+  const sourceEnv = options.env ?? process.env;
+  const env = { ...ensured.env, ...sourceEnv };
 
   const deps = await inspectDependencies({ run: options.run });
   for (const entry of deps) {
     record(
       `dependency ${entry.name}: ${entry.status}${entry.foundVersion ? ` (${entry.foundVersion})` : ""}`
     );
+  }
+
+  const run = options.run ?? promisify(execFile);
+  const sources = [];
+  try {
+    const registry = await run("npm", ["config", "get", "registry"], { cwd: root, env, timeout: 5000 });
+    sources.push(["npm", registry.stdout.trim()]);
+  } catch {
+    record("source npm: unavailable (run npm config get registry)");
+  }
+  for (const key of ["UV_DEFAULT_INDEX", "UV_INDEX_URL", "UV_PYTHON_INSTALL_MIRROR", "DATAAGENT_NODE_PACKAGE_URL"]) {
+    // Node bootstrap runs before the project .env can be loaded.
+    const value = key === "DATAAGENT_NODE_PACKAGE_URL" ? sourceEnv[key] : env[key];
+    if (value) sources.push([key, value]);
+  }
+  for (const [name, value] of sources) {
+    try {
+      const url = new URL(value);
+      const headers = {};
+      if (url.username || url.password) {
+        headers.Authorization = `Basic ${Buffer.from(`${decodeURIComponent(url.username)}:${decodeURIComponent(url.password)}`).toString("base64")}`;
+      }
+      url.username = url.password = "";
+      const label = url.origin + url.pathname;
+      const response = await (options.fetch ?? fetch)(url, { method: "HEAD", headers, signal: AbortSignal.timeout(5000) });
+      await response.body?.cancel();
+      record(`source ${name}: ${label} HTTP ${response.status} (endpoint response only)`);
+    } catch {
+      record(`source ${name}: unreachable or invalid URL`);
+    }
+  }
+  try {
+    const python = env.UV_PYTHON || "3.12";
+    const result = await run("uv", ["python", "find", python, "--no-python-downloads", "--show-version"], { cwd: root, env, timeout: 5000 });
+    record(`python local: ${result.stdout.trim()}`);
+  } catch {
+    record("python local: missing (set UV_PYTHON to a Python 3.12 executable, or configure UV_PYTHON_INSTALL_MIRROR)");
   }
 
   const inspection = await inspectManagedRuntime(root);
@@ -744,7 +794,7 @@ export async function main(argv = process.argv.slice(2), options = {}) {
     return 0;
   } catch (error) {
     if (!error?.failure) {
-      const env = { ...process.env, ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")) };
+      const env = { ...parseDeploymentEnvironment(await loadRootEnvText(root).catch(() => "")), ...process.env };
       createLogger({ file: parsed.command === "tui" ? "tui" : "backend", component: "launcher", env })
         .error("Service command failed", error, { stage: parsed.command });
       print(redactSensitiveText(error.message ?? String(error)));

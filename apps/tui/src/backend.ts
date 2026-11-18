@@ -2,11 +2,13 @@ import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
 import { resolveDataagentHome } from "./log-path.js";
 import { terminalText } from "./utils/terminal-text.js";
 import { captureOutput, createLogger, redactLogText } from "../../../scripts/lib/logging.mjs";
+import { venvPython } from "../../../scripts/python-environment.mjs";
 
 const DEFAULT_SERVER_HOST = "127.0.0.1";
 const DEFAULT_SERVER_PORT = "8790";
@@ -89,75 +91,6 @@ function backendSpawnOptions(): {
   };
 }
 
-export function windowsVenvPython(backendPackage: string): string {
-  return join(backendPackage, ".venv", "Scripts", "python.exe");
-}
-
-export type EnsureWindowsPythonDeps = {
-  existsSync?: (path: string) => boolean;
-  spawn?: typeof spawn;
-};
-
-/**
- * Sync agentkit deps, then return the venv interpreter for a direct Windows spawn.
- * Always runs `uv sync`: a pre-existing python.exe does not mean packages match the
- * lockfile (empty/partial venvs, interrupted installs, or outdated deps after pull).
- * Spawning python.exe afterward still avoids the dataagent.exe console flash.
- */
-export function ensureWindowsBackendPython(
-  backendPackage: string,
-  options: { cwd: string; env: NodeJS.ProcessEnv },
-  deps: EnsureWindowsPythonDeps = {},
-): Promise<string> {
-  const exists = deps.existsSync ?? existsSync;
-  const spawnImpl = deps.spawn ?? spawn;
-  const python = windowsVenvPython(backendPackage);
-  const logger = createLogger({ file: "backend", component: "launcher",
-    env: { ...options.env, DATAAGENT_LOG_CAPTURE: undefined } });
-  const output = captureOutput(logger, { stage: "install" });
-  return new Promise((done, fail) => {
-    const child = spawnImpl("uv", ["sync", "--project", backendPackage], {
-      cwd: options.cwd,
-      env: options.env,
-      stdio: ["ignore", "ignore", "pipe"],
-      windowsHide: true,
-    });
-    let stderr = "";
-    child.stderr.setEncoding("utf8").on("data", (chunk: string) => {
-      output.append(chunk);
-      stderr = (stderr + chunk).slice(-2000);
-    });
-    child.once("error", error => { output.flush(); logger.error("Backend dependency preparation failed", error, { stage: "install" }); fail(error); });
-    child.once("close", (code) => {
-      output.flush();
-      if (code === 0 && exists(python)) done(python);
-      else {
-        const error = new Error(redactLogText(stderr.trim()) || `uv sync failed with code ${code ?? "null"}`);
-        logger.error("Backend dependency preparation failed", error, { stage: "install" });
-        fail(error);
-      }
-    });
-  });
-}
-
-function spawnDefaultBackend(
-  backendPackage: string,
-  argv: string[],
-  options: { cwd: string; env: NodeJS.ProcessEnv },
-  windowsPython?: string,
-): ChildProcessWithoutNullStreams {
-  if (process.platform === "win32") {
-    // `uv run dataagent` launches Scripts\dataagent.exe, a console shim that always
-    // allocates its own window (windowsHide on the uv parent does not propagate).
-    // Spawn the venv interpreter with -m serve so CREATE_NO_WINDOW applies.
-    const serveAt = argv.indexOf("serve");
-    const serveArgs = serveAt >= 0 ? argv.slice(serveAt) : ["serve", "--stdio-ready"];
-    const python = windowsPython ?? windowsVenvPython(backendPackage);
-    return spawn(python, ["-m", "serve", ...serveArgs], { ...options, ...backendSpawnOptions() });
-  }
-  return spawn("uv", argv, { ...options, ...backendSpawnOptions() });
-}
-
 /** Start only the backend: this Node process is already the actual TUI. */
 export async function startBackend(options: {
   configPath?: string | undefined;
@@ -171,8 +104,10 @@ export async function startBackend(options: {
 } = {}) {
   const cwd = process.cwd();
   const backendPackage = fileURLToPath(new URL("../../../runtime/agentkit", import.meta.url));
+  const rootEnv = resolve(backendPackage, "../..", ".env");
+  if (existsSync(rootEnv)) loadEnvFile(rootEnv);
   const instanceId = randomUUID();
-  const args = ["run", "--project", backendPackage, "dataagent", "serve", "--stdio-ready"];
+  const args = ["serve", "--stdio-ready"];
   for (const [flag, path] of [
     ["--config", options.configPath], ["--env-file", options.envFile],
   ] as const) {
@@ -182,15 +117,20 @@ export async function startBackend(options: {
   for (const path of workspaces) args.push("--workspace", resolve(cwd, path));
   if (options.user) args.push("--user", options.user);
   if (options.session) args.push("--session", options.session);
-  const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_INSTANCE_ID: instanceId, DATAAGENT_LOG_CAPTURE: "backend" };
+  const env: NodeJS.ProcessEnv = {
+    ...process.env,
+    DATAAGENT_INSTANCE_ID: instanceId,
+    DATAAGENT_LOG_CAPTURE: "backend",
+  };
   const launchOpts = { cwd, env };
-  let windowsPython: string | undefined;
-  if (!options.spawnBackend && process.platform === "win32") {
-    windowsPython = await ensureWindowsBackendPython(backendPackage, launchOpts);
+  const python = venvPython(backendPackage, env);
+  if (!options.spawnBackend && !existsSync(python)) {
+    throw new Error(`Python environment is missing at ${python}. Run npm run prepare:python before starting the TUI.`);
   }
-  const launch: BackendSpawner = options.spawnBackend ?? ((argv, opts) =>
-    spawnDefaultBackend(backendPackage, argv, opts, windowsPython));
-  const child = launch(args, launchOpts);
+  // Direct Python avoids uv synchronization and Windows console launcher windows.
+  const child = options.spawnBackend
+    ? options.spawnBackend(args, launchOpts)
+    : spawn(python, ["-m", "serve", ...args], { ...launchOpts, ...backendSpawnOptions() });
   const shutdown = new AbortController();
   const signals = ["SIGINT", "SIGTERM", "SIGHUP"] as const;
   const interrupted = () => shutdown.abort(new DOMException("TUI interrupted", "AbortError"));

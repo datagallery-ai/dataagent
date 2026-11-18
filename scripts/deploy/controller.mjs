@@ -94,12 +94,13 @@ export function createDeploymentController(deps) {
     }
   }
 
-  async function runStart() {
+  async function runStart(restart = false) {
     const config = await deps.loadConfiguration({ reconfigure: false });
     await deps.preflight(config, { command: "start" });
     if (typeof deps.checkDependencies === "function") {
       await deps.checkDependencies(config, { command: "start" });
     }
+    if (restart) await deps.stop();
     await deps.start(config, { command: "start" });
     await deps.waitForHealth(config, { command: "start" });
     await deps.markHealthy(config, { command: "start" });
@@ -109,11 +110,6 @@ export function createDeploymentController(deps) {
   async function runStop() {
     await deps.stop();
     return { ok: true };
-  }
-
-  async function runRestart() {
-    await deps.stop();
-    return runStart();
   }
 
   async function runTui(parsed) {
@@ -134,7 +130,7 @@ export function createDeploymentController(deps) {
         case "stop":
           return runStop();
         case "restart":
-          return runRestart();
+          return runStart(true);
         case "status":
           return deps.status();
         case "logs":

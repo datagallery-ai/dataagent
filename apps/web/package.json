@@ -25,5 +25,8 @@
     "tailwindcss": "4.1.11",
     "vitest": "^3.2.6",
     "happy-dom": "^20.10.6"
+  },
+  "engines": {
+    "node": ">=22.12.0"
   }
 }

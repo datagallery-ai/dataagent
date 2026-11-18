@@ -165,3 +165,24 @@ test("tui aborts before start when API check fails", async () => {
   assert.deepEqual(calls, ["ensure-tui-ready", "check-api-for-tui"]);
   assert.ok(!calls.includes("start-tui"));
 });
+
+for (const failure of [null, "preflight", "checkDependencies"]) {
+  test(`restart checks the existing environment before stopping (${failure ?? "success"})`, async () => {
+    const calls = [];
+    const deps = { async loadConfiguration() { return { env: {} }; } };
+    for (const name of ["preflight", "checkDependencies", "stop", "start", "waitForHealth", "markHealthy"]) {
+      deps[name] = async () => {
+        calls.push(name);
+        if (name === failure) throw new Error(`failed ${name}`);
+      };
+    }
+    const controller = createDeploymentController(deps);
+    if (failure) {
+      await assert.rejects(controller.run({ command: "restart" }), /failed/);
+      assert(!calls.includes("stop"));
+    } else {
+      await controller.run({ command: "restart" });
+      assert.deepEqual(calls, ["preflight", "checkDependencies", "stop", "start", "waitForHealth", "markHealthy"]);
+    }
+  });
+}

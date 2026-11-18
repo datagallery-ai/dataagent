@@ -4,7 +4,16 @@
 import { existsSync } from "node:fs";
 import { join } from "node:path";
 
-export const MIN_NODE_MAJOR = 22;
+export const MIN_NODE_VERSION = "22.12.0";
+
+export function isSupportedNodeVersion(version) {
+  const match = /^v?(\d+)\.(\d+)\.(\d+)$/.exec(version.trim());
+  if (!match) return false;
+  const [major, minor, patch] = match.slice(1).map(Number);
+  const [minimumMajor, minimumMinor, minimumPatch] = MIN_NODE_VERSION.split(".").map(Number);
+  return major > minimumMajor || (major === minimumMajor &&
+    (minor > minimumMinor || (minor === minimumMinor && patch >= minimumPatch)));
+}
 
 /** Tailwind 4 / lightningcss optional natives that npm selects per OS+arch. */
 const NATIVE_CSS_BY_PLATFORM = {
@@ -118,7 +127,7 @@ export function detectMixedPlatformInstall(root, platform = process.platform) {
 
 export function nodeVersionMessage(currentVersion) {
   return (
-    `Node.js ${MIN_NODE_MAJOR}+ required (current: ${currentVersion}). ` +
-    "Install Node 22+ for your platform (nvm, fnm, or nodejs.org)."
+    `Node.js ${MIN_NODE_VERSION}+ required (current: ${currentVersion}). ` +
+    `Install Node ${MIN_NODE_VERSION}+ for your platform (nvm, fnm, or nodejs.org).`
   );
 }

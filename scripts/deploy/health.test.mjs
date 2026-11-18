@@ -120,7 +120,7 @@ test("waitForDeployment retries until ready then times out with summary", async 
   }
 });
 
-test("waitForDeployment rechecks processAlive each round via callback", async () => {
+test("waitForDeployment rejects an exited process immediately", async () => {
   let aliveChecks = 0;
   // Keep HTTP healthy so the only failing gate is processAlive, avoiding a race
   // where /ready flips true while the callback still reports alive.
@@ -154,9 +154,9 @@ test("waitForDeployment rechecks processAlive each round via callback", async ()
           },
           { intervalMs: 20, timeoutMs: 120, probeTimeoutMs: 50 }
         ),
-      /process=stopped|timed out/i
+      /process exited/i
     );
-    assert.ok(aliveChecks >= 2);
+    assert.equal(aliveChecks, 1);
   } finally {
     api.close();
     web.close();
@@ -207,4 +207,19 @@ test("TCP probe fails for closed ports", async () => {
   await new Promise((resolve) => server.close(resolve));
   const result = await probeTcp("127.0.0.1", port, { timeoutMs: 100 });
   assert.equal(result.ok, false);
+});
+
+test("health waiting stops probing as soon as the managed process exits", async t => {
+  let checks = 0;
+  let requests = 0;
+  t.mock.method(globalThis, "fetch", async () => {
+    requests++;
+    return new Response(null, { status: 503 });
+  });
+  await assert.rejects(waitForDeployment({
+    checkProcessAlive: async () => ++checks === 1,
+    apiBaseUrl: "http://api.example", webUrl: "http://web.example",
+  }, { intervalMs: 1, timeoutMs: 100 }), /process exited/i);
+  assert.equal(checks, 2);
+  assert.equal(requests, 3);
 });

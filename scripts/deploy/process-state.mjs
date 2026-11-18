@@ -163,7 +163,7 @@ export async function startManagedStack(root, options = {}) {
   const launchId = options.launchId ?? randomBytes(16).toString("hex");
   const command = options.command ?? process.execPath;
   const requested = options.args ?? [];
-  const args = options.command ? requested : [path.join(root, "scripts/start.mjs"), ...(requested.includes("--") ? requested.slice(requested.indexOf("--") + 1) : [])];
+  const args = options.command ? requested : [path.join(root, "scripts/start.mjs"), ...requested];
   const env = {
     ...(options.env ?? process.env),
     DATAAGENT_LAUNCH_ID: launchId
