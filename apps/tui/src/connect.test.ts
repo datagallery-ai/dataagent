@@ -103,6 +103,24 @@ const readyHealth = {
   },
 };
 
+for (const home of ["C:\\agent-home", "/srv/agent-home"]) {
+  it(`accepts health paths from a backend host using ${home}`, async () => {
+    const health = structuredClone(readyHealth);
+    const conversation = { ...health.data.conversation, home,
+      stateDir: home + "/runtime", workspaces: [{ name: "inputs", path: home + "/inputs" }] };
+    assert.equal(await runTui({
+      argv: ["--runtime-url", "http://127.0.0.1:8790"],
+      startBackend: async () => assert.fail("Explicit attach must not start another runtime"),
+      fetchImpl: async () => Response.json({ ...health, data: { ...health.data, conversation } }),
+      renderApp: async ({ tui }) => {
+        assert.equal(tui?.home, home);
+        assert.match(tui?.mounts ?? "", /inputs:/);
+        return "exit";
+      },
+    }), 0);
+  });
+}
+
 it("attaches to server.host and server.port from config.json when already up", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-host-"));
   await writeFile(join(directory, "config.json"), JSON.stringify({

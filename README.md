@@ -81,6 +81,8 @@ A 200 from `/healthz` means the control plane is live; a 200 from `/ready` means
 
 ## Configuration and independent services
 
+Build a separate AgentKit backend package with `npm run package:agentkit` (or `make package`). See [AgentKit package deployment](docs/en/guides/agentkit-package.md) for installation and Web/TUI connection; `npm run smoke:agentkit-package` verifies the package and frontend integration.
+
 Home defaults to `~/.dataagent`; set `DATAAGENT_HOME` in the process environment to change it. The CLI initializes missing configuration templates on first startup.
 
 | File or setting | Purpose |

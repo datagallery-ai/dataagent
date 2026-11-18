@@ -2,7 +2,7 @@
 
 这套文档给要改配置字段、写扩展或改运行时的人。产品部署、网页用法和中英说明在仓库 `docs/`，不要把 `deploy.sh` 的步骤抄到这里。
 
-AgentKit 是本地数据 Agent 运行时。Python 包名和命令名是 `dataagent`，代码在 `runtime/agentkit`。Web 和 TUI 都是它的宿主；本目录讲运行时本身，以及 SDK、插件和 HTTP 实现。
+AgentKit 是本地数据 Agent 运行时。Python 发行包名是 `datagallery-dataagent`，导入名和命令名是 `dataagent`，代码在 `runtime/agentkit`。Web 和 TUI 都是它的宿主；本目录讲运行时本身，以及 SDK、插件和 HTTP 实现。
 
 运行时读取 JSON 配置和本机 Home 目录，调用已配置的模型，并按会话保存对话、产物和 Trace。插件、Skill、Hook、子代理和 MCP 用来增加工具与流程。语义服务客户端用来查询已经部署的语义服务。
 

@@ -46,6 +46,14 @@ def test_fresh_home_has_no_default_test_plugin(tmp_path):
     assert kwargs["tools"] == kwargs["subagents"] == kwargs["skills"] == []
 
 
+def test_video_without_optional_dependencies_preserves_upstream_hint():
+    from dataagent.core.middleware._video import VideoExtractionError, extract_video_frames
+
+    with patch.dict("sys.modules", {"av": None}):
+        with pytest.raises(VideoExtractionError, match=r"deepagents\[video\]"):
+            extract_video_frames(b"", offset_seconds=0, duration_seconds=1, sampling_rate=1)
+
+
 def test_installed_common_requires_explicit_enablement(tmp_path, common_plugin):
     runtime = prepare_runtime(options(tmp_path))
     assert common_plugin in runtime.extensions.plugin_roots

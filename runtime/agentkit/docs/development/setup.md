@@ -1,6 +1,8 @@
 # 开发环境
 
-Python 要求 `>=3.12,<3.13`。项目用 hatchling 打包 `dataagent`、`serve` 和 `a2a_server`。控制台命令是 `dataagent`。网页和 TUI 需要 Node.js 22 和 uv。
+Python 要求 `>=3.12,<3.13`。项目用 hatchling 打包 `dataagent`、`serve` 和 `a2a_server`。控制台命令是 `dataagent`。网页和 TUI 需要 Node.js ≥22.12.0；源码模式的 Python 准备使用 uv，包部署的前端只连接已启动的后端。
+
+运行依赖位于 `project.dependencies`；pytest 及 ruff 位于 `dependency-groups.dev`，`npm run prepare:python` 与 `uv sync` 一样默认包含开发组；普通 npm 安装钩子显式使用 `--no-dev`，不包含开发测试工具。MySQL、PostgreSQL 驱动属于基础运行依赖；Spark/Hive 和视频功能分别通过 `spark`、`video` extras 按需安装，`all` 组合这些扩展依赖，命令及环境条件见 [包部署](../../../../docs/zh/guides/agentkit-package.md#可选能力依赖)。
 
 在仓库根目录：
 
@@ -9,7 +11,7 @@ npm install
 npm run build
 ```
 
-`npm install` 结束后执行 `uv sync --project runtime/agentkit --frozen --no-dev --python 3.12`。`npm run build` 编译网页和 TUI。只编其中一个时用 `npm run build:web` 或 `npm run build:tui`。名字是 `npm run start`，或 `npm run start:<部分>`。
+`npm install` 的安装钩子会准备基础运行依赖；需要重新准备时执行 `npm run prepare:python -- --no-dev`。`npm run build` 编译网页和 TUI。只编其中一个时用 `npm run build:web` 或 `npm run build:tui`。名字是 `npm run start`，或 `npm run start:<部分>`。
 
 | 命令 | 作用 |
 | --- | --- |

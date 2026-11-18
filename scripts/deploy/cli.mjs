@@ -431,7 +431,14 @@ function createRealDeps(context) {
       await stopManagedStack(root);
     },
     async installProject() {
-      await runCommand("npm", ["ci"], commandOptions());
+      const options = commandOptions();
+      // Prepare Python once with the service runtime selection after npm ci.
+      await runCommand("npm", ["ci"], {
+        ...options, env: { ...process.env, ...options.env, SKIP_POSTINSTALL_BUILD: "1" }
+      });
+      await runCommand(process.execPath, [
+        path.join(root, "scripts/python-environment.mjs"), "--no-dev", "--extra", "video"
+      ], options);
     },
     async buildWeb() {
       await runCommand("npm", ["run", "build:web"], commandOptions("web", "build"));

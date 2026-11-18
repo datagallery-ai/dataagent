@@ -81,6 +81,8 @@ npm run start:tui
 
 ## 配置与独立启动
 
+使用 `npm run package:agentkit`（或 `make package`）生成独立的 AgentKit 后端包。安装与 Web/TUI 连接步骤见 [AgentKit 包部署](docs/zh/guides/agentkit-package.md)，可用 `npm run smoke:agentkit-package` 验证包与前端配合。
+
 Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI 首次启动会初始化缺少的配置模板。
 
 | 文件/设置 | 作用 |

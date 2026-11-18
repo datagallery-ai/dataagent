@@ -24,22 +24,30 @@ def _sql_infra_error(exc: BaseException | str) -> DataAgentError:
     return DataAgentError(source="tool", fact=str(exc), component="nl2sql")
 
 
-_ENGINE_DRIVERS = {"mysql": "pymysql", "gaussvector": "psycopg2", "hive": "pyspark", "spark": "pyspark"}
-"""Optional third-party drivers per engine; sqlite uses the standard library."""
+_ENGINE_DRIVERS = {
+    "mysql": ("pymysql", None),
+    "gaussvector": ("psycopg2", None),
+    "hive": ("pyspark", "spark"),
+    "spark": ("pyspark", "spark"),
+}
+"""Driver modules and optional extras per engine; sqlite uses the standard library."""
 
 
 def check_engine_driver(engine: str) -> None:
-    """Fail early when the optional driver for the configured engine is not installed."""
-    package = _ENGINE_DRIVERS.get(engine)
-    if package is None:
+    """Fail early when the driver for the configured engine is not installed."""
+    driver = _ENGINE_DRIVERS.get(engine)
+    if driver is None:
         return
+    package, extra = driver
     try:
         importlib.import_module(package)
     except ImportError as exc:
+        dependency = "可选依赖" if extra else "基础运行依赖"
+        requirement = f"datagallery-dataagent[{extra}]" if extra else "datagallery-dataagent"
         raise DataAgentError(
             source="config",
             component="nl2sql",
-            fact=f"数据库引擎 {engine} 需要可选依赖 {package}（未安装）",
+            fact=f"数据库引擎 {engine} 缺少{dependency} {package}；请在运行环境安装 {requirement}",
         ) from exc
 
 

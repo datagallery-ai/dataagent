@@ -98,6 +98,7 @@ async function main() {
   for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) {
     delete env[key];
   }
+  env.UV_PROJECT_ENVIRONMENT = path.join(tempRoot, "runtime/agentkit/.venv");
 
   try {
     console.log(`[smoke:native-deploy] checkout=${tempRoot}`);
@@ -138,6 +139,10 @@ async function main() {
       env,
       timeout: 25 * 60_000
     });
+
+    run("uv", ["run", "--no-sync", "--project", path.join(tempRoot, "runtime/agentkit"),
+      "python", "-c", "import importlib.util; import pymysql, psycopg2, av, PIL; assert all(importlib.util.find_spec(name) is None for name in ('pytest', 'pyspark'))"],
+    { cwd: tempRoot, env });
 
     const status = run("bash", ["./deploy.sh", "status"], { cwd: tempRoot, env });
     scanForSecrets(`${status.stdout}\n${status.stderr}`);
