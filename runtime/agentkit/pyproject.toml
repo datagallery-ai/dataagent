@@ -3,9 +3,10 @@ requires = ["hatchling>=1.27"]
 build-backend = "hatchling.build"
 
 [project]
-name = "dataagent"
+name = "datagallery-dataagent"
 version = "0.1.0"
 description = "Local DataAgent product built on native Deep Agents and AG-UI"
+readme = "README.md"
 requires-python = ">=3.12,<3.13"
 dependencies = [
   "langchain==1.3.18",
@@ -29,17 +30,24 @@ dependencies = [
   "jinja2>=3.1,<4",
   "sqlglot==28.1.0",
   "sqlparse>=0.5.5",
+  "pymysql[rsa]>=1.1.2,<2",
+  "psycopg2-binary>=2.9.10,<3",
   "json-repair>=0.63.4",
   "httpx>=0.28,<1",
   "opentelemetry-exporter-otlp-proto-http>=1.27,<2",
   "a2a-sdk[http-server]>=1.0.2",
 ]
 
+[project.optional-dependencies]
+all = ["datagallery-dataagent[spark,video]"]
+spark = ["pyspark>=4.0,<4.1"]
+video = ["av>=16,<17", "pillow>=12,<13"]
+
 [project.scripts]
 dataagent = "serve.__main__:main"
 
 [dependency-groups]
-dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "pytest-xdist>=3,<4", "httpx>=0.28,<1", "ruff>=0.12"]
+dev = ["pytest>=8,<10", "pytest-asyncio>=1,<2", "pytest-xdist>=3,<4", "ruff>=0.12"]
 
 [tool.hatch.build.targets.wheel]
 packages = ["dataagent", "serve", "a2a_server"]

@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { basename, dirname, isAbsolute } from "node:path";
+import { basename, dirname, posix, win32 } from "node:path";
 import { z } from "zod";
 import { resolveTuiLogPath } from "./log-path.js";
 import { AguiClient } from "./protocol/agui-client.js";
@@ -10,6 +10,11 @@ import type { AppExitReason, RenderAppOptions } from "./index.js";
 import { configuredListen, formatListenBase, readHttpListen } from "./backend.js";
 
 export const TUI_COMMANDS = ["/help", "/clear", "/stop", "/resume", "/outputs", "/exit"];
+
+// Health paths belong to the backend host, which may use a different operating system.
+function isBackendAbsolutePath(value: string): boolean {
+  return posix.isAbsolute(value) || win32.isAbsolute(value);
+}
 
 /** Bind-all addresses are not client destinations. Connect through loopback. */
 export function clientListenHost(host: string): string {
@@ -100,18 +105,18 @@ export async function connectTui(options: {
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(
-      `Control plane is not reachable at ${baseUrl}. Start it with npm run start or ./deploy.sh start. ${detail}`,
+      `Control plane is not reachable at ${baseUrl}. Start the backend with dataagent serve, npm run start or ./deploy.sh start. ${detail}`,
     );
   }
   if (!response.ok) throw new Error(`Control plane is unavailable (${response.status}) at ${baseUrl}/healthz`);
   const parsed = z.object({
     protocol: z.literal("dataagent"), ready: z.literal(true), instanceId: z.string(),
-    model: z.string(), home: z.string().refine(isAbsolute).optional(),
+    model: z.string(), home: z.string().refine(isBackendAbsolutePath).optional(),
     workspaces: z.array(z.object({
-      name: z.string().min(1), path: z.string().refine(isAbsolute),
+      name: z.string().min(1), path: z.string().refine(isBackendAbsolutePath),
     }).strict()).optional(),
     user: z.string().optional(),
-    stateDir: z.string().refine(isAbsolute).optional(), timeoutSeconds: z.number().positive(),
+    stateDir: z.string().refine(isBackendAbsolutePath).optional(), timeoutSeconds: z.number().positive(),
   }).safeParse(healthPayload(await response.json()));
   if (!parsed.success) throw new Error("Invalid health response");
   const health = parsed.data;

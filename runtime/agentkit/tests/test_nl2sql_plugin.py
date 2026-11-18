@@ -60,6 +60,26 @@ _PLUGIN_RESPONSES = [
 ]
 
 
+@pytest.mark.parametrize("engine,requirement", [
+    ("mysql", "datagallery-dataagent"),
+    ("gaussvector", "datagallery-dataagent"),
+    ("hive", "datagallery-dataagent[spark]"),
+    ("spark", "datagallery-dataagent[spark]"),
+])
+def test_missing_driver_identifies_required_installation(monkeypatch, engine, requirement):
+    from nl2sql.utils import sql_service
+
+    def missing_driver(name):
+        raise ModuleNotFoundError(name)
+
+    monkeypatch.setattr(sql_service.importlib, "import_module", missing_driver)
+    with pytest.raises(sql_service.DataAgentError) as error:
+        sql_service.check_engine_driver(engine)
+    assert error.value.fact.endswith(f"请在运行环境安装 {requirement}")
+    assert ("可选依赖" in error.value.fact) == (engine in {"hive", "spark"})
+    sql_service.check_engine_driver("sqlite")
+
+
 async def test_task_end_to_end_on_sqlite(tmp_path):
     payload, plugin_model = await _run_task(tmp_path)
 

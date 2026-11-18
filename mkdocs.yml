@@ -74,6 +74,7 @@ nav:
       - Guides:
           - Web workbench: en/guides/web-workbench.md
           - TUI: en/guides/tui.md
+          - AgentKit packages: en/guides/agentkit-package.md
           - Where data comes from: en/guides/data-sources.md
   - Developer Guide:
       - Architecture:

@@ -190,8 +190,8 @@ def test_backend_entrypoints_share_serve_module():
 
     from serve.__main__ import main
 
-    package = distribution("dataagent")
-    assert package.metadata["Name"] == "dataagent"
+    package = distribution("datagallery-dataagent")
+    assert package.metadata["Name"] == "datagallery-dataagent"
     entrypoint = next(item for item in package.entry_points if item.name == "dataagent")
     assert not any(item.name == "dataagent-v2" for item in package.entry_points)
     assert entrypoint.value == "serve.__main__:main"

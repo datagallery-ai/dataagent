@@ -1,6 +1,7 @@
-# 开发：make prepare && make build && make test。出包：make prepare && make package && make start。
+# 开发：make prepare && make build && make test。AgentKit 出包：make package。源码启动：make start。
 # prepare 执行 npm ci。安装后的同步只装 agentkit 运行依赖，不含 pytest/ruff；读 UV_PYTHON，默认 3.12，且不受 SKIP_POSTINSTALL_BUILD 影响。build 编译网页和 TUI。
-# 不另写启动器、不生成密钥、不打 agentkit wheel。编译不 omit=dev、也不 prune，node_modules 仍含构建期依赖。
+# package 调用 npm run package:agentkit，生成 wheel、源码包和依赖约束到 dist/agentkit；需要 Node.js 和 uv，不编译前端。
+# 编译不 omit=dev、也不 prune，node_modules 仍含构建期依赖。
 # make start 没有 Make 变量，只调用 ./deploy.sh start：缺 .env 或网页构建结果不会启动。
 # ut/st 目标名覆盖 TIER：make ut TIER=st 仍跑 ut。范围目标才读 TIER，默认 test；不写 TIER 时 make test 一起跑 ut 和 st。
 # make st 与 make test 的系统测试不能带 -n/--numprocesses（含 -n4、--numprocesses=4）：st 直接失败，test 去掉后仍串行，单元测试可以带。
@@ -57,7 +58,8 @@ endif
 build:
 	cd "$(PROJECT_DIR)" && npm run build
 
-package: build
+package:
+	cd "$(PROJECT_DIR)" && npm run package:agentkit
 
 start:
 	cd "$(PROJECT_DIR)" && ./deploy.sh start
