@@ -53,7 +53,7 @@ Makefile preserves `PYTHON_VERSION`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `PI
 
 ## Staged installation and native commands
 
-From the repository root, configure the interpreter and private download sources in the same shell as above, then run each stage:
+From the repository root, configure the interpreter and download sources in the same shell as above, then run each stage:
 
 ```bash
 # Skip Python preparation in the root install hook to observe each stage separately.
@@ -64,15 +64,13 @@ npm run build
 
 The second command can also be `npm run prepare:python -- --no-dev`. Direct uv commands require the relevant environment variables to be exported first; they do not additionally load the root `.env`. Add `--extra video` when video is needed; use `--extra all` for Spark/Hive and video after preparing the required external environment. Synchronizing an existing environment also removes unselected dependencies.
 
-Prepare the model and Home configuration using the [configuration instructions](../quick-start.md#3-configure-the-model-service), then start the prepared source backend:
+Create and fill in the repository root `.env` using the [configuration instructions](../quick-start.md#3-configure-the-model-service), then select that file explicitly when starting the prepared source backend:
 
 ```bash
-uv run --no-sync --project runtime/agentkit dataagent serve
+uv run --no-sync --project runtime/agentkit dataagent serve --env-file .env
 ```
 
-For A2A only, replace `serve` with `serve-a2a`. Backend-only installations can skip npm installation and frontend builds. `serve-a2a` has no REST health, session, or artifact endpoints. To connect frontends to an existing backend, see [Web/TUI connections](agentkit-package.md#connect-web-and-tui).
-
-Private mirror installation still requires access to dependency artifacts. Fully offline environments need platform-matched dependencies prepared separately. Installation alone does not verify real model, semantic service, or database calls.
+If model configuration is provided through Home `.env` or process variables instead, omit `--env-file .env`. For A2A only, replace `serve` with `serve-a2a`. Backend-only installations can skip npm installation and frontend builds. `serve-a2a` has no REST health, session, or artifact endpoints. To connect frontends to an existing backend, see [Web/TUI connections](agentkit-package.md#connect-web-and-tui).
 
 ## Model gateway and validation
 

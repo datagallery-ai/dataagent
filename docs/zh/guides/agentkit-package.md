@@ -24,7 +24,7 @@ uv export --project runtime/agentkit --no-dev --all-extras \
 
 包安装可用 `UV_DEFAULT_INDEX`（uv）或 `--index-url`（pip）指定索引。约束文件不携带源码锁文件的制品 URL，因此包安装不需要改写锁文件或执行 `sed`。
 
-wheel 和约束文件不包含第三方依赖制品，内网安装仍需可达的包索引。完全离线安装还需按目标系统、架构、Python 版本与所选 extras 另行准备依赖制品。
+wheel 和约束文件不包含第三方依赖制品，安装时仍需可达的包索引。完全离线安装还需按目标系统、架构、Python 版本与所选 extras 另行准备依赖制品。
 
 ## 安装并启动后端
 

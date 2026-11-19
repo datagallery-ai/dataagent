@@ -51,7 +51,7 @@ uv run --no-sync --project runtime/agentkit dataagent serve-a2a \
 
 | 参数 | 默认 | 作用 |
 | --- | --- | --- |
-| `--host` | 配置的 `server.host` | 绑定地址。跨机器访问时配置本机内网 IP 或 `0.0.0.0`；调用方使用可达的内网 IP/域名。默认匿名共享团队，令牌按需设置 |
+| `--host` | 配置的 `server.host` | 绑定地址。跨机器访问时配置本机 IP 或 `0.0.0.0`；调用方使用可达的 IP/域名。默认匿名共享团队，令牌按需设置 |
 | `--port` | 配置的 `server.port` | 绑定端口。被占用则失败 |
 | `--auth-token` | `DATAAGENT_A2A_AUTH_TOKEN` | 设置后，JSON-RPC 要带 `Authorization: Bearer <token>`。写在命令行会出现在进程列表里，优先用环境变量 |
 
@@ -105,7 +105,7 @@ uv run --no-sync --project runtime/agentkit dataagent history-sql --config path/
 | `DATAAGENT_OTLP_TRACES_ENDPOINT` | 后端进程环境 | 实时 OTLP/HTTP traces 的完整 URL。未设置则只写本地 trace 文件 |
 | `DATAAGENT_OTLP_HEADERS` | 后端进程环境 | 实时导出的请求头，逗号分隔的 `key=value` |
 | `DATAAGENT_A2A_AUTH_TOKEN` | 后端有效环境 | A2A JSON-RPC 的 Bearer 令牌。`serve` 和 `serve-a2a` 都读。进入日志脱敏 |
-| `DATAAGENT_WEB_ORIGIN` | Web 进程环境 | 浏览器错误上报允许的 Origin，例如 `https://data.example.com`。代理、内网域名或通配地址部署时指定；不用于配置 Next 到后端的转发 |
+| `DATAAGENT_WEB_ORIGIN` | Web 进程环境 | 浏览器错误上报允许的 Origin，例如 `https://data.example.com`。代理、域名或通配地址部署时指定；不用于配置 Next 到后端的转发 |
 | `DATAAGENT_HISTORY_SQL_CORPUS` | 后端进程环境 | 历史 SQL 语料目录，绝对路径。优先于 `history_sql.corpus_path` |
 
 `$env{NAME}` 的名字必须匹配 `[A-Za-z_][A-Za-z0-9_]*`。

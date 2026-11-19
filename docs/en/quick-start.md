@@ -79,7 +79,7 @@ Deployment and independent Web/API/TUI launches use `<Home>/runtime/logs/`. `DAT
 
 `./deploy.sh logs` follows all three files. Logs redact credentials before writing and retain diagnostic stacks. Each file rotates at 5,000,000 bytes with 3 backups. Browser reporting requires a reachable Web server and does not provide offline storage.
 
-When serving Web through a reverse proxy, private-network domain, or wildcard listen address, set server-side `DATAAGENT_WEB_ORIGIN` to the browser-facing origin (for example, `https://data.example.com`) to validate browser error reports. Each Web process accepts at most 60 reports and 1 MiB of report bodies per minute, shared across all sources.
+When serving Web through a reverse proxy, domain name, or wildcard listen address, set server-side `DATAAGENT_WEB_ORIGIN` to the browser-facing origin (for example, `https://data.example.com`) to validate browser error reports. Each Web process accepts at most 60 reports and 1 MiB of report bodies per minute, shared across all sources.
 
 ## Windows / macOS / other: manual npm deploy
 
@@ -89,8 +89,8 @@ Formal environments:
 
 | Environment | Use for |
 | --- | --- |
-| **Formal test** | Local / private acceptance |
-| **Production** | Persistent service in the deployment environment; use a private-network domain and a reverse proxy as required |
+| **Formal test** | Local / deployment-environment acceptance |
+| **Production** | Persistent service in the deployment environment; use a domain name and a reverse proxy as required |
 
 ### 1. Prepare tools and download sources
 

@@ -24,7 +24,7 @@ The default output directory is `dist/agentkit/`, containing `datagallery_dataag
 
 Set `UV_DEFAULT_INDEX` for uv or `--index-url` for pip to select the installation index. Constraints do not carry source lockfile artifact URLs, so package installation does not require rewriting the lockfile or running a `sed` command.
 
-The wheel and constraints do not include third-party dependency artifacts. Installation on a private network still requires a reachable package index. Fully offline installation requires dependency artifacts prepared separately for the target OS, architecture, Python version, and selected extras.
+The wheel and constraints do not include third-party dependency artifacts. Installation still requires a reachable package index. Fully offline installation requires dependency artifacts prepared separately for the target OS, architecture, Python version, and selected extras.
 
 ## Install and start the backend
 

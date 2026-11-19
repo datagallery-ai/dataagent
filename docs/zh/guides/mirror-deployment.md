@@ -58,7 +58,7 @@ Makefile 继续兼容流水线中的 `PYTHON_VERSION`、`PIP_INDEX_URL`、`PIP_E
 
 ## 分阶段安装与原生命令
 
-在仓库根目录、同一终端中先按上文配置解释器与内网下载源，再执行以下阶段：
+在仓库根目录、同一终端中先按上文配置解释器与下载源，再执行以下阶段：
 
 ```bash
 # 跳过根安装钩子的 Python 准备，单独观察每一阶段。
@@ -69,15 +69,13 @@ npm run build
 
 第二步也可用 `npm run prepare:python -- --no-dev`；直接执行 uv 时需先导出所需环境变量，不会额外载入根 `.env`。需要视频时在同步命令中加 `--extra video`；需要 Spark/Hive 和视频时选择 `--extra all` 并准备相应外部环境。已有环境执行同步也会移除未选中的依赖。
 
-然后按 [配置说明](../quick-start.md) 准备模型与 Home 配置，再启动已准备的源码后端：
+然后按 [配置说明](../quick-start.md) 在仓库根目录创建并填写 `.env`，启动时显式选择这份文件：
 
 ```bash
-uv run --no-sync --project runtime/agentkit dataagent serve
+uv run --no-sync --project runtime/agentkit dataagent serve --env-file .env
 ```
 
-只提供 A2A 时将 `serve` 换成 `serve-a2a`；仅运行后端可跳过 npm 安装和前端构建。`serve-a2a` 没有 REST 健康、会话和产物接口。需要前端时，连接已有后端的命令见 [Web/TUI 连接](agentkit-package.md#connect-web-and-tui)。
-
-内网镜像安装仍要能访问依赖制品；完全离线环境需另行准备匹配平台的依赖。安装完成不代表模型、语义服务或数据库已通过真实调用验证。
+若改用 Home `.env` 或进程环境提供模型配置，省略 `--env-file .env`。只提供 A2A 时将 `serve` 换成 `serve-a2a`；仅运行后端可跳过 npm 安装和前端构建。`serve-a2a` 没有 REST 健康、会话和产物接口。需要前端时，连接已有后端的命令见 [Web/TUI 连接](agentkit-package.md#connect-web-and-tui)。
 
 ## 模型与检查
 
