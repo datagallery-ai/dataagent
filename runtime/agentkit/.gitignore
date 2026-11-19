@@ -3,3 +3,4 @@ config.yaml
 !examples/config.yaml
 .dataagent_v2/
 workspace/
+!builtin-plugins/de-agent/config.yaml

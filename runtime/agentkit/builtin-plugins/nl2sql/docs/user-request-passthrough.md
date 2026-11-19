@@ -90,7 +90,7 @@ nl2sql 的返回方向已经这样做：完整结果写入 `result_file`，只�
 mode: Literal["isolated", "fork"] | None = None
 ```
 
-`StrictModel` 拒绝未知字段，不加这个字段，`nl2sql.json` 写 `mode` 会启动失败。
+`StrictModel` 拒绝未知字段，不加这个字段，`nl2sql.yaml` 写 `mode` 会启动失败。
 
 **H2. 编译时传递 `mode`。** 文件 `dataagent/extensions/subagents.py`，`_compiled_child` 返回值：
 
@@ -127,7 +127,7 @@ def _history_for_fork(messages, event, description, *, preamble: bool = True):
 
 ### 5.2 插件改动
 
-**P1. 声明 fork。** 文件 `subagents/nl2sql.json`：
+**P1. 声明 fork。** 文件 `subagents/nl2sql.yaml`：
 
 ```json
 {
@@ -256,7 +256,7 @@ final = await workflow.ainvoke(
 | 宿主 | `dataagent/extensions/subagents.py` | `_compiled_child` 传递 `mode` |
 | 宿主 | `dataagent/core/middleware/subagents/subagents.py` | 编译型 fork 不加工具注释和前导语 |
 | 宿主 | `docs/extensions/subagents.md`、`docs/reference/extension-schema.md` | 补 `mode` |
-| 插件 | `subagents/nl2sql.json` | `"mode": "fork"` |
+| 插件 | `subagents/nl2sql.yaml` | `"mode": "fork"` |
 | 插件 | `subagents/nl2sql.py` | `_task_inputs`；`run_task` 传 `user_request`；meta 记录原话 |
 | 插件 | `nl2sql/state.py` | `user_request` 字段 |
 | 插件 | `nl2sql/nodes/generator.py`、`nl2sql/nodes/validator.py` | 上下文加 `user_request` |

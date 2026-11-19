@@ -16,7 +16,7 @@ from dataagent.extensions.filesystem_backend import build_filesystem_backend
 
 
 def runtime_for(tmp_path, *workspaces, user_id="default", session_id=None, extra=None):
-    path = tmp_path / f"config-{user_id}.json"
+    path = tmp_path / f"config-{user_id}.yaml"
     body = {
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
@@ -212,7 +212,7 @@ def test_backend_uses_native_file_operations_without_access_filters(tmp_path):
     assert (session.outputs / "relative.txt").read_text() == "relative-evidence"
     assert any(item["path"] == str(session.outputs / "relative.txt") for item in backend.glob("*.txt").matches)
     assert backend.read(str(evidence)).error is None
-    assert backend.read(str(tmp_path / "config-default.json")).error is None
+    assert backend.read(str(tmp_path / "config-default.yaml")).error is None
     assert backend.edit(str(source / "input.txt"), "input", "changed").error is None
     assert (source / "input.txt").read_text() == "changed-evidence"
     uploaded = str(source / "uploaded.txt")

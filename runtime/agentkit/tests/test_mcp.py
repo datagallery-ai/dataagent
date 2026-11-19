@@ -1,7 +1,6 @@
 """Configuration boundaries and real MCP tools through native SDK/AG-UI paths."""
 
 import asyncio
-import json
 import os
 import shutil
 import signal
@@ -15,6 +14,7 @@ from pathlib import Path
 
 import httpx
 import pytest
+import yaml
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, ToolMessage
 from process_helpers import stop_child, wait_ready
@@ -36,9 +36,9 @@ def stdio(**changes):
 
 def prepare(tmp_path, servers=None, **options):
     home = tmp_path / "home"
-    config(home / "config.json", MODEL)
+    config(home / "config.yaml", MODEL)
     if servers is not None:
-        config(home / ".mcp.json", {"mcpServers": servers})
+        config(home / ".mcp.yaml", {"mcpServers": servers})
     return prepare_runtime(LaunchOptions(cwd=tmp_path, **options))
 
 
@@ -53,7 +53,7 @@ def by_name(tools, name):
 def test_no_mcp_file_means_no_configuration_or_new_files(tmp_path):
     runtime = prepare(tmp_path)
     assert runtime.extensions.mcp_servers == {}
-    assert not (runtime.paths.home / ".mcp.json").exists()
+    assert not (runtime.paths.home / ".mcp.yaml").exists()
     assert not (runtime.paths.home / "runtime").exists()
 
 
@@ -61,11 +61,11 @@ def test_two_sources_only_disabled_plugins_and_adjacent_configs_ignored(tmp_path
     home = tmp_path / "home"
     for root in (tmp_path, tmp_path / ".dataagent", tmp_path / "input", home / "plugins/off"):
         root.mkdir(parents=True, exist_ok=True)
-        (root / ".mcp.json").write_text("not json")
+        (root / ".mcp.yaml").write_text("not json")
     plugin = home / "plugins/analytics"
-    config(plugin / ".plugin.json", {"id": "analytics"})
-    config(plugin / ".mcp.json", {"mcpServers": {"calc": stdio()}})
-    external = config(tmp_path / "config.json", {**MODEL, "plugins": {"enabled": ["analytics"]}})
+    config(plugin / ".plugin.yaml", {"id": "analytics"})
+    config(plugin / ".mcp.yaml", {"mcpServers": {"calc": stdio()}})
+    external = config(tmp_path / "config.yaml", {**MODEL, "plugins": {"enabled": ["analytics"]}})
     runtime = prepare(tmp_path, {"calc": stdio()}, config=external, workspaces=(tmp_path / "input",))
     assert list(runtime.extensions.mcp_servers) == ["mcp__user__calc", "mcp__analytics__calc"]
     assert runtime.extensions.mcp_servers["mcp__analytics__calc"]["cwd"] == str(plugin)
@@ -110,7 +110,7 @@ def test_invalid_config_fails_before_connection(tmp_path, entry):
 ])
 def test_strict_json_and_server_names(tmp_path, body):
     prepare(tmp_path)
-    (tmp_path / "home/.mcp.json").write_text(body)
+    (tmp_path / "home/.mcp.yaml").write_text(body)
     with pytest.raises(ValueError):
         prepare_runtime(LaunchOptions(cwd=tmp_path))
 
@@ -154,8 +154,8 @@ async def test_sdk_requires_explicit_async_loading_then_uses_native_tools(tmp_pa
 
 def test_documented_full_example_parses_all_transports(tmp_path, monkeypatch):
     prepare(tmp_path)
-    example = Path(__file__).resolve().parents[1] / "examples/mcp/mcp.full.json"
-    shutil.copyfile(example, tmp_path / "home/.mcp.json")
+    example = Path(__file__).resolve().parents[1] / "examples/mcp/mcp.full.yaml"
+    shutil.copyfile(example, tmp_path / "home/.mcp.yaml")
     monkeypatch.setenv("MCP_PYTHON", sys.executable)
     monkeypatch.setenv("ANALYTICS_MCP_TOKEN", "synthetic-token")
     monkeypatch.setenv("LEGACY_MCP_API_KEY", "synthetic-key")
@@ -178,7 +178,7 @@ async def test_documented_local_example_is_runnable(tmp_path, monkeypatch):
     home = tmp_path / "home"
     prepare(tmp_path)
     example = Path(__file__).resolve().parents[1] / "examples/mcp"
-    shutil.copyfile(example / ".mcp.json", home / ".mcp.json")
+    shutil.copyfile(example / ".mcp.yaml", home / ".mcp.yaml")
     shutil.copyfile(example / "math_server.py", home / "math_server.py")
     monkeypatch.setenv("MCP_PYTHON", sys.executable)
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path))
@@ -293,8 +293,8 @@ async def test_discovery_timeout_cleans_up_started_process(tmp_path):
 async def test_plugin_subagent_allowlist_hooks_and_namespaces(tmp_path):
     home = tmp_path / "home"
     plugin = home / "plugins/analytics"
-    config(plugin / ".plugin.json", {"id": "analytics", "subagents": ["child.json"]})
-    config(plugin / ".mcp.json", {"mcpServers": {"calc": stdio()}})
+    config(plugin / ".plugin.yaml", {"id": "analytics", "subagents": ["child.yaml"]})
+    config(plugin / ".mcp.yaml", {"mcpServers": {"calc": stdio()}})
     (plugin / "prompt.md").write_text("Use the configured MCP calculator.")
     hook = plugin / "audit.py"
     hook.write_text(
@@ -303,14 +303,14 @@ async def test_plugin_subagent_allowlist_hooks_and_namespaces(tmp_path):
         "    Path(params['file']).write_text(request.tool_call['name'])\n"
     )
     marker = tmp_path / "hook-called"
-    config(plugin / "child.json", {
+    config(plugin / "child.yaml", {
         "name": "analyst", "description": "Use MCP", "system_prompt_file": "prompt.md",
         "tools": ["mcp__analytics__calc__add"], "hooks": {"before_tool": [{
             "entrypoint": "audit.py:before", "matcher": "mcp__analytics__calc__add",
             "params": {"file": str(marker)},
         }]},
     })
-    explicit = config(tmp_path / "override.json", {**MODEL, "plugins": {"enabled": ["analytics"]}})
+    explicit = config(tmp_path / "override.yaml", {**MODEL, "plugins": {"enabled": ["analytics"]}})
     runtime = prepare(tmp_path, {"calc": stdio()}, config=explicit)
     tools = await load_mcp_tools(runtime)
     assert by_name(tools, "mcp__user__calc__add") and by_name(tools, "mcp__analytics__calc__add")
@@ -325,8 +325,8 @@ async def test_plugin_subagent_allowlist_hooks_and_namespaces(tmp_path):
     assert marker.read_text() == "mcp__analytics__calc__add"
     assert result["messages"][-1].content == "13"
     # An explicit empty child list must not inherit MCP tools.
-    child = json.loads((plugin / "child.json").read_text())
-    config(plugin / "child.json", {**child, "tools": []})
+    child = yaml.safe_load((plugin / "child.yaml").read_text())
+    config(plugin / "child.yaml", {**child, "tools": []})
     assert load_extensions(runtime, mcp_tools=tools)["subagents"][0]["tools"] == []
 
 

@@ -7,6 +7,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import pytest
+import yaml
 from langchain.agents.middleware.types import ToolCallRequest
 from langchain_core.callbacks import BaseCallbackHandler
 from langchain_core.messages import HumanMessage, ToolMessage
@@ -195,7 +196,7 @@ async def test_registered_adapters_propagate_fallback_into_native_callback_metad
 
 
 def test_manifest_registers_diagnostic_pairs_for_every_native_ir_consumer():
-    hooks = json.loads((PLUGIN / ".plugin.json").read_text())["hooks"]
+    hooks = yaml.safe_load((PLUGIN / ".plugin.yaml").read_text())["hooks"]
     before = {entry["matcher"] for entry in hooks["before_tool"]
               if entry["entrypoint"] == "hooks/ir.py:ensure_ir_ready"}
     after = {entry["matcher"] for entry in hooks["after_tool"]

@@ -8,26 +8,22 @@ The control plane has no configuration REST API. The Web UI cannot change the mo
 
 | File | Role |
 | --- | --- |
-| `<home>/config.json` | Personal configuration. Home defaults to `~/.dataagent`. |
+| `<home>/config.yaml` | Personal configuration. Home defaults to `~/.dataagent`. |
 | `<home>/.env` | Model name, base URL, and key. |
 | Repository `.env` | `npm run start` and `./deploy.sh` load it into the process environment. Non-empty process values overlay the one selected env file. Without `--env-file`, that file is Home `.env`. `--config` does not change it. |
 
-`DATAAGENT_HOME` is read only from the process environment. A `config.json` in the launch directory is not merged. A `.dataagent/` directory in the current working directory is not read.
+`DATAAGENT_HOME` is read only from the process environment. A `config.yaml` in the launch directory is not merged. A `.dataagent/` directory in the current working directory is not read.
 
 ## Minimum model
 
-```json
-{
-  "schema_version": 4,
-  "models": {
-    "primary": {
-      "provider": "openai",
-      "name": "$env{LLM_MODEL}",
-      "base_url": "$env{LLM_BASE_URL}",
-      "api_key": "$env{LLM_API_KEY}"
-    }
-  }
-}
+```yaml
+schema_version: 4
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
 ```
 
 `provider` is `openai`. Compatible servers use the same value. The listen address is `server.host` and `server.port` in the same file, default `127.0.0.1` and `8790`. Web and TUI both read those two fields.

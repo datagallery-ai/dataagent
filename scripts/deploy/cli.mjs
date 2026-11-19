@@ -1,4 +1,5 @@
 import { execFile, spawn } from "node:child_process";
+import { createRequire } from "node:module";
 import { promisify } from "node:util";
 import { constants, existsSync } from "node:fs";
 import { access, mkdir, readFile, stat, statfs, writeFile } from "node:fs/promises";
@@ -342,6 +343,7 @@ function createRealDeps(context) {
   const { root, parsed, ask, print } = context;
 
   let config = null;
+  let nodeDependenciesInstalled = false;
   const loggingEnv = () => ({ ...config?.env, ...process.env });
 
   const commandOptions = (file = "backend", stage = "install") => {
@@ -364,6 +366,19 @@ function createRealDeps(context) {
       return config;
     },
     async preflight(current, options) {
+      if (options?.command === "deploy") {
+        const require = createRequire(path.join(root, "package.json"));
+        try { require.resolve("yaml"); }
+        catch (error) {
+          if (error.code !== "MODULE_NOT_FOUND") throw error;
+          // YAML is needed by configure, before the normal install stage.
+          const installOptions = commandOptions();
+          await runCommand("npm", ["ci"], {
+            ...installOptions, env: { ...installOptions.env, SKIP_POSTINSTALL_BUILD: "1" }
+          });
+          nodeDependenciesInstalled = true;
+        }
+      }
       if (options?.command === "start") {
         const diskEnv = parseDeploymentEnvironment(current.sourceText ?? "");
         await prepareStartEnvironment(root, diskEnv);
@@ -433,7 +448,7 @@ function createRealDeps(context) {
     async installProject() {
       const options = commandOptions();
       // Prepare Python once with the service runtime selection after npm ci.
-      await runCommand("npm", ["ci"], {
+      if (!nodeDependenciesInstalled) await runCommand("npm", ["ci"], {
         ...options, env: { ...process.env, ...options.env, SKIP_POSTINSTALL_BUILD: "1" }
       });
       await runCommand(process.execPath, [

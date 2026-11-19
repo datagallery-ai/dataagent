@@ -45,6 +45,8 @@ from nl2sql.state import Result
 from nl2sql.utils.nl2sql_utils import schema_to_ddl, sql_parser
 from sqlglot import exp
 
+from dataagent import read_yaml
+
 from .llm import execute_with_llm
 
 logger = logging.getLogger(__name__)
@@ -55,7 +57,7 @@ _PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 def load_dimensions(path: Path, scenario: str) -> dict[str, dict[str, str]]:
     """Load and validate one pack's packaged fact-to-dimension mappings."""
     try:
-        payload = json.loads(Path(path).read_text(encoding="utf-8"))
+        payload = read_yaml(Path(path))
         dimensions = payload["dimensions"]
         required = {"dimension_table", "key_column", "value_column"}
         if payload.get("scenario") != scenario or not isinstance(dimensions, dict):

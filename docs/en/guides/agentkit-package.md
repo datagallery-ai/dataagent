@@ -48,7 +48,7 @@ export LLM_API_KEY=replace-with-your-key
 .venv/bin/dataagent serve
 ```
 
-First startup creates missing templates in Home (`~/.dataagent`, or process variable `DATAAGENT_HOME`). Package mode reads process variables, Home `.env`, or an explicit `--env-file`; it does not automatically read a source checkout's root `.env`. Listening uses `config.json` `server.host` / `server.port`, defaulting to `127.0.0.1:8790`. The installed `dataagent serve-a2a` command starts A2A separately.
+First startup creates missing templates in Home (`~/.dataagent`, or process variable `DATAAGENT_HOME`). Package mode reads process variables, Home `.env`, or an explicit `--env-file`; it does not automatically read a source checkout's root `.env`. Listening uses `config.yaml` `server.host` / `server.port`, defaulting to `127.0.0.1:8790`. The installed `dataagent serve-a2a` command starts A2A separately.
 
 ## Optional dependencies
 

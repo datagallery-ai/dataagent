@@ -58,14 +58,14 @@ def contract(tmp_path):
     children = []
     for name in ("first", "second"):
         (root / f"{name}.md").write_text(f"Prompt for {name}.\n")
-        (root / f"{name}.json").write_text(json.dumps({
+        (root / f"{name}.yaml").write_text(json.dumps({
             "name": name, "description": f"Delegate {name}", "system_prompt_file": f"{name}.md",
             "tools": ["increment"], "skills": ["child-skills"],
             "hooks": [hook(event, "child", agent=name) for event in (
                 "before_agent", "before_model", "after_model", "before_tool", "after_tool", "after_agent",
             )],
         }))
-        children.append(f"{name}.json")
+        children.append(f"{name}.yaml")
     spec = PluginSpec.model_validate({
         "id": "contract", "system_prompt_file": "root.md", "skills": ["skills"],
         "tools": {"increment": {"entrypoint": "extensions.py:increment"}},
@@ -154,7 +154,7 @@ async def test_native_graph_child_hooks_scope_and_order(contract):
 
 def test_subagent_omitted_tools_vs_explicit_empty(contract):
     for name, omit in [("first", True), ("second", False)]:
-        path = contract.root / f"{name}.json"
+        path = contract.root / f"{name}.yaml"
         data = json.loads(path.read_text())
         data.pop("tools") if omit else data.update(tools=[])
         path.write_text(json.dumps(data))
@@ -165,7 +165,7 @@ def test_subagent_omitted_tools_vs_explicit_empty(contract):
 
 
 def test_no_hooks_means_no_hook_adapter(contract):
-    for path in contract.root.glob("*.json"):
+    for path in contract.root.glob("*.yaml"):
         child = json.loads(path.read_text())
         child.pop("hooks")
         path.write_text(json.dumps(child))
@@ -231,7 +231,7 @@ def test_external_common_contract(runtime):
 
 @pytest.mark.parametrize("declared", [None, [], ["child-skills"]])
 def test_subagent_skill_inheritance_is_declarative(contract, declared):
-    path = contract.root / "first.json"
+    path = contract.root / "first.yaml"
     child = json.loads(path.read_text())
     if declared is None:
         del child["skills"]
@@ -250,7 +250,7 @@ def test_subagent_skill_inheritance_is_declarative(contract, declared):
 
 def test_general_purpose_is_not_reserved_but_must_be_unique(contract):
     for name in ("first", "second"):
-        path = contract.root / f"{name}.json"
+        path = contract.root / f"{name}.yaml"
         child = json.loads(path.read_text())
         child["name"] = "general-purpose"
         path.write_text(json.dumps(child))
@@ -286,11 +286,11 @@ def compile_factory(tmp_path, symbol, **options):
     root = tmp_path / "graphs"
     root.mkdir()
     (root / "factories.py").write_text(FACTORIES)
-    (root / "child.json").write_text(json.dumps({
+    (root / "child.yaml").write_text(json.dumps({
         "kind": "compiled", "name": "graph", "description": "Declared.",
         "entrypoint": f"factories.py:{symbol}",
     }))
-    spec = PluginSpec(id="graphs", subagents=["child.json"])
+    spec = PluginSpec(id="graphs", subagents=["child.yaml"])
     kwargs = compile_extensions([(root, spec)], plugin_params={"graphs": {"db": "sales"}}, **options)
     return kwargs["subagents"][0]
 

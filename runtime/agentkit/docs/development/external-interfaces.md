@@ -13,8 +13,8 @@
 | HTTP 服务 | Web、TUI、第三方前端 | AG-UI 对话流、会话、产物、取消、健康检查、`/api/v1/me` | `serve/` | [HTTP 接口](../reference/rest-api.md)、[事件](../reference/events.md) |
 | A2A 服务 | 其他 Agent | Agent Card、JSON-RPC；出站调用远端 Agent | `a2a_server/` | [A2A](../reference/a2a.md) |
 | Python SDK | 嵌入式集成方 | `prepare_runtime`、`create_agent`、`Agent`、`ModelContext`、错误类型 | `dataagent/__init__.py` | [SDK](../guides/sdk.md)、[Python API](../reference/python-api.md) |
-| 扩展声明 | 插件开发者 | `.plugin.json`、工具、Hook、Skill、子代理、`.mcp.json` | `dataagent/declarations.py` | [扩展声明](../reference/extension-schema.md)、[MCP 配置](../reference/mcp-configuration.md) |
-| 配置、CLI 和环境变量 | 运维、部署、终端用户 | `config.json`、`.env`、`dataagent serve`、`serve-a2a`、`history_sql` | `dataagent/settings.py`、`serve/__main__.py` | [配置字段](../reference/configuration.md)、[命令与环境变量](../reference/cli-and-environment.md) |
+| 扩展声明 | 插件开发者 | `.plugin.yaml`、工具、Hook、Skill、子代理、`.mcp.yaml` | `dataagent/declarations.py` | [扩展声明](../reference/extension-schema.md)、[MCP 配置](../reference/mcp-configuration.md) |
+| 配置、CLI 和环境变量 | 运维、部署、终端用户 | `config.yaml`、`.env`、`dataagent serve`、`serve-a2a`、`history_sql` | `dataagent/settings.py`、`serve/__main__.py` | [配置字段](../reference/configuration.md)、[命令与环境变量](../reference/cli-and-environment.md) |
 
 本文中的代码路径默认在 `runtime/agentkit/` 下，其他路径写全。
 
@@ -27,12 +27,12 @@
 | 编号 | 规则 |
 | --- | --- |
 | R1 | 一个概念只用一个名字。别名只在协议强制时保留，并在第 3 节的术语表中登记。 |
-| R2 | JSON 字段命名：HTTP 和事件用 camelCase；`config.json` 和扩展声明用 snake_case。`.mcp.json` 的 `mcpServers` 是兼容 Claude 格式的唯一例外。 |
+| R2 | JSON 字段命名：HTTP 和事件用 camelCase；`config.yaml` 和扩展声明用 snake_case。`.mcp.yaml` 的 `mcpServers` 是兼容 Claude 格式的唯一例外。 |
 | R3 | 时长字段统一以 `_seconds` 结尾，值为秒。 |
 | R4 | 字段值是文件路径时，字段名以 `_file` 或 `_path` 结尾。没有后缀的字段放正文。 |
 | R5 | ID 只有两类，各用一个正则，都带锚点和长度上限：声明名（插件、工具、子代理、入口、A2A 远端）用 `NAME_PATTERN` `[a-z][a-z0-9_-]{0,63}`；调用方给的 ID（用户、会话、输入目录名）用 `OPAQUE_ID_PATTERN` `[A-Za-z0-9][A-Za-z0-9_-]{0,127}`。 |
 | R6 | 错误只有一种格式：HTTP 用 `{"success": false, "error": {"code", "message"}}`；事件流 `RUN_ERROR.code` 用同一套大写枚举；Python 异常都继承 `DataAgentError`。 |
-| R7 | 同一设置的来源优先级统一为：CLI 参数 > 进程环境变量 > `.env` > `config.json` > 默认值。 |
+| R7 | 同一设置的来源优先级统一为：CLI 参数 > 进程环境变量 > `.env` > `config.yaml` > 默认值。 |
 | R8 | 每个对外入口只有一条推荐路径。底层入口放到单独模块，不进 `__all__`。 |
 | R9 | 每种声明文件都有 `schema_version`。版本不符时，报错要说明怎样升级。 |
 | R10 | 能力没有实现时，客户端不显示入口。服务端对未实现的路由返回 404，客户端不把 404 当成功。 |
@@ -48,7 +48,7 @@
 | 启动快照 | `PreparedRuntime` | 原 `dataagent.Runtime`，与 LangGraph `Runtime`、`ToolRuntime` 同名 | 已改名 |
 | 工具和 Hook 的上下文 | `AgentContext` | 原 `ModelContext`（实际承载模型、语义客户端、插件配置、Home、会话） | 已改名 |
 | 完成状态 | `completed` | 原会话状态 `complete` | 已统一；启动时把索引里旧的 `complete` 改为 `completed`。Web 工具调用的 `complete` 是 CopilotKit 协议值，不改 |
-| A2A 出站 | `a2a.remote_agents` | 原 `config.json` 的 `a2a.agents` | 已改名，与入站 `serve-a2a` 区分 |
+| A2A 出站 | `a2a.remote_agents` | 原 `config.yaml` 的 `a2a.agents` | 已改名，与入站 `serve-a2a` 区分 |
 
 ## 4. 问题清单
 
@@ -167,32 +167,32 @@
 
 | 编号 | 优先级 | 问题 | 证据 | 建议 |
 | --- | --- | --- | --- | --- |
-| E1 | 待决策 | de-agent 的一条 Hook 永远不会触发：matcher 写的是 `validate_deliverables`，这个函数还在 `tools/deliverables.py:32`，但 commit 4f717b50 从清单 `tools` 中删除了它的注册，之后 ac4b5b08、cb69853d、1528d1e3 仍在修改这个函数，删除注册可能是误操作；即使存在，注册名也是 `de-agent__validate_deliverables`；多个 Skill 仍让模型调用它 | `builtin-plugins/de-agent/.plugin.json:111`；`dataagent/extensions/hooks.py:119`；`dataagent/extensions/tools.py:22` | 由插件负责人确定：恢复 `validate_deliverables`（matcher 改为 `de-agent__validate_deliverables`），或删除这条 Hook 并把两个 dataops Skill 改指 `check_and_repair_sql`。编译时校验 matcher 放到 P1：matcher 也可能指向 MCP 和原生工具，需要先定规则 |
-| E2 | 已修 | 两套 Hook 共用 `hooks` 键，但事件名、声明位置和签名都不同：Agent Hook 有 6 个事件，写在 `.plugin.json` 或 `dataagent.hooks`；Run Hook 只有 `before_run`/`after_run`，写在 `plugins.config.<id>.hooks`，只在含 compiled 子代理的插件中生效，其他插件写了被静默忽略 | `dataagent/declarations.py:92-99,226-230`；`dataagent/bootstrap/discovery.py:209-227`；`dataagent/extensions/subagents.py:93-104` | 已修：Run Hook 键名改为 `plugins.config.<id>.run_hooks`，与 Agent Hook 的 `hooks` 分开；插件没有编译子代理却写了 `run_hooks` 时装配失败。仍放在部署配置里，不移到 `.plugin.json`：它是部署方按场景配置的（如 nl2sql 场景包），不是插件作者固定的 |
+| E1 | 待决策 | de-agent 的一条 Hook 永远不会触发：matcher 写的是 `validate_deliverables`，这个函数还在 `tools/deliverables.py:32`，但 commit 4f717b50 从清单 `tools` 中删除了它的注册，之后 ac4b5b08、cb69853d、1528d1e3 仍在修改这个函数，删除注册可能是误操作；即使存在，注册名也是 `de-agent__validate_deliverables`；多个 Skill 仍让模型调用它 | `builtin-plugins/de-agent/.plugin.yaml:111`；`dataagent/extensions/hooks.py:119`；`dataagent/extensions/tools.py:22` | 由插件负责人确定：恢复 `validate_deliverables`（matcher 改为 `de-agent__validate_deliverables`），或删除这条 Hook 并把两个 dataops Skill 改指 `check_and_repair_sql`。编译时校验 matcher 放到 P1：matcher 也可能指向 MCP 和原生工具，需要先定规则 |
+| E2 | 已修 | 两套 Hook 共用 `hooks` 键，但事件名、声明位置和签名都不同：Agent Hook 有 6 个事件，写在 `.plugin.yaml` 或 `dataagent.hooks`；Run Hook 只有 `before_run`/`after_run`，写在 `plugins.config.<id>.hooks`，只在含 compiled 子代理的插件中生效，其他插件写了被静默忽略 | `dataagent/declarations.py:92-99,226-230`；`dataagent/bootstrap/discovery.py:209-227`；`dataagent/extensions/subagents.py:93-104` | 已修：Run Hook 键名改为 `plugins.config.<id>.run_hooks`，与 Agent Hook 的 `hooks` 分开；插件没有编译子代理却写了 `run_hooks` 时装配失败。仍放在部署配置里，不移到 `.plugin.yaml`：它是部署方按场景配置的（如 nl2sql 场景包），不是插件作者固定的 |
 | E3 | 已修 | Hook 契约不完整：工具 Hook 签名不带 runtime，内置插件靠 `request.runtime.context` 取上下文，文档未写；文档对“怎样拒绝执行”前后矛盾 | `builtin-plugins/de-agent/hooks/history_sql.py:20-24,43`；`docs/extensions/hooks.md:3,41-51,72` | 写明两种拒绝方式：返回错误 `ToolMessage`（模型可以纠正）；抛异常（终止本轮） |
 | E4 | 已修 | ID 正则有四套。workspace 正则原先没有锚点（`'../../evil name!'` 能通过校验），P0 已加 | `dataagent/settings.py:41,108`；`dataagent/declarations.py` 的 `RESOURCE_ID_PATTERN`；插件工具 ID 不允许 `-` | 已修：四套合为两类，定义在 `dataagent.declarations`（见 R5）。插件工具 ID 允许 `-`；A2A 远端 `id` 改为小写，与其他声明名一致 |
 | E5 | 已修 | 工具命名空间格式不一致：插件工具 `<plugin>__<tool>`，A2A `a2a__<id>`，MCP `mcp__<scope>__<server>_<tool>`（最后一段是单下划线）；完整规则只在 `examples/mcp/README.md` 中出现 | `dataagent/extensions/tools.py:22`；`dataagent/extensions/mcp.py:31` | 已修：MCP 工具名改为 `mcp__<scope>__<server>__<tool>`；`extension-schema.md` 列出四种来源的命名规则 |
-| E6 | 已修 | 路径字段命名不对称：`description` 是正文、`description_file` 是路径，`system_prompt` 却是路径；清单的 `config` 是配置片段路径，和 `config.json` 同名 | `dataagent/declarations.py:161-164,239-240` | 已修：`system_prompt` → `system_prompt_file`（插件和子代理），清单 `config` → `defaults_file` |
-| E7 | 已修 | 版本管理不统一：`.plugin.json` 是 2，`config.json` 是 3，子代理 JSON 和 `.mcp.json` 没有版本；全部 `extra=forbid`，旧运行时会拒绝新字段，报错只有 "Input should be 2" | `dataagent/declarations.py:234`；`dataagent/settings.py:188` | 已修：`.plugin.json` 升到 3（字段改名），子代理 JSON 新增 `schema_version` 1，`config.json` 仍为 3；版本不符时报错写明怎样升级。`.mcp.json` 保持 Claude 格式，不加版本（R2 的例外） |
+| E6 | 已修 | 路径字段命名不对称：`description` 是正文、`description_file` 是路径，`system_prompt` 却是路径；清单的 `config` 是配置片段路径，和 `config.yaml` 同名 | `dataagent/declarations.py:161-164,239-240` | 已修：`system_prompt` → `system_prompt_file`（插件和子代理），清单 `config` → `defaults_file` |
+| E7 | 已修 | 版本管理不统一：`.plugin.yaml` 是 2，`config.yaml` 是 3，子代理 YAML 和 `.mcp.yaml` 没有版本；全部 `extra=forbid`，旧运行时会拒绝新字段，报错只有 "Input should be 2" | `dataagent/declarations.py:234`；`dataagent/settings.py:188` | 已修：`.plugin.yaml` 升到 3（字段改名），子代理 YAML 新增 `schema_version` 1，`config.yaml` 仍为 3；版本不符时报错写明怎样升级。`.mcp.yaml` 保持 Claude 格式，不加版本（R2 的例外） |
 | E8 | 已修 | 编译型子代理工厂的 `services` 与 `services.context` 内容重复，类型未导出，文档漏了 `context` 和 `run_hooks` | `dataagent/extensions/subagents.py:56-72,117` | 已修：删除重复的 `services.context`；`SubagentServices` 从 `dataagent` 导出，只含 `get_model`、`semantic_client`、`outputs_dir`、`run_hooks`；文档补全。签名保持 `factory(params, services)`：`run_hooks` 需要随工厂传入，`(params, context)` 放不下 |
 
 ### 4.5 配置、CLI 和环境变量
 
 | 编号 | 优先级 | 问题 | 证据 | 建议 |
 | --- | --- | --- | --- | --- |
-| C1 | 已修 | 降级启动时忽略 `server.port`，固定监听 8790；Web 和 TUI 仍按配置端口连接。缺少环境变量时，models 段降级启动，其他段直接退出，两种处理不一致 | `serve/__main__.py:140-152`；`dataagent/bootstrap/config_files.py:103-107,253`；`scripts/server-listen.mjs:68-74` | 已修：端口见 P0；缺少环境变量时所有配置段一样处理，都降级启动并报出变量名（`MissingEnvironmentError`），文件不存在、不是 JSON 或校验失败仍退出 |
+| C1 | 已修 | 降级启动时忽略 `server.port`，固定监听 8790；Web 和 TUI 仍按配置端口连接。缺少环境变量时，models 段降级启动，其他段直接退出，两种处理不一致 | `serve/__main__.py:140-152`；`dataagent/bootstrap/config_files.py:103-107,253`；`scripts/server-listen.mjs:68-74` | 已修：端口见 P0；缺少环境变量时所有配置段一样处理，都降级启动并报出变量名（`MissingEnvironmentError`），文件不存在、不是 YAML 或校验失败仍退出 |
 | C2 | 已修 | 仓库根 `.env.example` 写“可以在网页上配置模型”，产品文档写“网页上改不了模型”；它还预填 `LLM_MODEL=qwen-plus`，经 `npm run start` 载入后会覆盖 Home `.env` | `.env.example:1-3`；`docs/zh/reference/configuration-api.md:5`；`scripts/stack-runner.mjs:39,113-115`；`dataagent/bootstrap/environment.py:67` | 改正注释，删除预填值；根 `.env` 只放启动脚本变量 |
-| C3 | 不处理 | 示例插件把模型别名写为 `primary`，和 `dataagent.model.default` 无关联 | `builtin-plugins/de-agent/config.json:6,14,18,30,57,72` | 插件配置由用户指定，不属于核心契约。用户改了模型 ID 时，需要同时改插件配置 |
+| C3 | 不处理 | 示例插件把模型别名写为 `primary`，和 `dataagent.model.default` 无关联 | `builtin-plugins/de-agent/config.yaml:6,14,18,30,57,72` | 插件配置由用户指定，不属于核心契约。用户改了模型 ID 时，需要同时改插件配置 |
 | C4 | 已修 | 文档遗漏：`limits.timeout_seconds` 实际还控制 shell、MCP 和 A2A 的超时；`python -m dataagent.history_sql` 没有文档；插件环境变量只读进程环境，不读 Home `.env` | `dataagent/extensions/filesystem_backend.py:16`；`dataagent/extensions/mcp.py:26-36`；`a2a_server/client.py:170-172`；`dataagent/history_sql/__main__.py` | 补进 `configuration.md` 和 `cli-and-environment.md` |
 | C5 | 已修 | 监听地址三处配置方式不同：`serve` 只认 `server.*`；`serve-a2a` 只认 `--host`/`--port`，默认 9999；Web 只认 `--web-host`/`--web-port`。文档称 `server` 是唯一监听地址 | `serve/__main__.py:121-122,149-153`；`scripts/stack-runtime-config.mjs:41-50`；`docs/reference/configuration.md:17` | `serve-a2a` 默认读 `server.*`，CLI 参数覆盖；或并入 `serve` |
 | C6 | 已修 | `--auth-token` 只能明文写在命令行，会出现在 `ps` 和 shell 历史中 | `serve/__main__.py:123` | 增加 `DATAAGENT_A2A_AUTH_TOKEN` 或 `--auth-token-file` |
-| C7 | 关闭 | 来源优先级各处不同：`history_sql` 环境变量优先，`dataops` 配置优先；（dataops 属于示例插件，只作对照） | `dataagent/history_sql/config.py:9`；`builtin-plugins/de-agent/utils/dataops_mcp.py:131-134`；`builtin-plugins/de-agent/config.json:33` | 核心的 `history_sql` 按 R7 统一 |
+| C7 | 关闭 | 来源优先级各处不同：`history_sql` 环境变量优先，`dataops` 配置优先；（dataops 属于示例插件，只作对照） | `dataagent/history_sql/config.py:9`；`builtin-plugins/de-agent/utils/dataops_mcp.py:131-134`；`builtin-plugins/de-agent/config.yaml:33` | 核心的 `history_sql` 按 R7 统一 |
 | C8 | 关闭 | `serve --session` 只采用该会话的 workspace 绑定，文档写“恢复会话” | `serve/__main__.py:100`；`docs/reference/cli-and-environment.md:22` | 改名为 `--bind-session` 或删除；改正文档 |
-| C9 | 已修 | 超时键名和单位不统一：`timeout_seconds`、`semantic.timeout`、`dataops.timeout_s`、`poll_interval_ms`、`DATAOPS_MCP_TIMEOUT`、`DATAOPS_REQUEST_TIMEOUT_SEC` | `dataagent/settings.py:28,112,174`；`builtin-plugins/de-agent/config.json:31-32` | 已修（核心）：`semantic.timeout` → `semantic.timeout_seconds`，核心配置的时长键都以 `_seconds` 结尾。`dataops.*`、`DATAOPS_*` 属于示例插件，按 C10 由插件作者决定 |
-| C10 | 不处理 | 插件配置命名混乱：模型别名有 `model` 和 `llm_model` 两种写法；开关有四种写法；`thresholds.null_rate_threshold` 后缀重复；代码会读的 `quality_gate`、dataops 的 `url` 等键默认文件里没有；nl2sql 接受 `semantic` 键但没有代码读取 | `builtin-plugins/de-agent/config.json:6,14,44-48`；`builtin-plugins/nl2sql/nl2sql/config_manager.py:50,62` | 示例插件的配置命名不属于核心契约，留给插件作者 |
-| C11 | 已修 | 结构小问题：`dataagent.model` 是只有 `default` 一个键的组；顶层键 `dataagent` 与产品名重复；`a2a.agents` 与入站 A2A 同名 | `dataagent/settings.py:23-24,121-124` | 已修：`dataagent.model` 改为字符串；`a2a.agents` → `a2a.remote_agents`；`config.json` 升到 4，版本 3 报错时列出改名。顶层键 `dataagent` 不改：改它会使所有配置失效，收益小 |
+| C9 | 已修 | 超时键名和单位不统一：`timeout_seconds`、`semantic.timeout`、`dataops.timeout_s`、`poll_interval_ms`、`DATAOPS_MCP_TIMEOUT`、`DATAOPS_REQUEST_TIMEOUT_SEC` | `dataagent/settings.py:28,112,174`；`builtin-plugins/de-agent/config.yaml:31-32` | 已修（核心）：`semantic.timeout` → `semantic.timeout_seconds`，核心配置的时长键都以 `_seconds` 结尾。`dataops.*`、`DATAOPS_*` 属于示例插件，按 C10 由插件作者决定 |
+| C10 | 不处理 | 插件配置命名混乱：模型别名有 `model` 和 `llm_model` 两种写法；开关有四种写法；`thresholds.null_rate_threshold` 后缀重复；代码会读的 `quality_gate`、dataops 的 `url` 等键默认文件里没有；nl2sql 接受 `semantic` 键但没有代码读取 | `builtin-plugins/de-agent/config.yaml:6,14,44-48`；`builtin-plugins/nl2sql/nl2sql/config_manager.py:50,62` | 示例插件的配置命名不属于核心契约，留给插件作者 |
+| C11 | 已修 | 结构小问题：`dataagent.model` 是只有 `default` 一个键的组；顶层键 `dataagent` 与产品名重复；`a2a.agents` 与入站 A2A 同名 | `dataagent/settings.py:23-24,121-124` | 已修：`dataagent.model` 改为字符串；`a2a.agents` → `a2a.remote_agents`；`config.yaml` 升到 4，版本 3 报错时列出改名。顶层键 `dataagent` 不改：改它会使所有配置失效，收益小 |
 | C12 | 已修 | `history_sql` 不是 `dataagent` 子命令，只接受 `--config`；语料目录有三处设置 | `dataagent/history_sql/__main__.py:22-31`；`pyproject.toml:40` | 已修：改为 `dataagent history-sql`，和 `serve` 共用 `--config`、`--env-file`；删除 `python -m dataagent.history_sql`。语料目录的三处来源保留，顺序符合 R7，文档写明 |
-| C13 | 已修 | `DATAAGENT_HOME` 为空时 Node 当作“没有 Home”、Python 当作未设置；`npm run start` 静默忽略除 `--config`、`--web-host`、`--web-port`、`--api`、`--web` 以外的参数；`builtin-plugins/attribution-analysis` 没有 `.plugin.json` 却被当作插件候选 | `scripts/server-listen.mjs`；`apps/tui/src/backend.ts`；`dataagent/bootstrap/paths.py:home_path`；`scripts/stack-runtime-config.mjs` | 已修：各端统一为“空值等于未设置”，`~` 展开、相对路径以当前目录为基准；删除 `attribution-analysis`。`npm run start` 收到未识别参数时报错退出 |
+| C13 | 已修 | `DATAAGENT_HOME` 为空时 Node 当作“没有 Home”、Python 当作未设置；`npm run start` 静默忽略除 `--config`、`--web-host`、`--web-port`、`--api`、`--web` 以外的参数；`builtin-plugins/attribution-analysis` 没有 `.plugin.yaml` 却被当作插件候选 | `scripts/server-listen.mjs`；`apps/tui/src/backend.ts`；`dataagent/bootstrap/paths.py:home_path`；`scripts/stack-runtime-config.mjs` | 已修：各端统一为“空值等于未设置”，`~` 展开、相对路径以当前目录为基准；删除 `attribution-analysis`。`npm run start` 收到未识别参数时报错退出 |
 
 ### 4.6 文档缺口
 
@@ -209,6 +209,6 @@
 1. **转测前（P0）**：已处理，结果见 4.1.1。H2 和 E1 待决策。
 2. **契约冻结前（P1）**：服务侧已处理，结果见 4.1.2。S3、S4、E2、E4、E5 改为 P2。
 3. **P2**：已处理（2026-11-15/16，分支 `chore/interface-followups-20261115`），各条结果写在 4.2–4.5 的“建议”列，术语表见第 3 节。版本未正式发布，所有改名都不保留旧名：
-   - `config.json` 升到 4，`.plugin.json` 升到 3，子代理 JSON 为 1；旧版本报错时说明怎样升级。
+   - `config.yaml` 升到 4，`.plugin.yaml` 升到 3，子代理 YAML 为 1；旧版本报错时说明怎样升级。
    - 服务路由统一在 `/api/v1` 下，JSON 成功响应统一用信封。
 4. **仍待决策**：H2（Web 发布范围）、E1（`validate_deliverables`）。C3、C10 属于示例插件，不处理。

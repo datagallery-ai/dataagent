@@ -21,7 +21,7 @@ def ignored_cwd(tmp_path):
     cwd = tmp_path / "中文 launch directory"
     extensions = cwd / ".dataagent"
     extensions.mkdir(parents=True)
-    (extensions / "config.json").write_text("not json")
+    (extensions / "config.yaml").write_text("not json")
     marker = tmp_path / "unexpected-import"
     hook = extensions / "hooks/observe.py"
     hook.parent.mkdir()

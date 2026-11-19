@@ -1,8 +1,8 @@
 # MCP 配置
 
-文件名固定为 `.mcp.json`。只从 Home 和已启用插件的根目录读取。标准 JSON，支持 `$env{NAME}`。
+文件名固定为 `.mcp.yaml`。只从 Home 和已启用插件的根目录读取。使用严格 YAML 1.2，支持 `$env{NAME}`。
 
-操作步骤见 [MCP](../extensions/mcp.md)。覆盖三种传输的模板见 [examples/mcp/mcp.full.json](../../examples/mcp/mcp.full.json)。使用前替换其中的示例地址。
+操作步骤见 [MCP](../extensions/mcp.md)。覆盖三种传输的模板见 [examples/mcp/mcp.full.yaml](../../examples/mcp/mcp.full.yaml)。使用前替换其中的示例地址。
 
 ## 顶层
 
@@ -17,7 +17,7 @@
 | 字段 | 类型 | 默认 | 说明 |
 | --- | --- | --- | --- |
 | `type` | `"stdio"` | `"stdio"` | 可省略 |
-| `command` | 非空字符串 | 必填 | 含 `/` 的相对路径相对 `.mcp.json` 目录 |
+| `command` | 非空字符串 | 必填 | 含 `/` 的相对路径相对 `.mcp.yaml` 目录 |
 | `args` | 字符串数组 | `[]` | 原样传递 |
 | `env` | 字符串到字符串 | `{}` | 该进程的环境。值里的 `$env{NAME}` 先展开 |
 
@@ -42,3 +42,5 @@
 缺少被引用的环境变量时，读取该文件失败，REST 不会进入就绪状态。
 
 每次工具调用建立一次连接。stdio 进程不在多次调用之间保持。认证写在 `headers` 或 `env` 中。
+
+`.mcp.yaml` 是 DataAgent 的配置文件；不能直接当作其他 MCP 客户端的 `.mcp.json` 使用。

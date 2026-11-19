@@ -213,7 +213,7 @@ A2A 请求默认进入主代理。主代理可通过 `task` 委派已启用的�
 
 ## 调用别的 agent
 
-在 `config.json` 里声明远端 agent。装配时它们成为工具，工具名是 `a2a__<id>`。
+在 `config.yaml` 里声明远端 agent。装配时它们成为工具，工具名是 `a2a__<id>`。
 
 ```json
 {

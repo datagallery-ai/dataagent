@@ -31,7 +31,7 @@ test("startup uses the selected interpreter without exporting a synchronization 
 });
 
 test("web launch passes host and port only as next arguments", () => {
-  const config = resolveStackRuntimeConfig({}, ["--web-host", "127.0.0.2", "--web-port", "3310"]);
+  const config = resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--web-host", "127.0.0.2", "--web-port", "3310"]);
   const launch = webLaunch(config, { PATH: "/usr/bin", HOSTNAME: "10.0.0.8", PORT: "9" });
   assert.equal(launch.command, "npm");
   assert.deepEqual(launch.args, [
@@ -47,7 +47,7 @@ test("web launch passes host and port only as next arguments", () => {
 
 test("prints actual configured endpoints", () => {
   const home = mkdtempSync(join(tmpdir(), "dataagent-listen-"));
-  writeFileSync(join(home, "config.json"), JSON.stringify({
+  writeFileSync(join(home, "config.yaml"), JSON.stringify({
     server: { host: "0.0.0.0", port: 8877 },
   }));
   try {
@@ -63,21 +63,21 @@ test("prints actual configured endpoints", () => {
 });
 
 test("rejects invalid ports", () => {
-  assert.throws(() => resolveStackRuntimeConfig({}, ["--web-port", "70000"]), /--web-port/);
+  assert.throws(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--web-port", "70000"]), /--web-port/);
 });
 
 test("web address comes from start flags", () => {
-  const config = resolveStackRuntimeConfig({}, ["--web-host", "192.168.1.9", "--web-port", "3310"]);
+  const config = resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--web-host", "192.168.1.9", "--web-port", "3310"]);
   assert.equal(config.webHost, "192.168.1.9");
   assert.equal(config.webPort, "3310");
-  const defaults = resolveStackRuntimeConfig({});
+  const defaults = resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" });
   assert.equal(defaults.webHost, "127.0.0.1");
   assert.equal(defaults.webPort, "3000");
 });
 
 test("web listen flags require a value", () => {
-  assert.throws(() => resolveStackRuntimeConfig({}, ["--web-host"]), /--web-host requires a value/);
-  assert.throws(() => resolveStackRuntimeConfig({}, ["--web-port", "--web"]), /--web-port requires a value/);
+  assert.throws(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--web-host"]), /--web-host requires a value/);
+  assert.throws(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--web-port", "--web"]), /--web-port requires a value/);
 });
 
 test("one click reports GUI, API, and a ready TUI", () => {
@@ -149,8 +149,8 @@ test("dev and start:api both default the API to loopback", () => {
 
 test("--config replaces Home server and is passed to dataagent serve", () => {
   const home = mkdtempSync(join(tmpdir(), "dataagent-listen-"));
-  const selected = join(home, "selected.json");
-  writeFileSync(join(home, "config.json"), JSON.stringify({
+  const selected = join(home, "selected.yaml");
+  writeFileSync(join(home, "config.yaml"), JSON.stringify({
     server: { host: "10.1.2.3", port: 1 },
   }));
   writeFileSync(selected, JSON.stringify({
@@ -166,26 +166,26 @@ test("--config replaces Home server and is passed to dataagent serve", () => {
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
-  assert.throws(() => resolveStackRuntimeConfig({}, ["--config"]), /--config requires a value/);
+  assert.throws(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--config"]), /--config requires a value/);
 });
 
 test("start anchors a relative --config to the caller before the stack cwd changes", () => {
   const outside = realpathSync(mkdtempSync(join(tmpdir(), "df-caller-")));
   const repo = realpathSync(mkdtempSync(join(tmpdir(), "df-repo-")));
-  const selected = join(outside, "team.json");
+  const selected = join(outside, "team.yaml");
   writeFileSync(selected, JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } }));
   const previous = process.cwd();
   try {
     process.chdir(outside);
-    const config = resolveStackRuntimeConfig({}, ["--api", "--config", "team.json"]);
+    const config = resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--api", "--config", "team.yaml"]);
     assert.equal(config.configPath, selected);
     assert.equal(config.apiPort, "8877");
     process.chdir(repo);
     const launch = pythonControlPlaneLaunch(repo, {}, false, config.configPath);
     assert.deepEqual(launch.args.slice(-2), ["--config", selected]);
     assert.equal(readServerListen({}, config.configPath).port, "8877");
-    writeFileSync(join(repo, "team.json"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
-    assert.equal(readServerListen({}, "team.json").port, "1");
+    writeFileSync(join(repo, "team.yaml"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
+    assert.equal(readServerListen({}, "team.yaml").port, "1");
     assert.equal(readServerListen({}, config.configPath).port, "8877");
   } finally {
     process.chdir(previous);
@@ -194,9 +194,9 @@ test("start anchors a relative --config to the caller before the stack cwd chang
   }
 });
 
-test("server.host and server.port come from config.json", () => {
+test("server.host and server.port come from config.yaml", () => {
   const home = mkdtempSync(join(tmpdir(), "dataagent-listen-"));
-  writeFileSync(join(home, "config.json"), JSON.stringify({
+  writeFileSync(join(home, "config.yaml"), JSON.stringify({
     server: { host: "0.0.0.0", port: 8877 },
   }));
   const env = { DATAAGENT_HOME: home };
@@ -206,7 +206,7 @@ test("server.host and server.port come from config.json", () => {
     assert.equal(dev.apiHost, "0.0.0.0");
     assert.equal(dev.apiPort, "8877");
     assert.equal(webLaunch(dev).env.API_PROXY_TARGET, "http://0.0.0.0:8877");
-    writeFileSync(join(home, "config.json"), JSON.stringify({
+    writeFileSync(join(home, "config.yaml"), JSON.stringify({
       server: { host: "::", port: 8877 },
     }));
     const ipv6 = resolveStackRuntimeConfig(env);
@@ -220,8 +220,8 @@ test("server.host and server.port come from config.json", () => {
 });
 
 test("unknown stack arguments fail instead of being dropped", () => {
-  for (const args of [["--env-file", "prod.env"], ["--user", "alice"], ["--config=team.json"], ["extra"]]) {
-    assert.throws(() => resolveStackRuntimeConfig({}, args), /Unknown argument/, args.join(" "));
+  for (const args of [["--env-file", "prod.env"], ["--user", "alice"], ["--config=team.yaml"], ["extra"]]) {
+    assert.throws(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, args), /Unknown argument/, args.join(" "));
   }
   assert.doesNotThrow(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/dataagent-home" }, ["--", "--api", "--web-port", "3311"]));
 });

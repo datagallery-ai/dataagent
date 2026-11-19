@@ -6,9 +6,9 @@ API keys or environment variables itself, and does not add a tool `model` field.
 
 ## Install and configure
 
-Copy this whole directory, including `.plugin.json`, to `<home>/plugins/llm-utils`.
+Copy this whole directory, including `.plugin.yaml`, to `<home>/plugins/llm-utils`.
 Add `llm-utils` to `plugins.enabled` and add the following entry to `models` in
-`<home>/config.json`, preserving your default model and other configured plugins:
+`<home>/config.yaml`, preserving your default model and other configured plugins:
 
 ```json
 {

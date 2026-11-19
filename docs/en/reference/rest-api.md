@@ -1,6 +1,6 @@
 # REST API
 
-This page is for integrators calling the control plane. It does not describe internal modules. The control plane listens on `http://127.0.0.1:8790` by default, from `server.host` and `server.port` in Home `config.json`. REST has no access token; A2A JSON-RPC has an optional shared token, described below. The Web app proxies `/api/v1/*` to that address.
+This page is for integrators calling the control plane. It does not describe internal modules. The control plane listens on `http://127.0.0.1:8790` by default, from `server.host` and `server.port` in Home `config.yaml`. REST has no access token; A2A JSON-RPC has an optional shared token, described below. The Web app proxies `/api/v1/*` to that address.
 
 ## Envelope
 

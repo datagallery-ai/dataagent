@@ -1,20 +1,20 @@
 # Common：外部插件示例
 
 这是内部验证用插件，不随 wheel 分发，也不默认启用。
-将整个目录（包含隐藏的 `.plugin.json` 和 `.mcp.json`）复制到 `<home>/plugins/common`，
-然后在 `<home>/config.json` 的 `plugins.enabled` 中加入 `"common"`；无需配置 `plugins.paths`。
+将整个目录（包含隐藏的 `.plugin.yaml` 和 `.mcp.yaml`）复制到 `<home>/plugins/common`，
+然后在 `<home>/config.yaml` 的 `plugins.enabled` 中加入 `"common"`；无需配置 `plugins.paths`。
 随 `plugins.enabled` 中的 `common` 启用，不需要另外注册 SubAgent。
 
 | 组件 | 职责 |
 | --- | --- |
-| `subagents/general-purpose.json` | 通用委派 Agent，名称保持 `general-purpose`，覆盖 Deep Agents 自动生成的同名 Agent |
+| `subagents/general-purpose.yaml` | 通用委派 Agent，名称保持 `general-purpose`，覆盖 Deep Agents 自动生成的同名 Agent |
 | `prompts/general-purpose.md` | 子 Agent 的通用任务流程、文件路径约定和结果要求 |
 | `prompts/agent.md` | 给根 Agent 追加的插件使用说明 |
 | `tools/statistics.py` | 无副作用的 `common__summarize_numbers`，返回 count/sum/mean/min/max |
 | `skills/number-summary/` | 显式数字列表的统计流程 |
 | `skills/tabular-inspection/` | CSV/TSV 结构与质量检查流程，复用原生文件工具和 shell，不新增依赖 |
 | `hooks/audit.py` | 六类生命周期审计；根与子 Agent 分别声明，不隐式继承 |
-| `.mcp.json` | 插件 MCP 配置入口，当前为空，不连接外部服务 |
+| `.mcp.yaml` | 插件 MCP 配置入口，当前为空，不连接外部服务 |
 
 统计能力由根 Agent 或通用子 Agent 使用。
 通用子 Agent 省略 `tools`，由 Deep Agents 继承根的显式工具（包括 MCP 工具）；
@@ -30,11 +30,11 @@
 
 ## MCP
 
-`.mcp.json` 使用 `{"mcpServers": {}}` 格式，仓库完整模板位于 `examples/mcp/mcp.full.json`。
+`.mcp.yaml` 使用 `{"mcpServers": {}}` 格式，仓库完整模板位于 `examples/mcp/mcp.full.yaml`。
 例如放入名为 `analytics` 的服务后，其 `query` 工具名为 `mcp__common__analytics__query`。
 在本目录配置 stdio 时，工作目录为本插件根；环境引用仍从产品环境解析，不读取插件旁 `.env`。
 
 没有默认 MCP 服务地址或凭证，所以保留空对象，不放会导致启动失败的占位连接。
 配置真实服务后，REST/TUI 下一轮自动刷新；冷启动连接失败会导致启动失败，热更新失败则拒绝该轮请求。
-用户安装后更适合在 Home `.mcp.json`
+用户安装后更适合在 Home `.mcp.yaml`
 填写个人服务，不需要修改安装包内置资源。只放配置文件不会为它增加 shell 沙箱隔离。

@@ -1,32 +1,29 @@
 # MCP
 
-用 `.mcp.json` 接入外部 MCP 服务。字段表在 [MCP 配置](../reference/mcp-configuration.md)。本地可运行示例在 [examples/mcp](../../examples/mcp/README.md)。
+用 `.mcp.yaml` 接入外部 MCP 服务。字段表在 [MCP 配置](../reference/mcp-configuration.md)。本地可运行示例在 [examples/mcp](../../examples/mcp/README.md)。
 
 ## 放在哪里
 
 只读两处：
 
-- `<home>/.mcp.json`，作用域名 `user`
-- 已启用插件根目录的 `.mcp.json`，作用域名是插件目录名
+- `<home>/.mcp.yaml`，作用域名 `user`
+- 已启用插件根目录的 `.mcp.yaml`，作用域名是插件目录名
 
-产品 `config.json` 和 `.plugin.json` 里没有 MCP 段。未启用插件的 `.mcp.json` 不会加载。
+产品 `config.yaml` 和 `.plugin.yaml` 里没有 MCP 段。未启用插件的 `.mcp.yaml` 不会加载。
 
 ## 最小 stdio 服务
 
-`<home>/.mcp.json`：
+`<home>/.mcp.yaml`：
 
-```json
-{
-  "mcpServers": {
-    "math": {
-      "command": "python",
-      "args": ["math_server.py"]
-    }
-  }
-}
+```yaml
+mcpServers:
+  math:
+    command: python
+    args:
+    - math_server.py
 ```
 
-省略 `type` 时按 `stdio`。`command` 含 `/` 且不是绝对路径时，相对该 `.mcp.json` 所在目录解析。工作目录也是这个目录。
+省略 `type` 时按 `stdio`。`command` 含 `/` 且不是绝对路径时，相对该 `.mcp.yaml` 所在目录解析。工作目录也是这个目录。
 
 环境引用使用 `$env{NAME}`，优先级与产品配置相同。示例用 `$env{MCP_PYTHON}` 指向解释器。
 
@@ -44,7 +41,7 @@
 
 REST 启动时，在对外就绪前加载 MCP 工具。配置或发现失败会阻止启动。
 
-下一轮查询前，若 `.mcp.json` 变化，会重新连接并编译。进行中的运行保持旧工具集。无效更新只拒绝新查询。
+下一轮查询前，若 `.mcp.yaml` 变化，会重新连接并编译。进行中的运行保持旧工具集。无效更新只拒绝新查询。
 
 SDK：
 

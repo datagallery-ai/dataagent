@@ -4,13 +4,13 @@
 
 ## 启动方式
 
-直接启动时，TUI 按 `config.json` 连接 `/api/v1/runs`：没有控制面就拉起 `dataagent serve`，已经在跑就连上。旧的登录和 CopilotKit 客户端已经删除。
+直接启动时，TUI 按 `config.yaml` 连接 `/api/v1/runs`：没有控制面就拉起 `dataagent serve`，已经在跑就连上。旧的登录和 CopilotKit 客户端已经删除。
 
 ```bash
 npm run start:tui
 ```
 
-地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`npm run start -- --config` 绑到另一份文件的端口时，不带参数的 TUI 不会跟着走；Home 那个地址空着，就会按 Home 再起一个后端。要连已经起来的那一个，用 `--runtime-url`。`./deploy.sh tui` 连接这次 `./deploy.sh start` 记下的 API 地址。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
+地址来自 Home `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`npm run start -- --config` 绑到另一份文件的端口时，不带参数的 TUI 不会跟着走；Home 那个地址空着，就会按 Home 再起一个后端。要连已经起来的那一个，用 `--runtime-url`。`./deploy.sh tui` 连接这次 `./deploy.sh start` 记下的 API 地址。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 
 恢复最近的服务端会话：
 
@@ -24,7 +24,7 @@ npm run start:tui -- --resume
 npm run start:tui -- --resume thread-001
 ```
 
-`--config` 用那份文件代替 Home `config.json`，并拉起后端，不附着已经在跑的控制面。`--env-file`、`--workspace`、`--user`、`--session` 同样传给这次拉起的后端。
+`--config` 用那份文件代替 Home `config.yaml`，并拉起后端，不附着已经在跑的控制面。`--env-file`、`--workspace`、`--user`、`--session` 同样传给这次拉起的后端。
 
 查看 CLI 参数：
 
@@ -76,7 +76,7 @@ TUI 把自然语言输入发到控制面的 `/api/v1/runs`，与 Web 共用会�
 
 ## 典型流程
 
-1. 运行 `npm run start:tui`。控制面没起时由 TUI 拉起；已经在 `config.json` 的地址上时直接连上，默认 `http://127.0.0.1:8790`。
+1. 运行 `npm run start:tui`。控制面没起时由 TUI 拉起；已经在 `config.yaml` 的地址上时直接连上，默认 `http://127.0.0.1:8790`。
 2. 输入问题：
 
 ```text
@@ -94,13 +94,13 @@ TUI 把自然语言输入发到控制面的 `/api/v1/runs`，与 Web 共用会�
 | 使用环境 | 浏览器、本地演示、业务分析。 | SSH、远程服务器、终端工作流。 |
 | 操作方式 | 点击、输入框、控制台。 | 键盘和 slash 命令。 |
 | 追溯展示 | 右侧控制台、步骤详情和追溯列表。 | Chat 记录和 `/outputs` 页面。 |
-| 配置 | 不能在页面上改。两边都用控制面启动时的 `config.json`。 | 同左。`/resume` 恢复会话，`/outputs` 查看产物。 |
+| 配置 | 不能在页面上改。两边都用控制面启动时的 `config.yaml`。 | 同左。`/resume` 恢复会话，`/outputs` 查看产物。 |
 
 需要完整视觉演示时，用 Web 工作台。需要在 SSH 或轻量终端环境验证 Agent 运行链路时，用 TUI。
 
 ## 排查
 
-- 无法连接：直接 `npm run start:tui`。它连 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；那里没有控制面时会拉起一个。已经用另一份 `--config` 启动的控制面，用 `--runtime-url` 连接。`./deploy.sh` 管的栈用 `./deploy.sh tui`，它走启动时记下的 API 地址。
+- 无法连接：直接 `npm run start:tui`。它连 Home `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；那里没有控制面时会拉起一个。已经用另一份 `--config` 启动的控制面，用 `--runtime-url` 连接。`./deploy.sh` 管的栈用 `./deploy.sh tui`，它走启动时记下的 API 地址。
 - 只想连接、不要拉起：用 `--runtime-url`。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 - 模型无响应：检查根目录 `.env` 中的 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。
 - 会话无法恢复：确认流地址所在源（`http://<server.host>:<server.port>`）上的 `GET /api/v1/sessions` 可访问。TUI 调用该接口时不带登录凭证。

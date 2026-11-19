@@ -438,7 +438,7 @@ async def test_tool_passes_real_model_context_unchanged(tmp_path, monkeypatch):
     from dataagent import LaunchOptions, prepare_runtime
     from dataagent.models import AgentContext
 
-    config_path = tmp_path / "config.json"
+    config_path = tmp_path / "config.yaml"
     config_path.write_text(
         json.dumps(
             {

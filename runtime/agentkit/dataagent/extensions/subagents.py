@@ -22,14 +22,15 @@ from dataagent.extensions.run_hooks import RunHook, compile_run_hooks
 from dataagent.extensions.skills import compile_skill_sources
 from dataagent.extensions.tools import resolve_tool_refs
 from dataagent.semantic_client import SemanticServiceClient
-from dataagent.strict_json import read_json
+from dataagent.strict_yaml import check_yaml_path, read_yaml
 
 
 def load_declared_subagents(root: Path, spec: PluginSpec) -> list[SubAgentSpec]:
     """Read SubAgent declarations. Does not import factories or compile tools."""
     declared = []
     for relative in spec.subagents:
-        child = SubAgentSpec.model_validate(read_json(contained_path(root, relative)))
+        check_yaml_path(Path(relative))
+        child = SubAgentSpec.model_validate(read_yaml(contained_path(root, relative)))
         if child.description_file:
             text = contained_path(root, child.description_file).read_text(encoding="utf-8").strip()
             if not text:

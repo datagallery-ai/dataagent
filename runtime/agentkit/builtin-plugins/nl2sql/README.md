@@ -12,10 +12,10 @@
 
 ```
 nl2sql/                      插件根
-├── .plugin.json             插件清单（id=nl2sql，声明子代理与主代理路由提示）
+├── .plugin.yaml             插件清单（id=nl2sql，声明子代理与主代理路由提示）
 ├── prompts/routing.md       注入主代理系统提示：只能经 nl2sql 查已配置的库，不搜文件、不用 shell 查库
 ├── subagents/
-│   ├── nl2sql.json          SubAgentSpec（kind=compiled，指向图工厂与描述文件）
+│   ├── nl2sql.yaml          SubAgentSpec（kind=compiled，指向图工厂与描述文件）
 │   ├── nl2sql.description.md 子代理描述（主代理在 task 工具中看到的契约）
 │   └── nl2sql.py            build_subagent 图工厂：参数/模型/语义客户端注入、
 │                            任务协议适配（messages→question，JSON AIMessage 出参）、
@@ -58,27 +58,23 @@ nl2sql/                      插件根
 
 设置 `dataagent.entry` 为 `nl2sql` 时，不再经主代理的 `task` 工具委派。宿主仍只挂 `build_subagent` 返回的 Runnable，不调用 `build_nl2sql_graph`。用户消息直接进入这个 Runnable，回复仍是一条 JSON `AIMessage`。结果文件仍写到当前会话的 `outputs/nl2sql/`（宿主把 `outputs_dir` 传给工厂）。
 
-```json
-{
-  "dataagent": {"entry": "nl2sql"},
-  "plugins": {
-    "enabled": ["nl2sql"],
-    "config": {
-      "nl2sql": {
-        "model": "primary",
-        "database": {
-          "db_id": "mydb",
-          "dialect": "sqlite",
-          "engine": "sqlite",
-          "path": "/data/app.db"
-        }
-      }
-    }
-  }
-}
+```yaml
+dataagent:
+  entry: nl2sql
+plugins:
+  enabled:
+  - nl2sql
+  config:
+    nl2sql:
+      model: primary
+      database:
+        db_id: mydb
+        dialect: sqlite
+        engine: sqlite
+        path: /data/app.db
 ```
 
-可复制的产品配置是 [examples/nl2sql-entry.json](../../examples/nl2sql-entry.json)。这种模式下没有主代理可读 `prompts/routing.md` 或子代理描述，这些内容被忽略。`dataagent.hooks`、调用上限和 `workspaces` 留在配置里，不装进这张图。请用 `ainvoke` / `astream`；`run_task` 是 async，同步 `invoke` 可能失败。模型的 token 和推理按模型本身的流式设置发出，最终回复也在消息快照里。不要把 Deep Agents 根上的线程恢复到这张图。改 `entry` 要重启。
+可复制的产品配置是 [examples/nl2sql-entry.yaml](../../examples/nl2sql-entry.yaml)。这种模式下没有主代理可读 `prompts/routing.md` 或子代理描述，这些内容被忽略。`dataagent.hooks`、调用上限和 `workspaces` 留在配置里，不装进这张图。请用 `ainvoke` / `astream`；`run_task` 是 async，同步 `invoke` 可能失败。模型的 token 和推理按模型本身的流式设置发出，最终回复也在消息快照里。不要把 Deep Agents 根上的线程恢复到这张图。改 `entry` 要重启。
 
 | 旧版 | 现在 |
 | --- | --- |
@@ -129,38 +125,30 @@ nl2sql/                      插件根
 语义层服务在根级 `semantic` 段配置（由宿主创建客户端并注入，生命周期
 归宿主管理），不属于本插件参数：
 
-```json
-{
-  "models": {
-    "primary": {
-      "provider": "openai",
-      "name": "$env{LLM_MODEL}",
-      "base_url": "$env{LLM_BASE_URL}",
-      "api_key": "$env{LLM_API_KEY}"
-    }
-  },
-  "semantic": {
-    "base_url": "http://semantic-service",
-    "username": "…",
-    "password": "…",
-    "timeout_seconds": 30.0
-  },
-  "plugins": {
-    "enabled": ["nl2sql"],
-    "config": {
-      "nl2sql": {
-        "model": "primary",
-        "model_call_budget": 64,
-        "database": {
-          "db_id": "mydb",
-          "dialect": "sqlite",
-          "engine": "sqlite",
-          "path": "/data/app.db"
-        }
-      }
-    }
-  }
-}
+```yaml
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+semantic:
+  base_url: http://semantic-service
+  username: …
+  password: …
+  timeout_seconds: 30.0
+plugins:
+  enabled:
+  - nl2sql
+  config:
+    nl2sql:
+      model: primary
+      model_call_budget: 64
+      database:
+        db_id: mydb
+        dialect: sqlite
+        engine: sqlite
+        path: /data/app.db
 ```
 
 | 参数 | 说明 |

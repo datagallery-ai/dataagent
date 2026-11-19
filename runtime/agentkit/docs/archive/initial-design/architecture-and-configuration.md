@@ -1,3 +1,5 @@
+> 历史记录：本文描述旧 JSON 配置版本。当前运行时只读取 YAML，请参阅配置指南。
+
 # DataAgent：架构、模块职责与配置机制
 
 当前产品文件只在 Home `config.json` 与 `--config` 中取一份，字段合并见 [配置字段](../../reference/configuration.md)。下文保留当时的设计记录。

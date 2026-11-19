@@ -11,7 +11,7 @@ What you can give the model today:
 | A local directory | `dataagent.workspaces`, or `--workspace` / `DATAAGENT_WORKSPACE` |
 | A Skill | `<home>/skills/<name>/SKILL.md` |
 | A plugin | `<home>/plugins/<id>/` or `plugins.paths`, then `plugins.enabled` |
-| MCP | `.mcp.json` at Home or at an enabled plugin root |
-| Semantic service | The `semantic` object in `config.json`. Omit it and no client is created. |
+| MCP | `.mcp.yaml` at Home or at an enabled plugin root |
+| Semantic service | The `semantic` object in `config.yaml`. Omit it and no client is created. |
 
 Querying a database, warehouse, or spreadsheet requires that an enabled plugin declare it in its own configuration. Do not call REST from the old datasource type table.

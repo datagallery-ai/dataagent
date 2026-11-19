@@ -8,14 +8,12 @@
 
 要让模型读本机文件，把目录写进工作区。目录必须在启动前已经存在。
 
-```json
-{
-  "dataagent": {
-    "workspaces": [
-      {"name": "input", "path": "/data/reports", "read_only": true}
-    ]
-  }
-}
+```yaml
+dataagent:
+  workspaces:
+  - name: input
+    path: /data/reports
+    read_only: true
 ```
 
 也可以在启动控制面时重复传入 `--workspace`，或设置 `DATAAGENT_WORKSPACE`。这三项里，命令行优先。

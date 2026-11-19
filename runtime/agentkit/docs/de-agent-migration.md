@@ -8,7 +8,7 @@
 
 ```mermaid
 flowchart TB
-    C["Agent JSON 配置"] --> H["宿主：模型 / semantic client / session"]
+    C["Agent YAML 配置"] --> H["宿主：模型 / semantic client / session"]
     C --> P["插件发现：de-agent requires nl2sql"]
     P --> M["配置合并：插件 plugins.config → 选中的产品文件"]
     M --> A["主 Deep Agent"]
@@ -32,7 +32,7 @@ flowchart TB
 
 ### 插件配置与依赖
 
-`.plugin.json` 新增 `requires`（本地插件 ID 列表）和 `config`（默认 JSON 片段路径）。
+`.plugin.yaml` 新增 `requires`（本地插件 ID 列表）和 `config`（默认 JSON 片段路径）。
 只启用 `de-agent` 就会加载它依赖的 `nl2sql`。依赖按拓扑顺序加载、共享依赖只加载一次；
 缺失、循环或多个目录对应同一个 ID 都在启动时失败。它是运行时装配依赖，不是跨插件 Python import，
 也不负责安装包、版本求解或调用插件 setup。
@@ -50,7 +50,7 @@ flowchart TB
 | `get_model(alias)` | 复用宿主模型配置、创建和缓存 |
 | `semantic_client` | 借用宿主管理生命周期的语义客户端 |
 
-完整配置见 [示例](../examples/de-agent.json)。插件配置不能覆盖宿主默认模型选择；
+完整配置见 [示例](../examples/de-agent.yaml)。插件配置不能覆盖宿主默认模型选择；
 业务组件改用另一个别名时，应显式配置 `plugins.config.nl2sql.model` 与 `plugins.config.de-agent.model`。
 
 ### Hook 与 metadata-recall

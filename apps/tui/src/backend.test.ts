@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { spawn, spawnSync } from "node:child_process";
 import { resolve } from "node:path";
 import { it } from "node:test";
-import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { cpSync, copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
@@ -162,7 +162,8 @@ it("TUI loads project env defaults while preserving terminal model and interpret
   const source = fileURLToPath(new URL("../../../", import.meta.url));
   try {
     for (const file of ["apps/tui/dist/backend.js", "apps/tui/dist/log-path.js", "apps/tui/dist/utils/terminal-text.js",
-      "scripts/python-environment.mjs", "scripts/lib/logging.mjs", "scripts/lib/log-redaction.mjs"]) {
+      "scripts/python-environment.mjs", "scripts/server-listen.mjs", "scripts/lib/config-yaml.mjs",
+      "scripts/lib/config-env.mjs", "scripts/lib/logging.mjs", "scripts/lib/log-redaction.mjs"]) {
       mkdirSync(resolve(root, file, ".."), { recursive: true });
       copyFileSync(join(source, file), join(root, file));
     }
@@ -203,4 +204,45 @@ await backend.stop();
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+
+it("default runTui resolves root dotenv before probing and preserves startup overrides", () => {
+  const root = mkdtempSync(join(tmpdir(), "tui-root-listen-"));
+  const source = fileURLToPath(new URL("../../../", import.meta.url));
+  try {
+    cpSync(join(source, "apps/tui/dist"), join(root, "apps/tui/dist"), { recursive: true });
+    symlinkSync(join(source, "apps/tui/node_modules"), join(root, "apps/tui/node_modules"), process.platform === "win32" ? "junction" : "dir");
+    cpSync(join(source, "scripts"), join(root, "scripts"), { recursive: true });
+    symlinkSync(join(source, "node_modules"), join(root, "node_modules"), process.platform === "win32" ? "junction" : "dir");
+    writeFileSync(join(root, "package.json"), '{"type":"module"}');
+    writeFileSync(join(root, ".env"), "PR670_BIND_HOST=127.0.0.1\n");
+    mkdirSync(join(root, "home"));
+    writeFileSync(join(root, "home/config.yaml"), "server:\n  host: $env{PR670_BIND_HOST}\n  port: 8790\n");
+    writeFileSync(join(root, "selected.env"), "PR670_SELECTED_HOST=127.0.0.3\n");
+    const script = `
+import assert from 'node:assert/strict';
+import { runTui } from './apps/tui/dist/index.js';
+let started = 0;
+let probed = '';
+const mode = process.env.TEST_MODE;
+const argv = mode === 'remote' ? ['--runtime-url', 'http://127.0.0.4:8790'] : mode === 'selected' ? ['--env-file', 'selected.env'] : [];
+const code = await runTui({ argv, startBackend: async options => {
+  started++;
+  if (mode === 'selected') assert.equal(options.envFile, 'selected.env');
+  throw new Error('fixture reached backend');
+}, fetchImpl: async url => { probed = String(url); throw new Error('fixture offline'); } });
+assert.equal(code, 1);
+assert.equal(started, mode === 'remote' ? 0 : 1);
+if (mode === 'root' || mode === 'process') assert.equal(probed, 'http://' + (mode === 'process' ? '127.0.0.2' : '127.0.0.1') + ':8790/healthz');
+if (mode === 'remote') assert.equal(probed, 'http://127.0.0.4:8790/healthz');
+`;
+    for (const mode of ["root", "process", "selected", "remote"]) {
+      const env: NodeJS.ProcessEnv = { ...process.env, DATAAGENT_HOME: join(root, "home"), TEST_MODE: mode };
+      delete env.PR670_BIND_HOST;
+      if (mode === "process") env.PR670_BIND_HOST = "127.0.0.2";
+      const result = spawnSync(process.execPath, ["--input-type=module", "-e", script], { cwd: root, env, encoding: "utf8" });
+      assert.equal(result.status, 0, result.stderr);
+    }
+  } finally { rmSync(root, { recursive: true, force: true }); }
 });

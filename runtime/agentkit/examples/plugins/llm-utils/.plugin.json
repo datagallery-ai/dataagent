@@ -1,9 +1,0 @@
-{
-  "schema_version": 3,
-  "id": "llm-utils",
-  "tools": {
-    "summarize_text": {
-      "entrypoint": "tools/summary.py:summarize_text"
-    }
-  }
-}

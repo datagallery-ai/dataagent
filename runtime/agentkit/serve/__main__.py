@@ -23,7 +23,13 @@ from dataagent import (
     prepare_runtime,
     safe_error,
 )
-from dataagent.host import configure_logging, diagnostic_traceback, server_listen
+from dataagent.host import (
+    add_config_arguments,
+    configure_logging,
+    diagnostic_traceback,
+    run_config_command,
+    server_listen,
+)
 
 # Reload watches source only. The project root also holds .venv, which the
 # polling reloader would rescan every tick.
@@ -62,7 +68,7 @@ def _parser() -> argparse.ArgumentParser:
     api = commands.add_parser("serve", help="Run the product backend")
     api.add_argument(
         "--config",
-        help="Use this file instead of Home config.json",
+        help="Use this file instead of Home config.yaml",
     )
     api.add_argument("--user", default="default", help="Local user ID (default: default)")
     api.add_argument(
@@ -84,7 +90,7 @@ def _parser() -> argparse.ArgumentParser:
     a2a = commands.add_parser("serve-a2a", help="Expose this agent over the A2A 1.0 protocol")
     a2a.add_argument(
         "--config",
-        help="Use this file instead of Home config.json",
+        help="Use this file instead of Home config.yaml",
     )
     a2a.add_argument("--user", default="default", help="Local user ID (default: default)")
     a2a.add_argument(
@@ -100,6 +106,7 @@ def _parser() -> argparse.ArgumentParser:
         "--auth-token", default=None,
         help="Require Authorization: Bearer <token> (default: DATAAGENT_A2A_AUTH_TOKEN)",
     )
+    add_config_arguments(commands)
     history = commands.add_parser("history-sql", help="Prepare the history SQL corpus")
     history_sql.add_arguments(history)
     return parser
@@ -132,7 +139,7 @@ def _instance_id() -> str:
 def _listen(
     runtime: PreparedRuntime | None, config: str | None = None, env_file: str | None = None
 ) -> tuple[str, int]:
-    """Bind only config.json server.host and server.port, also in a degraded start."""
+    """Bind only config.yaml server.host and server.port, also in a degraded start."""
     if runtime is not None:
         return runtime.settings.server.host, runtime.settings.server.port
     return server_listen(LaunchOptions(config=config or None, env_file=env_file or None))
@@ -245,6 +252,8 @@ def _run_reload(argv, host: str, port: int) -> int:
 
 def main(argv=None) -> int:
     args = _parser().parse_args(argv)
+    if args.command == "config":
+        return run_config_command(args)
     configure_logging()
     if args.command == "history-sql":
         return history_sql.run(args)

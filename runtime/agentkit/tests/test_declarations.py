@@ -102,7 +102,7 @@ def test_config_json_version_says_how_to_upgrade():
 def test_old_field_names_are_rejected():
     for model, data in [
         (PluginSpec, {"id": "old", "system_prompt": "p.md"}),
-        (PluginSpec, {"id": "old", "config": "defaults.json"}),
+        (PluginSpec, {"id": "old", "config": "defaults.yaml"}),
         (SubAgentSpec, {"name": "child", "description": "x", "system_prompt": "p.md"}),
     ]:
         with pytest.raises(ValidationError):

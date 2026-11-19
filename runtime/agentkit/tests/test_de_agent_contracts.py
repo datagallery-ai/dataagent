@@ -26,6 +26,7 @@ from dataagent.declarations import PluginSpec, SubAgentSpec
 from dataagent.extensions.compiler import compile_extensions
 from dataagent.extensions.loading import PythonLoader
 from dataagent.extensions.run_hooks import RunHook
+from dataagent.strict_yaml import read_yaml
 
 PLUGIN = Path(__file__).resolve().parents[1] / "builtin-plugins/de-agent"
 
@@ -159,7 +160,7 @@ def test_task_hook_uses_original_query_and_reuses_cache(tmp_path):
 
 def test_recall_declares_read_only_files_and_no_free_semantic_search():
     """Metadata recall opts out of native file writes and unrestricted semantic search."""
-    spec = SubAgentSpec.model_validate_json((PLUGIN / "subagents/metadata-recall.json").read_text())
+    spec = SubAgentSpec.model_validate(read_yaml((PLUGIN / "subagents/metadata-recall.yaml")))
     assert spec.filesystem_tools == ["ls", "read_file"]
     assert len(spec.tools) == 4
     assert "semantic_retrieve" not in spec.tools
@@ -171,7 +172,7 @@ def test_subagent_only_tools_do_not_leak_into_root(tmp_path):
         'def inspect():\n    """Inspect one item."""\n    return "value"\n'
     )
     (tmp_path / "prompt.md").write_text("Inspect items.")
-    (tmp_path / "child.json").write_text(
+    (tmp_path / "child.yaml").write_text(
         json.dumps(
             {
                 "name": "inspector",
@@ -185,7 +186,7 @@ def test_subagent_only_tools_do_not_leak_into_root(tmp_path):
     plugin = PluginSpec(
         id="example",
         tools={"inspect": {"entrypoint": "tools.py:inspect", "scope": "subagents"}},
-        subagents=["child.json"],
+        subagents=["child.yaml"],
     )
     compiled = compile_extensions([(tmp_path, plugin)])
     assert compiled.get("tools") == []

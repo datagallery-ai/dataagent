@@ -229,7 +229,7 @@ async def test_shared_nl2sql_and_run_hooks_use_current_task(runtime, tmp_path, e
         '    path = runtime.context.session.outputs\n'
         '    (path / "hook.txt").write_text(runtime.context.session.root.name)\n'
     )
-    config = tmp_path / "shared.json"
+    config = tmp_path / "shared.yaml"
     config.write_text(json.dumps({
         "models": {
             name: {"name": "test", "base_url": "https://example.invalid", "api_key": "test"}

@@ -631,7 +631,7 @@ async def replay(args):
         original_hash = hashlib.sha256(db.read_bytes()).hexdigest()
         if args.group == "TC-W":
             os.environ["USER_SQLITE_PATH"] = str(db)
-        config = case_dir / "config.json"
+        config = case_dir / "config.yaml"
         config.write_text(
             json.dumps(config_for(db, args.semantic_url), ensure_ascii=False, indent=2)
         )

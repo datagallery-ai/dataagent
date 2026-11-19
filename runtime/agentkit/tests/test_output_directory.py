@@ -36,7 +36,7 @@ def binding_sql(monkeypatch):
     return statements
 
 
-def configured(runtime, value, filename="outputs.json"):
+def configured(runtime, value, filename="outputs.yaml"):
     path = runtime.paths.home / filename
     path.write_text(json.dumps({
         "models": {"primary": {
@@ -62,7 +62,7 @@ def test_output_config_resolves_paths_without_creating_directories(runtime, valu
 
 
 def test_output_root_uses_config_layer_precedence(runtime):
-    configured(runtime, str(runtime.paths.home / "default-reports"), "config.json")
+    configured(runtime, str(runtime.paths.home / "default-reports"), "config.yaml")
     overriding = configured(runtime, str(runtime.paths.home / "custom-reports"))
     assert overriding.paths.output_root == runtime.paths.home / "custom-reports"
     cleared = configured(runtime, None)
@@ -424,7 +424,7 @@ def test_explicit_inputs_preserve_order_and_empty_bindings(runtime, tmp_path):
 
 
 def test_configured_output_error_names_its_file(runtime):
-    with pytest.raises(ValueError, match=r"outputs\.json: dataagent\.output_root: .*absolute path"):
+    with pytest.raises(ValueError, match=r"outputs\.yaml: dataagent\.output_root: .*absolute path"):
         configured(runtime, "reports")
 
 
@@ -529,7 +529,7 @@ def test_outputs_cannot_use_home_outside_outputs(runtime, relative, configured_r
     assert find_session_binding(paths.for_session("task").root) is None
 
 
-@pytest.mark.parametrize("name", ["config.json", ".env"])
+@pytest.mark.parametrize("name", ["config.yaml", ".env"])
 def test_output_override_cannot_replace_home_configuration(runtime, name):
     output = runtime.paths.home / name
     output.write_text("preserve configuration")

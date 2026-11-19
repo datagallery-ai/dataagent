@@ -102,7 +102,7 @@ help     Show this help.
 
 One-click deploy builds the TUI so it is ready. Start it in another terminal with ./deploy.sh tui.
 That command connects to the API address recorded at start and does not launch a backend.
-npm run start:tui uses Home config.json and starts a backend when that address is down.
+npm run start:tui uses Home config.yaml and starts a backend when that address is down.
 The TUI does not stay running with the Web/API stack.
 `;
 }

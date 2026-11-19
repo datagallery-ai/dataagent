@@ -12,7 +12,7 @@
 # ============================================================================
 """Compiled-subagent entrypoint: plugin parameters plus host services → nl2sql Runnable.
 
-The host compiles ``subagents/nl2sql.json`` (``kind="compiled"``), calls
+The host compiles ``subagents/nl2sql.yaml`` (``kind="compiled"``), calls
 ``build_subagent(params, services)`` with the Agent configuration's
 ``plugins.config.nl2sql`` mapping and host services (``services.get_model``
 resolves model aliases; ``services.semantic_client`` is the host-owned

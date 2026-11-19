@@ -295,7 +295,7 @@ async def test_native_graph_runs_hooks_across_two_turns_without_todos(tmp_path, 
     from dataagent.agent import build_graph
     from dataagent.bootstrap import LaunchOptions, prepare_runtime
 
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(json.dumps({
         "models": {"primary": {"name": "offline", "base_url": "https://example.invalid/v1", "api_key": "unused"}},
         "plugins": {"enabled": ["de-agent"], "config": {"de-agent": {

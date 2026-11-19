@@ -138,7 +138,7 @@ class A2ASettings(StrictModel):
 
 
 class ServerSettings(StrictModel):
-    """Listen address. Web and deploy read these same fields from config.json."""
+    """Listen address. Web and deploy read these same fields from config.yaml."""
 
     host: str = "127.0.0.1"
     port: int = Field(default=8790, ge=1, le=65535)
@@ -195,7 +195,7 @@ class Settings(StrictModel):
     schema_version: Annotated[
         Literal[4],
         BeforeValidator(supported_version(
-            "config.json", 4,
+            "config.yaml", 4,
             "Version 4 makes dataagent.model a string and renames a2a.agents to "
             "a2a.remote_agents and semantic.timeout to semantic.timeout_seconds.",
         )),

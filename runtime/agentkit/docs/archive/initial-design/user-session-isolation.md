@@ -1,3 +1,5 @@
+> 历史记录：本文描述旧 JSON 配置版本。当前运行时只读取 YAML，请参阅配置指南。
+
 # DataAgent 用户与多 Session 资源隔离设计
 
 > 当前仅做资源分目录组织，不做工具访问隔离。本文的“输入只读”和“产出写入 outputs”均为 prompt 约定；文件工具与 Shell 直接使用原生 LocalShellBackend，按宿主权限执行。

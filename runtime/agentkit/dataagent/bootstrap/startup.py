@@ -5,7 +5,6 @@ read-only inputs → extension locations. Nothing here
 touches a terminal, HTTP, LangChain or plugin code.
 """
 
-import json
 from dataclasses import replace
 from pathlib import Path
 from types import MappingProxyType
@@ -37,6 +36,7 @@ from dataagent.bootstrap.paths import (
 from dataagent.bootstrap.runtime import PreparedRuntime, StartupReport
 from dataagent.plugin_config import contained_path, resolve_plugins
 from dataagent.settings import ServerSettings
+from dataagent.strict_yaml import check_legacy, check_yaml_path, read_yaml
 
 
 def prepare_runtime(options: LaunchOptions | None = None) -> PreparedRuntime:
@@ -49,7 +49,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> PreparedRuntime:
     cwd = directory(absolute(options.cwd, Path.cwd()), required=True)
     home = home_path(cwd)
     if options.init_home:
-        initialize_home(home)
+        initialize_home(home, initialize_config=options.config is None)
 
     cli_config = _explicit_file(options.config, cwd)
     env_file = _explicit_file(options.env_file, cwd)
@@ -113,7 +113,7 @@ def prepare_runtime(options: LaunchOptions | None = None) -> PreparedRuntime:
     # Step4. Keep applied configuration sources visible in the returned PreparedRuntime.
     applied = {layer.scope for layer in layers}
     configs = [
-        ConfigSource("user", home / "config.json", "user" in applied),
+        ConfigSource("user", home / "config.yaml", "user" in applied),
     ]
     if cli_config is not None:
         configs.append(ConfigSource("cli", cli_config, True))
@@ -221,25 +221,25 @@ def _resume_workspaces(
 def server_listen(options: LaunchOptions | None = None) -> tuple[str, int]:
     """Listen address of the selected config file, usable when prepare_runtime fails.
 
-    Reads only the `server` section of `options.config` or Home `config.json` and expands
-    `$env{NAME}` with the same environment as prepare_runtime. Any failure gives the defaults.
+    Reads only the `server` section of `options.config` or Home `config.yaml` and expands
+    `$env{NAME}` with the same environment as prepare_runtime. Invalid configuration is never replaced with defaults.
     """
     options = options or LaunchOptions()
-    try:
-        cwd = absolute(options.cwd, Path.cwd())
-        home = home_path(cwd)
-        path = _explicit_file(options.config, cwd) or home / "config.json"
-        raw = json.loads(path.read_text(encoding="utf-8"))
-        env_file = _explicit_file(options.env_file, cwd)
-        dotenv = selected_env_path(home, env_file)
-        environment = load_env(() if env_file is not None else (dotenv,), env_file)
-        section = expand_env(
-            raw.get("server") or {}, environment.values,
-            source=path, home=home, location=("server",), dotenv=dotenv,
-        )
-        server = ServerSettings.model_validate(section)
-    except Exception:
-        server = ServerSettings()
+    cwd = absolute(options.cwd, Path.cwd())
+    home = home_path(cwd)
+    path = _explicit_file(options.config, cwd) or home / "config.yaml"
+    check_legacy(path)
+    if options.config is None and not path.exists():
+        return ServerSettings().host, ServerSettings().port
+    raw = read_yaml(path)
+    env_file = _explicit_file(options.env_file, cwd)
+    dotenv = selected_env_path(home, env_file)
+    environment = load_env(() if env_file is not None else (dotenv,), env_file)
+    section = expand_env(
+        raw.get("server", {}), environment.values,
+        source=path, home=home, location=("server",), dotenv=dotenv,
+    )
+    server = ServerSettings.model_validate(section)
     return server.host, server.port
 
 
@@ -255,6 +255,7 @@ def _configure_plugins(paths, layers, settings, environment, dotenv):
     defaults = []
     for root, spec in selected:
         if spec.defaults_file is not None:
+            check_yaml_path(Path(spec.defaults_file))
             layer = _load_layer(
                 "plugin",
                 contained_path(root, spec.defaults_file),

@@ -1,0 +1,176 @@
+[
+  {
+    "name": "core",
+    "text": "date: 2026-11-18\nyes_word: yes\nno_word: no\non_word: on\noff_word: off\ntruth: true\nfalsehood: FALSE\nzero: 012\noctal: 0o12\nhex: 0x12\nexp: 1e2\nempty: null\ntext: |\n  中文 URL https://example.com/#a\n  second: line\n",
+    "value": {
+      "date": "2026-11-18",
+      "yes_word": "yes",
+      "no_word": "no",
+      "on_word": "on",
+      "off_word": "off",
+      "truth": true,
+      "falsehood": false,
+      "zero": 12,
+      "octal": 10,
+      "hex": 18,
+      "exp": 100,
+      "empty": null,
+      "text": "中文 URL https://example.com/#a\nsecond: line\n"
+    }
+  },
+  {
+    "name": "flow",
+    "text": "{\"a\": [1, true, null]}",
+    "value": {
+      "a": [
+        1,
+        true,
+        null
+      ]
+    }
+  },
+  {
+    "name": "safe",
+    "text": "a: 9007199254740991\nb: -9007199254740991",
+    "value": {
+      "a": 9007199254740991,
+      "b": -9007199254740991
+    }
+  },
+  {
+    "name": "reject-0",
+    "text": "",
+    "reject": true
+  },
+  {
+    "name": "reject-1",
+    "text": "# comment",
+    "reject": true
+  },
+  {
+    "name": "reject-2",
+    "text": "[]",
+    "reject": true
+  },
+  {
+    "name": "reject-3",
+    "text": "secret",
+    "reject": true
+  },
+  {
+    "name": "reject-4",
+    "text": "a: 1\n---\nb: 2",
+    "reject": true
+  },
+  {
+    "name": "reject-5",
+    "text": "a: 1\na: secret",
+    "reject": true
+  },
+  {
+    "name": "reject-6",
+    "text": "a: {b: 1, b: secret}",
+    "reject": true
+  },
+  {
+    "name": "reject-7",
+    "text": "1: secret",
+    "reject": true
+  },
+  {
+    "name": "reject-8",
+    "text": "true: secret",
+    "reject": true
+  },
+  {
+    "name": "reject-9",
+    "text": "? [a, b]\n: secret",
+    "reject": true
+  },
+  {
+    "name": "reject-10",
+    "text": "a: &secret 1",
+    "reject": true
+  },
+  {
+    "name": "reject-11",
+    "text": "a: *secret",
+    "reject": true
+  },
+  {
+    "name": "reject-12",
+    "text": "a: {\"<<\": 1}",
+    "reject": true
+  },
+  {
+    "name": "reject-13",
+    "text": "a: !secret value",
+    "reject": true
+  },
+  {
+    "name": "reject-14",
+    "text": "a: !!str secret",
+    "reject": true
+  },
+  {
+    "name": "reject-15",
+    "text": "%YAML 1.1\n---\na: 1",
+    "reject": true
+  },
+  {
+    "name": "reject-16",
+    "text": "a: .nan",
+    "reject": true
+  },
+  {
+    "name": "reject-17",
+    "text": "a: .inf",
+    "reject": true
+  },
+  {
+    "name": "reject-18",
+    "text": "a: 1e999",
+    "reject": true
+  },
+  {
+    "name": "reject-19",
+    "text": "a: 9007199254740992",
+    "reject": true
+  },
+  {
+    "name": "reject-20",
+    "text": "a: -9007199254740992",
+    "reject": true
+  },
+  {
+    "name": "reject-21",
+    "text": "a: [[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[[0]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]]",
+    "reject": true
+  },
+  {
+    "name": "reject-22",
+    "text": "a: [secret",
+    "reject": true
+  },
+  {
+    "name": "signed-nondecimal",
+    "text": "positive_hex: +0x12\nnegative_octal: -0o12\npositive_nan: +.nan\nnegative_nan: -.nan\n",
+    "value": {
+      "positive_hex": "+0x12",
+      "negative_octal": "-0o12",
+      "positive_nan": "+.nan",
+      "negative_nan": "-.nan"
+    }
+  },
+  {
+    "name": "empty-null",
+    "text": "empty:\nnested:\n  empty:\nquoted: \"\"\n",
+    "value": {
+      "empty": null,
+      "nested": {
+        "empty": null
+      },
+      "quoted": ""
+    }
+  }
+]

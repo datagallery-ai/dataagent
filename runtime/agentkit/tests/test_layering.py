@@ -19,7 +19,7 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 CORE = ROOT / "dataagent"
-LEAVES = {"dataagent.declarations", "dataagent.strict_json", "dataagent.diagnostics", "dataagent.errors"}
+LEAVES = {"dataagent.declarations", "dataagent.strict_json", "dataagent.strict_yaml", "dataagent.diagnostics", "dataagent.errors"}
 FOUNDATION = LEAVES | {"dataagent.settings", "dataagent.plugin_config", "dataagent.logging"}
 MODEL_TOOLING = ("langchain", "langgraph", "deepagents", "ag_ui", "mcp")
 EXTENSION_DEPENDENCIES = {
@@ -48,7 +48,7 @@ EXTENSION_CORE_DEPENDENCIES = {
     "tools": {"declarations"},
     "hooks": {"declarations"},
     "run_hooks": set(),
-    "subagents": {"declarations", "strict_json", "semantic_client"},
+    "subagents": {"declarations", "strict_yaml", "semantic_client"},
     "compiler": {"declarations", "semantic_client"},
     "__init__": set(),
 }
@@ -328,10 +328,11 @@ def test_public_sdk_exports_only_the_high_level_path():
         "Agent", "ConfigurationLoadError", "DataAgentError", "LaunchOptions",
         "LoopDetectedError", "AgentContext", "PreparedRuntime", "SemanticServiceClient",
         "SubagentServices", "collect_model_stream", "create_agent", "load_mcp_tools", "prepare_runtime",
-        "safe_error",
+        "safe_error", "read_yaml",
     }
     assert set(dataagent.host.__all__) == {
         "ERROR_CODES", "OPAQUE_ID_PATTERN", "error_code", "extension_revision", "refresh_extensions",
+        "add_config_arguments", "run_config_command",
         "server_listen", "configure_logging", "diagnostic_traceback", "log_context", "register_log_secrets",
     }
     assert dataagent.lowlevel.__all__ == ["build_graph"]

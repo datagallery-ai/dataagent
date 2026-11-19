@@ -29,6 +29,7 @@ from pathlib import Path
 from uuid import uuid4
 
 import pytest
+import yaml
 from dotenv import dotenv_values
 from langchain_core.messages import ToolMessage
 from langgraph.checkpoint.sqlite.aio import AsyncSqliteSaver
@@ -197,7 +198,7 @@ def test_tui_resolves_explicit_env_file_from_npm_launch_directory(tmp_path):
     from test_launcher import config_file
 
     config, port = config_file(tmp_path)
-    config_data = json.loads((PROJECT / "config.example.json").read_text())
+    config_data = yaml.safe_load((PROJECT / "config.example.yaml").read_text())
     config_data["server"]["port"] = port
     config.write_text(json.dumps(config_data))
     env_file = tmp_path / "provider.env"
@@ -341,8 +342,8 @@ def exercise_query_and_resume(tmp_path, values):
         probe.bind(("127.0.0.1", 0))
         port = probe.getsockname()[1]
     environment = {**os.environ, **{key: values[key] for key in required}, "DATAAGENT_WORKSPACE": str(tmp_path)}
-    config = tmp_path / "config.json"
-    config_data = json.loads((PROJECT / "config.example.json").read_text())
+    config = tmp_path / "config.yaml"
+    config_data = yaml.safe_load((PROJECT / "config.example.yaml").read_text())
     config_data["plugins"] = {"enabled": ["common"], "paths": []}
     config_data["server"]["port"] = port
     config.write_text(json.dumps(config_data))

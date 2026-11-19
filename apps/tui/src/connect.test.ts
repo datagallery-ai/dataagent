@@ -121,9 +121,9 @@ for (const home of ["C:\\agent-home", "/srv/agent-home"]) {
   });
 }
 
-it("attaches to server.host and server.port from config.json when already up", async () => {
+it("attaches to server.host and server.port from config.yaml when already up", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-host-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "10.0.0.8", port: 8802 },
   }));
   const probed: string[] = [];
@@ -146,7 +146,7 @@ it("attaches to server.host and server.port from config.json when already up", a
 
 it("attaches to the configured server.host", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-attach-host-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "10.0.0.8", port: 8802 },
   }));
   let requested = "";
@@ -164,9 +164,9 @@ it("attaches to the configured server.host", async () => {
   assert.equal(requested, "http://10.0.0.8:8802/healthz");
 });
 
-it("attaches to the port from config.json", async () => {
+it("attaches to the port from config.yaml", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-port-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({ server: { port: 8796 } }));
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({ server: { port: 8796 } }));
   const probed: string[] = [];
   const code = await runTui({
     argv: [],
@@ -192,7 +192,7 @@ function eventStream(events: object[]): Response {
 
 it("a backend started by the TUI is reached through loopback when ready announces 0.0.0.0", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-ready-wildcard-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "0.0.0.0", port: 8790 },
   }));
   const requested: string[] = [];
@@ -244,7 +244,7 @@ it("a backend started by the TUI is reached through loopback when ready announce
 
 it("a backend started with --config is reached through loopback when ready announces 0.0.0.0", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-config-wildcard-"));
-  const configPath = join(directory, "selected.json");
+  const configPath = join(directory, "selected.yaml");
   await writeFile(configPath, JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } }));
   const requested: string[] = [];
   const code = await runTui({
@@ -272,9 +272,9 @@ it("a backend started with --config is reached through loopback when ready annou
   ]);
 });
 
-it("an unexpanded $env host still starts the backend when nothing is listening", async () => {
+it("an expanded $env host still starts the backend when nothing is listening", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-env-host-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "$env{SERVER_HOST}", port: 8790 },
   }));
   await writeFile(join(directory, ".env"), "SERVER_HOST=127.0.0.1\n");
@@ -305,14 +305,14 @@ it("an unexpanded $env host still starts the backend when nothing is listening",
   assert.equal(started, 1);
   assert.equal(rendered, true);
   assert.deepEqual(requested, [
-    "http://$env{SERVER_HOST}:8790/healthz",
+    "http://127.0.0.1:8790/healthz",
     "http://127.0.0.1:8790/healthz",
   ]);
 });
 
 it("a backend started by the TUI is reached through IPv6 loopback when ready announces ::", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-ready-ipv6-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "::", port: 8790 },
   }));
   const requested: string[] = [];
@@ -362,9 +362,9 @@ it("a backend started by the TUI is reached through IPv6 loopback when ready ann
   ]);
 });
 
-it("reads the listen address from Home config.json", async () => {
+it("reads the listen address from Home config.yaml", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-listen-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "0.0.0.0", port: 8877 },
   }));
   assert.deepEqual(configuredListen({ DATAAGENT_HOME: directory }), {
@@ -375,7 +375,7 @@ it("reads the listen address from Home config.json", async () => {
 
 it("connects a wildcard bind address through loopback and accepts another IP", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-v2-client-host-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "127.0.0.1", port: 8790 },
   }));
   const env = { DATAAGENT_HOME: directory };
@@ -395,7 +395,7 @@ it("connects a wildcard bind address through loopback and accepts another IP", a
 
 it("a backend started with --config shares one loopback client URL and stops with the TUI", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-ready-config-wildcard-"));
-  const configPath = join(directory, "selected.json");
+  const configPath = join(directory, "selected.yaml");
   await writeFile(configPath, JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } }));
   const requested: string[] = [];
   let rendered = false;
@@ -447,7 +447,7 @@ it("a backend started with --config shares one loopback client URL and stops wit
 
 it("accepts an explicit HTTP port 80 and an omitted port", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-port80-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "127.0.0.1", port: 80 },
   }));
   const env = { DATAAGENT_HOME: directory };
@@ -463,7 +463,7 @@ it("accepts an explicit HTTP port 80 and an omitted port", async () => {
 
 it("attaches to a configured IPv6 listen address", async () => {
   const directory = await mkdtemp(join(tmpdir(), "dataagent-ipv6-"));
-  await writeFile(join(directory, "config.json"), JSON.stringify({
+  await writeFile(join(directory, "config.yaml"), JSON.stringify({
     server: { host: "::1", port: 8790 },
   }));
   const env = { DATAAGENT_HOME: directory };
@@ -615,7 +615,7 @@ it("log path is Home runtime/logs/tui.log and ignores a separate log-path variab
     process.chdir(launch);
     assert.equal(
       resolveTuiLogPath({ DATAAGENT_HOME: "relative-home", INIT_CWD: "/ignored" }),
-      join(launch, "relative-home", "runtime", "logs", "tui.log"),
+      join(process.cwd(), "relative-home", "runtime", "logs", "tui.log"),
     );
   } finally {
     process.chdir(previous);
@@ -724,3 +724,43 @@ for (const [payload, expected] of [
     assert.equal(reduceLiveRunEvent(live, { type: "RUN_FINISHED" }).toolCalls[0]?.status, expected);
   });
 }
+
+for (const explicitConfig of [false, true]) it(`domain ready URL retains selected env file (explicit config=${explicitConfig})`, async () => {
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-selected-env-"));
+  const config = join(directory, explicitConfig ? 'selected.yml' : 'config.yaml');
+  const envFile = join(directory, 'selected.env');
+  await writeFile(config, 'server:\n  host: backend.example.test\n  port: $env{REVIEW_API_PORT}\n');
+  await writeFile(join(directory, '.env'), 'UNUSED=home\n');
+  await writeFile(envFile, 'REVIEW_API_PORT=8811\n');
+  if (explicitConfig) await writeFile(join(directory, 'config.yaml'), 'server:\n  host: wrong.example.test\n');
+  let started = 0;
+  let stopped = 0;
+  let rendered = 0;
+  const requested: string[] = [];
+  const code = await runTui({
+    argv: ['--env-file', envFile, ...(explicitConfig ? ['--config', config] : [])],
+    env: { DATAAGENT_HOME: directory },
+    startBackend: async (options) => {
+      assert.ok(options);
+      assert.equal(options.envFile, envFile);
+      assert.equal(options.configPath, explicitConfig ? config : undefined);
+      started += 1;
+      return { ...startedBackend('http://backend.example.test:8811/api/v1/runs'), stop: async () => { stopped += 1; } };
+    },
+    fetchImpl: async (url, init) => {
+      requested.push(String(url));
+      assert.equal(init?.redirect, 'error');
+      return Response.json(readyHealth);
+    },
+    renderApp: async () => { rendered += 1; return 'exit'; },
+  });
+  assert.equal(code, 0);
+  assert.equal(started, 1);
+  assert.equal(rendered, 1);
+  assert.equal(stopped, 1);
+  assert.deepEqual(requested, ['http://backend.example.test:8811/healthz']);
+  const transport = sessionTransport('http://backend.example.test:8811/api/v1/runs', async () => {
+    assert.fail('cross-origin request must not be sent');
+  }, { DATAAGENT_HOME: directory }, explicitConfig ? config : undefined, envFile);
+  await assert.rejects(() => transport('http://other.example.test:8811/healthz'), /another origin/);
+});

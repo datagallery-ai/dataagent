@@ -1,18 +1,16 @@
 # 子代理
 
-子代理是插件清单 `subagents` 引用的一份 JSON。模型通过内置 `task` 工具把子任务交给它。
+子代理是插件清单 `subagents` 引用的一份 YAML。模型通过内置 `task` 工具把子任务交给它。
 
-示例：[general-purpose.json](../../examples/plugins/common/subagents/general-purpose.json)。
+示例：[general-purpose.yaml](../../examples/plugins/common/subagents/general-purpose.yaml)。
 
 ## 最小声明
 
-```json
-{
-  "schema_version": 1,
-  "name": "general-purpose",
-  "description": "Handle focused research and file inspection.",
-  "system_prompt_file": "prompts/general-purpose.md"
-}
+```yaml
+schema_version: 1
+name: general-purpose
+description: Handle focused research and file inspection.
+system_prompt_file: prompts/general-purpose.md
 ```
 
 `name` 匹配 `[a-z][a-z0-9_-]{0,63}`。`description` 不能空。描述较长时改用 `description_file`（相对插件根的文件，内容不能空），两者只能写一个。`system_prompt` 是相对插件根的文件。名称不能和根名 `dataagent` 或其他子代理重复。
@@ -31,7 +29,7 @@
 
 ## 编译型子代理
 
-`"kind": "compiled"` 声明一个图工厂，例如 [nl2sql](../../builtin-plugins/nl2sql/subagents/nl2sql.json)。`entrypoint` 写成 `file.py:symbol`，不写 `system_prompt_file`、`tools`、`skills`、`hooks`、`filesystem_tools`。
+`"kind": "compiled"` 声明一个图工厂，例如 [nl2sql](../../builtin-plugins/nl2sql/subagents/nl2sql.yaml)。`entrypoint` 写成 `file.py:symbol`，不写 `system_prompt_file`、`tools`、`skills`、`hooks`、`filesystem_tools`。
 
 签名是 `factory(params, services)`。`params` 是 `plugins.config.<plugin-id>`（不含 `run_hooks`）。`services` 的类型是 `dataagent.SubagentServices`，只有四个字段：`get_model`（按别名取模型）、`semantic_client`（未配置语义服务时为空）、`outputs_dir`（当前会话的 `outputs/`，没有会话时为空；工厂可以在这里写主代理能读取的结果文件）、`run_hooks`（本插件的编译工作流 Hook，见 [扩展声明](../reference/extension-schema.md#编译工作流-hook)）。
 
@@ -61,8 +59,9 @@
 
 工厂交回的是 Runnable，不是插件自己的 `StateGraph`。这个 Runnable 从状态里读 `messages`，返回值里只放要写入 checkpoint 的 `messages`。插件内部的工作流、循环上限和结果文件留在 Runnable 里。壳的形状固定：`MessagesState`，上下文类型是 `AgentContext`，边是 `START` → 入口名 → `END`。`recursion_limit` 与 Deep Agents 根相同（9999），写在 `graph.config` 里，REST 只转发这一个值。
 
-```json
-{ "dataagent": { "entry": "nl2sql" } }
+```yaml
+dataagent:
+  entry: nl2sql
 ```
 
 名字必须匹配 `[a-z][a-z0-9_-]{0,63}`，并且是已启用插件里 `kind` 为 `compiled` 的子代理。标准子代理不能当入口。找不到时，错误列出当前可用的编译型子代理名。

@@ -160,12 +160,12 @@ def test_python_hooks_are_path_confined(tmp_path):
 
 
 def test_subagent_description_file_is_read_from_plugin_root(runtime, tmp_path):
-    (tmp_path / "child.json").write_text(
+    (tmp_path / "child.yaml").write_text(
         '{"name": "child", "description_file": "child.md", "system_prompt_file": "prompt.md"}'
     )
     (tmp_path / "child.md").write_text("Long description.\n")
     (tmp_path / "prompt.md").write_text("Help")
-    spec = PluginSpec.model_validate({"id": "example", "subagents": ["child.json"]})
+    spec = PluginSpec.model_validate({"id": "example", "subagents": ["child.yaml"]})
     (child,) = compile_test(runtime, [(tmp_path, spec)])["subagents"]
     assert child["description"] == "Long description."
 

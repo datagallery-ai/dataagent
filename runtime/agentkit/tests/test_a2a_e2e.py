@@ -121,7 +121,7 @@ def backend(runtime, tmp_path, *, request_timeout=20):
 
 
 def test_a2a_cli_restart_keeps_history_and_operator_correlation(runtime, tmp_path):
-    config_file = runtime.paths.home / "config.json"
+    config_file = runtime.paths.home / "config.yaml"
     config = json.loads(config_file.read_text())
     with model_provider() as (url, requests):
         config["models"]["primary"].update(base_url=url, max_retries=0)

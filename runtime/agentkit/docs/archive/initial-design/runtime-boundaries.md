@@ -1,3 +1,5 @@
+> 历史记录：本文描述旧 JSON 配置版本。当前运行时只读取 YAML，请参阅配置指南。
+
 # Runtime 职责边界优化
 
 > 本文保留此前重构的设计与验收记录，不是当前路径配置规范。project 发现、信任类型及报告字段已由 [Home 统一工作根设计](home-root-cleanup.md) 移除；当前实现以 [架构与配置说明](architecture-and-configuration.md) 为准。旧的 Hooks 覆盖/清空及共享 hooks_base_dir 方案也已废弃。

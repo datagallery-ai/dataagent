@@ -6,7 +6,7 @@
 
 ```text
 de-agent/
-├── .plugin.json          # 工具、Hook、子 Agent 与依赖声明
+├── .plugin.yaml          # 工具、Hook、子 Agent 与依赖声明
 ├── tools/                # 元数据查询和交付检查的工具入口
 ├── utils/                # 共享证据、召回缓存、SQL 检查与语义调用辅助逻辑
 ├── hooks/                # 工具调用与 NL2SQL 运行 Hook
@@ -21,28 +21,23 @@ de-agent/
 
 在完整 Agent 配置里加入：
 
-```json
-{
-  "models": {
-    "primary": {
-      "name": "$env{LLM_MODEL}",
-      "base_url": "$env{LLM_BASE_URL}",
-      "api_key": "$env{LLM_API_KEY}"
-    }
-  },
-  "semantic": {"base_url": "$env{SEMANTIC_BASE_URL}"},
-  "plugins": {
-    "enabled": ["de-agent"],
-    "config": {
-      "de-agent": {
-        "allowed_databases": [],
-        "quality_gate": true,
-        "quality_gate_include_suggestions": false,
-        "model": "primary"
-      }
-    }
-  }
-}
+```yaml
+models:
+  primary:
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+semantic:
+  base_url: $env{SEMANTIC_BASE_URL}
+plugins:
+  enabled:
+  - de-agent
+  config:
+    de-agent:
+      allowed_databases: []
+      quality_gate: true
+      quality_gate_include_suggestions: false
+      model: primary
 ```
 
 无需另外启用 `nl2sql`，无需 `setup()`。宿主管理 semantic client 和模型；插件通过 `runtime.context` 访问。切换模型别名时，同时覆盖 `plugins.config.nl2sql.model` 和 `plugins.config.de-agent.model`。

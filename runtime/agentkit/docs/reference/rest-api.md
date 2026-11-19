@@ -4,7 +4,7 @@
 
 除 `/healthz`、`/ready` 和 A2A 外，所有路由都在 `/api/v1` 下。所有 JSON 响应（成功和失败）都用信封 `{"success": true, "data": ...}` / `{"success": false, "error": {...}}`；`POST /api/v1/runs` 成功时是 SSE，取消成功时是空的 204。下文会话和产物接口的成功示例只写 `data` 的内容。
 
-默认监听 `127.0.0.1:8790`，来自 `config.json` 的 `server.host` 和 `server.port`。`/healthz` 返回实际使用的 DataAgent Home，供 TUI 底栏显示；不返回输入目录或 `stateDir`。
+默认监听 `127.0.0.1:8790`，来自 `config.yaml` 的 `server.host` 和 `server.port`。`/healthz` 返回实际使用的 DataAgent Home，供 TUI 底栏显示；不返回输入目录或 `stateDir`。
 
 ## `GET /healthz`
 

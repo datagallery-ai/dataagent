@@ -91,18 +91,18 @@ test("start accepts web host and port", () => {
     webPort: "3310",
     config: null
   });
-  assert.deepEqual(parseDeployArgs(["start", "--config", "team.json"]), {
+  assert.deepEqual(parseDeployArgs(["start", "--config", "team.yaml"]), {
     command: "start",
     reconfigure: false,
     nonInteractive: false,
     runtimeUrl: null,
     webHost: null,
     webPort: null,
-    config: path.resolve("team.json")
+    config: path.resolve("team.yaml")
   });
   assert.throws(() => parseDeployArgs(["start", "--config", "   "]), /--config requires a value/);
   assert.throws(() => parseDeployArgs(["status", "--web-port", "3000"]), /only valid with deploy, start, or restart/);
-  assert.throws(() => parseDeployArgs(["tui", "--config", "team.json"]), /--config is only valid with deploy, start, or restart/);
+  assert.throws(() => parseDeployArgs(["tui", "--config", "team.yaml"]), /--config is only valid with deploy, start, or restart/);
   assert.throws(() => parseDeployArgs(["start", "--config"]), /--config requires a value/);
   assert.throws(() => parseDeployArgs(["start", "--web-port"]), /--web-port requires a value/);
 });

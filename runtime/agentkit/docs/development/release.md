@@ -42,11 +42,11 @@ npm run smoke:agentkit-package
 
 | 对象 | 版本 | 读取规则 |
 | --- | --- | --- |
-| 产品 `config.json` | `schema_version` 4 | 其他版本会导致启动失败，程序不改写该文件 |
-| 插件 `.plugin.json` | `schema_version` 3 | 其他版本会导致加载失败 |
-| 子代理 JSON | `schema_version` 1（可省略） | 其他版本会导致加载失败 |
+| 产品 `config.yaml` | `schema_version` 4 | 其他版本会导致启动失败，程序不改写该文件 |
+| 插件 `.plugin.yaml` | `schema_version` 3 | 其他版本会导致加载失败 |
+| 子代理 YAML | `schema_version` 1（可省略） | 其他版本会导致加载失败 |
 | Hook | 六个事件和 Python 入口 | 声明字段是 `event`、`entrypoint`、`params` |
-| MCP | `.mcp.json` 的 `mcpServers` | 连接写在该文件中，不写在产品配置里 |
+| MCP | `.mcp.yaml` 的 `mcpServers` | 连接写在该文件中，不写在产品配置里 |
 
 启动不改写已有配置文件。环境引用的写法是 `$env{NAME}`。
 

@@ -52,6 +52,7 @@ async def client_for(runtime, model, **kwargs):
 
 def test_agent_card_publishes_a_dialable_url():
     from a2a.server.request_handlers.response_helpers import agent_card_to_dict
+
     from a2a_server.agent_card import build_agent_card
 
     def published(host):
@@ -283,7 +284,7 @@ async def test_other_profile_cannot_read_the_same_context(tmp_path, common_plugi
 
     from dataagent import LaunchOptions, prepare_runtime
 
-    path = tmp_path / "test-config.json"
+    path = tmp_path / "test-config.yaml"
     path.write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
@@ -332,7 +333,7 @@ def test_a2a_token_comes_from_effective_environment(tmp_path, monkeypatch):
     from dataagent import LaunchOptions, prepare_runtime
 
     monkeypatch.delenv("DATAAGENT_A2A_AUTH_TOKEN", raising=False)
-    cli = config(tmp_path / "explicit.json", MODEL)
+    cli = config(tmp_path / "explicit.yaml", MODEL)
     env_file = tmp_path / "token.env"
     env_file.write_text("DATAAGENT_A2A_AUTH_TOKEN=from-dotenv\n")
     options = LaunchOptions(cwd=tmp_path, config=cli, env_file=env_file)

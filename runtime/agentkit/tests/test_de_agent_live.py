@@ -23,7 +23,7 @@ def _live_runtime(tmp_path):
     semantic_url = os.environ.get("DATAAGENT_DE_AGENT_LIVE_URL")
     if not env_file or not semantic_url:
         pytest.skip("Set DATAAGENT_DE_AGENT_LIVE_ENV and DATAAGENT_DE_AGENT_LIVE_URL")
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(
         json.dumps(
             {

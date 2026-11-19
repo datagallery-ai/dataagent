@@ -47,7 +47,7 @@ uv run --no-sync --project runtime/agentkit dataagent serve \
   --workspace "$PWD"
 ```
 
-然后看 `http://127.0.0.1:8790/healthz`。端口来自 `config.json` 的 `server.port`。
+然后看 `http://127.0.0.1:8790/healthz`。端口来自 `config.yaml` 的 `server.port`。
 
 SDK 路径不初始化 Home。调试配置层时显式传入 `LaunchOptions(config=..., env_file=..., init_home=True)`。
 

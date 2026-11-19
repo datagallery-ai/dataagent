@@ -4,7 +4,8 @@ Layout, by phase:
 
     declarations.py extension schemas (pure Pydantic)
     settings.py     effective product configuration
-    strict_json.py  duplicate-key-rejecting JSON reader
+    strict_yaml.py  bounded YAML configuration reader
+    strict_json.py  legacy migration input reader
     diagnostics.py  credential-redacting, terminal-safe error rendering
     bootstrap/      settings, paths, extension locations and report -> PreparedRuntime; no LangChain
     extensions/     plugin and standalone declarations -> native Deep Agents kwargs
@@ -24,6 +25,7 @@ Names that need LangChain are imported lazily so that
 from dataagent.bootstrap import LaunchOptions, PreparedRuntime, prepare_runtime
 from dataagent.bootstrap.config_files import ConfigurationLoadError
 from dataagent.diagnostics import safe_error
+from dataagent.strict_yaml import read_yaml
 
 __version__ = "0.1.0"
 
@@ -44,6 +46,7 @@ __all__ = [
     "load_mcp_tools",
     "prepare_runtime",
     "safe_error",
+    "read_yaml",
 ]
 
 _LAZY = {

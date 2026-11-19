@@ -9,7 +9,7 @@ import { App } from "./ui/App.js";
 import type { AgentClient } from "./protocol/types.js";
 import type { TuiContext } from "./protocol/session-client.js";
 import { normalizeRuntimeUrl, connectTui } from "./connect.js";
-import { configuredListen, formatListenBase, startBackend } from "./backend.js";
+import { configuredListen, formatListenBase, projectEnvironment, startBackend } from "./backend.js";
 import { terminalText } from "./utils/terminal-text.js";
 import { getLogger } from "./utils/logger.js";
 
@@ -112,13 +112,13 @@ Usage:
   datagallery-tui [options]
 
 Options:
-  --config <path>         Use this file instead of Home config.json
+  --config <path>         Use this file instead of Home config.yaml
   --env-file <path>       Optional environment file, resolved by the backend
   --user <id>             Local profile (default: default)
   --workspace <path>      Read-only input; repeat to mount more than one
   --session <id>          Resume a session in the selected profile
   --runtime-url <url>     Attach to this control plane and do not start
-                          a backend. Omit it to use Home config.json
+                          a backend. Omit it to use Home config.yaml
                           server.host and server.port. The host may be
                           that name, a loopback address, or another IP.
                           0.0.0.0 and :: connect through loopback
@@ -131,7 +131,7 @@ Examples:
   datagallery-tui --runtime-url http://127.0.0.1:8790
 
 Notes:
-  With no arguments the TUI uses Home config.json server.host and
+  With no arguments the TUI uses Home config.yaml server.host and
   server.port (default http://127.0.0.1:8790). It starts dataagent serve
   when that address is down, and connects when it is already up.
   A server started with another --config is left alone. --runtime-url
@@ -216,7 +216,8 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
 
   try {
     parseTuiArgs(args);
-    const env = options.env ?? process.env;
+    const sourceEnv = options.env ?? process.env;
+    const env = getOptionalArg(args, "--runtime-url") ? sourceEnv : projectEnvironment(sourceEnv);
     const runtimeUrl = (() => {
       const explicit = getOptionalArg(args, "--runtime-url");
       return explicit ? normalizeRuntimeUrl(explicit, env) : undefined;
@@ -258,6 +259,8 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
         fetchImpl,
         renderApp,
         env,
+        configPath: getOptionalArg(args, "--config"),
+        envFile: getOptionalArg(args, "--env-file"),
         initialResume: session ? { enabled: true, sessionId: session } : resume,
         instanceId: backend?.instanceId,
         shutdownSignal: backend?.signal,

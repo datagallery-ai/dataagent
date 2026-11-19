@@ -1,0 +1,5 @@
+schema_version: 1
+kind: compiled
+name: nl2sql
+description_file: subagents/nl2sql.description.md
+entrypoint: subagents/nl2sql.py:build_subagent

@@ -48,7 +48,7 @@ export LLM_API_KEY=replace-with-your-key
 .venv/bin/dataagent serve
 ```
 
-首次启动会在 Home（默认 `~/.dataagent`，可通过进程变量 `DATAAGENT_HOME` 指定）创建缺少的配置模板。包运行读取进程环境、Home `.env` 或显式 `--env-file`；不会自动读取源码仓库根 `.env`。监听地址来自 `config.json` 的 `server.host` / `server.port`，默认 `127.0.0.1:8790`。也可用安装后的命令 `dataagent serve-a2a` 单独启动 A2A。
+首次启动会在 Home（默认 `~/.dataagent`，可通过进程变量 `DATAAGENT_HOME` 指定）创建缺少的配置模板。包运行读取进程环境、Home `.env` 或显式 `--env-file`；不会自动读取源码仓库根 `.env`。监听地址来自 `config.yaml` 的 `server.host` / `server.port`，默认 `127.0.0.1:8790`。也可用安装后的命令 `dataagent serve-a2a` 单独启动 A2A。
 
 ## 可选能力依赖
 

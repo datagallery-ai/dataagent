@@ -1,3 +1,5 @@
+> 历史记录：本文描述旧 JSON 配置版本。当前运行时只读取 YAML，请参阅配置指南。
+
 # Plugin Compiler 与 Python Hooks
 
 ## 1. 当前范围

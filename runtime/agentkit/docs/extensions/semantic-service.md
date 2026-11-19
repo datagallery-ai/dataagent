@@ -6,21 +6,17 @@
 
 ## 配置
 
-```json
-{
-  "semantic": {
-    "base_url": "https://semantic.example.com",
-    "username": "$env{SEMANTIC_USERNAME}",
-    "password": "$env{SEMANTIC_PASSWORD}",
-    "timeout_seconds": 30,
-    "tls": {
-      "verify_server": true,
-      "ca_file": "certs/ca.pem",
-      "client_cert": "certs/client.pem",
-      "client_key": "certs/client.key"
-    }
-  }
-}
+```yaml
+semantic:
+  base_url: https://semantic.example.com
+  username: $env{SEMANTIC_USERNAME}
+  password: $env{SEMANTIC_PASSWORD}
+  timeout_seconds: 30
+  tls:
+    verify_server: true
+    ca_file: certs/ca.pem
+    client_cert: certs/client.pem
+    client_key: certs/client.key
 ```
 
 字段和默认值见 [配置参考](../reference/configuration.md) 的 `semantic` 一节。

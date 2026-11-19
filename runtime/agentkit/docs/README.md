@@ -4,7 +4,7 @@
 
 AgentKit 是本地数据 Agent 运行时。Python 发行包名是 `datagallery-dataagent`，导入名和命令名是 `dataagent`，代码在 `runtime/agentkit`。Web 和 TUI 都是它的宿主；本目录讲运行时本身，以及 SDK、插件和 HTTP 实现。
 
-运行时读取 JSON 配置和本机 Home 目录，调用已配置的模型，并按会话保存对话、产物和 Trace。插件、Skill、Hook、子代理和 MCP 用来增加工具与流程。语义服务客户端用来查询已经部署的语义服务。
+运行时读取 YAML 配置和本机 Home 目录，调用已配置的模型，并按会话保存对话、产物和 Trace。插件、Skill、Hook、子代理和 MCP 用来增加工具与流程。语义服务客户端用来查询已经部署的语义服务。
 
 可运行示例在 [examples/](../examples/README.md)。
 
@@ -56,7 +56,7 @@ AgentKit 是本地数据 Agent 运行时。Python 发行包名是 `datagallery-d
 | [A2A](reference/a2a.md) | 把本机 Agent 暴露给其他 agent |
 | [事件](reference/events.md) | AG-UI 事件和终止状态 |
 | [扩展声明](reference/extension-schema.md) | 插件、工具、Hook、子代理 |
-| [MCP 配置](reference/mcp-configuration.md) | `.mcp.json` 字段和连接 |
+| [MCP 配置](reference/mcp-configuration.md) | `.mcp.yaml` 字段和连接 |
 
 ## 架构
 

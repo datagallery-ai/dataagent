@@ -7,7 +7,7 @@ The product is one local control plane and two presentations. Web and TUI both t
 ```text
 Browser apps/web
   -> Next same-origin proxy for /api/v1/runs and /api/v1/*
-  -> dataagent serve (config.json server.host:server.port, default 127.0.0.1:8790)
+  -> dataagent serve (config.yaml server.host:server.port, default 127.0.0.1:8790)
   <- apps/tui calls that same process directly
 ```
 
@@ -33,7 +33,7 @@ The control plane does not expose datasource registration, a knowledge base, coo
 
 ## Where configuration and data live
 
-What you edit to deploy is `config.json` and `.env` under Home `~/.dataagent`, plus the repository `.env`. The model fields and listen address you must set are in [Configuration](../reference/configuration-api.md).
+What you edit to deploy is `config.yaml` and `.env` under Home `~/.dataagent`, plus the repository `.env`. The model fields and listen address you must set are in [Configuration](../reference/configuration-api.md).
 
 To let the model read a local directory, use a workspace. There is no datasource file inside Home. Steps are in [Where data comes from](../guides/data-sources.md). New files go to that session's `outputs/`.
 

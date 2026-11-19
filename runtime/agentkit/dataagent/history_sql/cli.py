@@ -22,7 +22,7 @@ from dataagent.semantic_client import SemanticServiceClient
 
 def add_arguments(parser: argparse.ArgumentParser) -> None:
     """Options of `dataagent history-sql`; --config and --env-file mean the same as for serve."""
-    parser.add_argument("--config", help="Use this file instead of Home config.json")
+    parser.add_argument("--config", help="Use this file instead of Home config.yaml")
     parser.add_argument("--env-file", help="Environment file resolved by the backend")
     parser.add_argument("--output-dir", help="Absolute corpus directory override")
     parser.add_argument("--compare-dir")

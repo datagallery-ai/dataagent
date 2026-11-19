@@ -4,31 +4,31 @@
 
 示例文件：
 
-- 最小模板：[config.example.json](../../config.example.json)
-- 覆盖当前产品字段并带两个 Hook 的示例：[examples/config.json](../../examples/config.json)
-- nl2sql 作为整张图：[examples/nl2sql-entry.json](../../examples/nl2sql-entry.json)
+- 最小模板：[config.example.yaml](../../config.example.yaml)
+- 覆盖当前产品字段并带两个 Hook 的示例：[examples/config.yaml](../../examples/config.yaml)
+- nl2sql 作为整张图：[examples/nl2sql-entry.yaml](../../examples/nl2sql-entry.yaml)
 - 示例字段怎么配合文件：[examples/README.md](../../examples/README.md)
 
-配置是标准 JSON。不支持注释、尾逗号和重复键。
+配置使用 YAML 1.2，支持注释和多行字符串；拒绝重复键、锚点、别名、合并键及显式标签。
 
 ## 你要改的两个文件
 
 | 文件 | 作用 |
 | --- | --- |
-| `<home>/config.json` | 个人默认配置。Home 默认是 `~/.dataagent` |
+| `<home>/config.yaml` | 个人默认配置。Home 默认是 `~/.dataagent` |
 | `<home>/.env` | 模型名、地址、密钥，以及其他 `$env{NAME}` 引用 |
 
 用进程环境变量 `DATAAGENT_HOME` 指定 Home。写在后端所选的 Home `.env` 或 `--env-file` 里的 `DATAAGENT_HOME` 会被忽略，并在标准错误打出警告；npm 启动器预先载入仓库根 `.env` 属于进程环境阶段，见 [环境变量](../reference/cli-and-environment.md#环境变量)。
 
-`--config` 由控制面读取（`dataagent serve --config`，TUI 拉起后端时的 `--config`，以及 `npm run start` / `./deploy.sh start` 的 `--config`）。传了它就用这份文件，不再读 Home `config.json`。启动目录里的 `config.json` 不会自动读取。连到已有控制面时，配置由那份进程决定。`./deploy.sh start` 在启动当时解析 `server`，把 API 主机名和端口写入部署状态。之后的 `./deploy.sh tui`、`status`、`doctor` 使用这份地址。改了监听地址后，重新启动才会记下新地址。
+`--config` 由控制面读取（`dataagent serve --config`，TUI 拉起后端时的 `--config`，以及 `npm run start` / `./deploy.sh start` 的 `--config`）。传了它就用这份文件，不再读 Home `config.yaml`。启动目录里的 `config.yaml` 不会自动读取。连到已有控制面时，配置由那份进程决定。`./deploy.sh start` 在启动当时解析 `server`，把 API 主机名和端口写入部署状态。之后的 `./deploy.sh tui`、`status`、`doctor` 使用这份地址。改了监听地址后，重新启动才会记下新地址。
 
 ## 优先级
 
-先区分三类内容：**产品配置**是 Home `config.json` 或显式 `--config` 二选一；**插件清单** `.plugin.json` 声明能力、依赖和可选 `defaults_file`；**插件业务参数**位于 `plugins.config.<id>`。插件清单本身不作为整份产品配置覆盖层。
+先区分三类内容：**产品配置**是 Home `config.yaml` 或显式 `--config` 二选一；**插件清单** `.plugin.yaml` 声明能力、依赖和可选 `defaults_file`；**插件业务参数**位于 `plugins.config.<id>`。插件清单本身不作为整份产品配置覆盖层。
 
 实际准备过程：
 
-1. 读取选中的产品文件，以字段默认值补齐，得到初步的 `plugins.enabled/paths`。`--config` 替代 Home `config.json`，两份文件不叠加，cwd 的配置也不自动加入。
+1. 读取选中的产品文件，以字段默认值补齐，得到初步的 `plugins.enabled/paths`。`--config` 替代 Home `config.yaml`，两份文件不叠加，cwd 的配置也不自动加入。
 2. 从内置、Home `plugins/<id>` 和显式 `plugins.paths` 查找插件，递归解析 `requires`。依赖先于依赖它的插件；独立项沿 `enabled` 顺序遍历，每个 ID 只处理一次。相同真实目录去重；同一启用 ID 对应不同目录时直接报错，没有“Home 覆盖内置”的规则。
 3. 按上述顺序读取已选插件清单中的 `defaults_file`，再叠加第 1 步选中的产品文件。未选中插件的默认文件不参与。默认文件只允许贡献 `plugins.config`，不能设置模型、server、根 Agent 或反过来启用其他插件。
 4. 对合并结果补齐仍缺少的字段默认值；最终启用列表包含依赖插件。业务参数再交给插件工厂解析，插件自身参数模型的默认值补齐未传字段。当前内置 nl2sql 没有声明 `defaults_file`，其默认业务值来自 nl2sql 参数模型。
@@ -46,14 +46,28 @@
 
 例如，某个已启用插件的 `defaults_file` 提供：
 
-```json
-{"plugins":{"config":{"demo":{"limit":100,"format":{"header":true,"delimiter":","},"tags":["default"]}}}}
+```yaml
+plugins:
+  config:
+    demo:
+      limit: 100
+      format:
+        header: true
+        delimiter: ','
+      tags:
+      - default
 ```
 
 所选产品文件里的对应参数为：
 
-```json
-{"plugins":{"config":{"demo":{"limit":20,"format":{"delimiter":";"},"tags":[]}}}}
+```yaml
+plugins:
+  config:
+    demo:
+      limit: 20
+      format:
+        delimiter: ;
+      tags: []
 ```
 
 最终传给该插件的业务参数是：
@@ -83,18 +97,14 @@
 
 保留模板里的 `schema_version: 4` 和 `models.primary`。把三个模型字段留成环境引用，再在 `.env` 填值。
 
-```json
-{
-  "schema_version": 4,
-  "models": {
-    "primary": {
-      "provider": "openai",
-      "name": "$env{LLM_MODEL}",
-      "base_url": "$env{LLM_BASE_URL}",
-      "api_key": "$env{LLM_API_KEY}"
-    }
-  }
-}
+```yaml
+schema_version: 4
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
 ```
 
 `provider` 取值为 `openai`。OpenAI 兼容服务使用同一取值。`base_url` 写到服务商要求的 API 根，通常包含 `/v1`，止于该根路径。需要时再写 `temperature`（0 到 2）、`max_tokens` 或 `extra_body`；省略前两项就用服务商默认值。
@@ -109,12 +119,9 @@
 
 **指定产物根目录。** 在配置中增加：
 
-```json
-{
-  "dataagent": {
-    "output_root": "~/reports"
-  }
-}
+```yaml
+dataagent:
+  output_root: ~/reports
 ```
 
 `output_root` 是根目录，不是某个会话的目录。新会话写入 `<output_root>/<user>/<thread>/`，例如 alice 的 task-a 写入 `~/reports/alice/task-a/`。省略或设为 `null` 时，根目录为 `<home>/outputs`，产物写入 `<home>/outputs/<user>/<thread>/`。
@@ -130,13 +137,13 @@
 
 **接入语义服务。** 增加 `semantic` 对象。客户端用法、认证和 TLS 见 [语义服务](../extensions/semantic-service.md)。字段见配置参考。未配置 `semantic` 时，运行时不创建客户端。
 
-**把编译型子代理当作整张图。** 在 `dataagent.entry` 写已启用插件里的编译型子代理名，然后重启。省略 `entry` 仍是 Deep Agents 根。可运行示例是 [nl2sql-entry.json](../../examples/nl2sql-entry.json)：`entry` 为 `nl2sql`，并带上模型、sqlite 库和语义服务地址。
+**把编译型子代理当作整张图。** 在 `dataagent.entry` 写已启用插件里的编译型子代理名，然后重启。省略 `entry` 仍是 Deep Agents 根。可运行示例是 [nl2sql-entry.yaml](../../examples/nl2sql-entry.yaml)：`entry` 为 `nl2sql`，并带上模型、sqlite 库和语义服务地址。
 
 高层配置里的 `entry` 替换低层。Hook、调用上限、工作区、Skill、工具、MCP 工具、插件系统提示和其他子代理留在配置里，不装进这张图。`limits.timeout_seconds` 仍约束宿主执行阶段。限制见 [入口模式](../extensions/subagents.md#入口模式)。
 
 ## 写在其他文件里的设置
 
-- MCP 连接写在 Home 或已启用插件根目录的 `.mcp.json`
+- MCP 连接写在 Home 或已启用插件根目录的 `.mcp.yaml`
 - 工具、Skill 和子代理写在插件清单，独立 Skill 放在 `<home>/skills/<name>/SKILL.md`
 - TUI 的 `NO_COLOR` 等界面变量放在 TUI 进程环境，后端 `--env-file` 不读取它们；日志目录由进程的 `DATAAGENT_HOME` 统一决定，没有独立的日志目录或级别环境变量
 

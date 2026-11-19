@@ -42,7 +42,7 @@ Home 下的内容按 Agent 应有的访问方式分区。以后接 sandbox 时�
 | 区域 | 内容 | Agent 访问 | sandbox 挂载 |
 | --- | --- | --- | --- |
 | 控制面 | `runtime/` | 无 | 不挂载 |
-| 宿主配置 | `config.json`、`.env`、`hooks/` | 无 | 不挂载 |
+| 宿主配置 | `config.yaml`、`.env`、`hooks/` | 无 | 不挂载 |
 | 资源 | `skills/`、`plugins/` | 只读（用 `read_file` 读 SKILL.md） | 只读挂载 |
 | 产物 | `outputs/` | 读写 | 只挂载本会话目录，读写 |
 
@@ -52,7 +52,7 @@ Home 下的内容按 Agent 应有的访问方式分区。以后接 sandbox 时�
 
 ```text
 <home>/                                0700
-├── config.json  .env                  宿主配置
+├── config.yaml  .env                  宿主配置
 ├── skills/  hooks/  plugins/          扩展
 ├── outputs/                           0700  默认 output_root
 │   └── <user>/                        0700

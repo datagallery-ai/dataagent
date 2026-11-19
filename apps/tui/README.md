@@ -12,13 +12,13 @@ npm install
 npm run start:tui
 ```
 
-`npm run start:tui` connects to `/api/v1/runs` at the address in Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused.
+`npm run start:tui` connects to `/api/v1/runs` at the address in Home `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`. Nothing listening there starts `dataagent serve`; a control plane that is already up is reused.
 
 ## Home
 
-Home defaults live in `~/.dataagent`. Add `--resume` or `--resume <threadId>` to restore a session. `--config` selects that file instead of Home `config.json`. `--config`, `--env-file`, `--workspace`, `--user` and `--session` are forwarded to a backend this TUI starts, so they do not attach to one that is already running.
+Home defaults live in `~/.dataagent`. Add `--resume` or `--resume <threadId>` to restore a session. `--config` selects that file instead of Home `config.yaml`. `--config`, `--env-file`, `--workspace`, `--user` and `--session` are forwarded to a backend this TUI starts, so they do not attach to one that is already running.
 
-`--runtime-url` attaches and does not start a backend. The host may be `server.host` from `config.json`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
+`--runtime-url` attaches and does not start a backend. The host may be `server.host` from `config.yaml`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
 
 ```bash
 npm run start:tui -- --runtime-url http://127.0.0.1:8790

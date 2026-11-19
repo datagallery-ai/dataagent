@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { copyFile, mkdtemp, readFile, rm, stat, writeFile, mkdir } from "node:fs/promises";
+import { copyFile, mkdtemp, readFile, rm, stat, writeFile, mkdir, symlink } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -25,13 +25,14 @@ test("managed startup launches Web and API without preparing missing artifacts",
   });
   const repository = fileURLToPath(new URL("../../", import.meta.url));
   for (const file of ["scripts/start.mjs", "scripts/stack-runner.mjs", "scripts/stack-runtime-config.mjs",
-    "scripts/server-listen.mjs", "scripts/python-environment.mjs", "scripts/lib/logging.mjs", "scripts/lib/log-redaction.mjs"]) {
+    "scripts/server-listen.mjs", "scripts/lib/config-yaml.mjs", "scripts/lib/config-env.mjs", "scripts/python-environment.mjs", "scripts/lib/logging.mjs", "scripts/lib/log-redaction.mjs"]) {
     await mkdir(path.dirname(path.join(root, file)), { recursive: true });
     await copyFile(path.join(repository, file), path.join(root, file));
   }
+  await symlink(path.join(repository, "node_modules"), path.join(root, "node_modules"), "dir");
   await mkdir(path.join(root, "bin"));
   await mkdir(path.join(root, "home"));
-  await writeFile(path.join(root, "home/config.json"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
+  await writeFile(path.join(root, "home/config.yaml"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
   const log = path.join(root, "commands.jsonl");
   for (const command of ["python", "npm"]) {
     const location = command === "python" ? path.join(root, "runtime/agentkit/.venv/bin/python") : path.join(root, "bin", command);

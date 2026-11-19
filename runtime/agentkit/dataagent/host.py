@@ -6,6 +6,8 @@ turns, choose a listen address, validate client IDs, and render stable public er
 """
 
 from dataagent.bootstrap import extension_revision, refresh_extensions, server_listen
+from dataagent.config_migration import add_arguments as add_config_arguments
+from dataagent.config_migration import run as run_config_command
 from dataagent.declarations import OPAQUE_ID_PATTERN
 from dataagent.diagnostics import ERROR_CODES, error_code
 from dataagent.logging import (
@@ -17,6 +19,8 @@ from dataagent.logging import (
 
 __all__ = [
     "ERROR_CODES",
+    "add_config_arguments",
+    "run_config_command",
     "OPAQUE_ID_PATTERN",
     "error_code",
     "extension_revision",

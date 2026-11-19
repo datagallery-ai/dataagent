@@ -13,17 +13,17 @@
 """Plugin business parameters: validation plus dotted-key access.
 
 The section is the Agent configuration's ``plugins.config.nl2sql`` mapping
-(JSON); host-level concerns (models, workspaces) live in the host
+(YAML); host-level concerns (models, workspaces) live in the host
 configuration and are handed to the plugin by the compiled-subagent factory.
 """
 
 from __future__ import annotations
 
-import json
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
+from dataagent import read_yaml
 from nl2sql.constants import DEFAULT_NL2SQL_MODEL_CALL_BUDGET
 
 _LEGACY_SECTIONS = frozenset(
@@ -61,7 +61,7 @@ _MIGRATION_HINT = (
     "under plugins.config.nl2sql (model = a models alias from the same configuration, "
     "database = {db_id, dialect, engine, ...connection keys}, semantic = semantic-service "
     "credentials, plus optional perceptor/generator/validator/reflector/executor/selector "
-    "sections); YAML files are no longer read"
+    "sections); standalone files must use .yaml or .yml"
 )
 
 
@@ -163,9 +163,9 @@ class NL2SQLConfig:
 
     @classmethod
     def load(cls, path: str | Path) -> NL2SQLConfig:
-        """Load parameters from a JSON file (YAML is no longer supported)."""
+        """Load parameters from a strict YAML mapping (.yaml or .yml)."""
         file = Path(path)
-        data = json.loads(file.read_text(encoding="utf-8"))
+        data = read_yaml(file)
         if not isinstance(data, dict):
             raise ValueError(f"nl2sql config must be a mapping: {file}")
         return cls(data)

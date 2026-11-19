@@ -1,8 +1,8 @@
 # 配置字段
 
-这是 `config.json` 的字段全表，给改配置和写插件的人。操作步骤在 [配置操作](../guides/configuration.md)。对外产品站只保留部署时要改的文件和最小模型示例，不重复这份表。
+这是 `config.yaml` 的字段全表，给改配置和写插件的人。操作步骤在 [配置操作](../guides/configuration.md)。对外产品站只保留部署时要改的文件和最小模型示例，不重复这份表。
 
-文件是标准 JSON。未知字段、重复键、错误类型和非有限数值都会失败。`schema_version` 必须是 `4`。省略时按 `4` 校验。版本 3 的文件会报错并说明三处改名：`dataagent.model` 改为字符串，`a2a.agents` 改为 `a2a.remote_agents`，`semantic.timeout` 改为 `semantic.timeout_seconds`。
+文件是YAML 1.2。未知字段、重复键、错误类型和非有限数值都会失败。`schema_version` 必须是 `4`。省略时按 `4` 校验。版本 3 的文件会报错并说明三处改名：`dataagent.model` 改为字符串，`a2a.agents` 改为 `a2a.remote_agents`，`semantic.timeout` 改为 `semantic.timeout_seconds`。
 
 相对路径以该配置文件所在目录为基准，并解析 `~/`。例外：`dataagent.output_root` 只接受绝对路径或 `~/` 开头的路径。
 
@@ -58,15 +58,12 @@
 
 配置示例：
 
-```json
-{
-  "dataagent": {
-    "loop_detection": {
-      "enabled": true,
-      "ignored_tools": ["jobs__get_status"]
-    }
-  }
-}
+```yaml
+dataagent:
+  loop_detection:
+    enabled: true
+    ignored_tools:
+    - jobs__get_status
 ```
 
 轮边界由 `before_agent` 在每次调用开始时记录，所以其他中间件在轮中插入的消息（摘要、评分复议、媒体占位）不会重置计数，但一次新的用户请求会。复读命中或工具循环第二次命中后，SDK 抛出 `dataagent.LoopDetectedError`，REST 发出 `RUN_ERROR`，错误代码为 `LOOP_DETECTED`。不会自动重放任务或已完成的工具操作。可查看已完成步骤后发送新请求。异常中不包含原始文本或参数。修改检测配置需重启或重新创建 SDK 实例。
@@ -112,11 +109,11 @@
 | `paths` | 字符串数组 | `[]` | 高层整表替换。每项是插件自身目录 |
 | `config` | 对象 | `{}` | 按插件 ID 合并。键是插件 ID，值由该插件自己校验 |
 
-启用 ID 必须正好匹配一个候选目录，且目录名等于 `.plugin.json` 的 `id`。
+启用 ID 必须正好匹配一个候选目录，且目录名等于 `.plugin.yaml` 的 `id`。
 
 ## `server`
 
-`npm run start`、网页转发和无参数 TUI 在启动时读所选产品文件的 `server`：传了 `--config` 用那份文件，否则用 Home `config.json`。`./deploy.sh start` 也在启动当时解析同一地址，把主机名写入 `storage/run/deployment.json` 的 `listen.apiHost`，把端口写入 `ports.api`。之后的 `./deploy.sh tui`、`status`、`doctor` 使用这份地址。首次部署在 Home 没有 `config.json` 时，用 `dataagent/bootstrap/templates/config.json` 创建完整配置，再写入所选 `host` 和 `port`。已有文件只改这两个字段。语法无法解析时不覆盖原文件。改了监听地址后，重新执行 `./deploy.sh start` 或 `restart` 才会记下新地址。
+`npm run start`、网页转发和无参数 TUI 在启动时读所选产品文件的 `server`：传了 `--config` 用那份文件，否则用 Home `config.yaml`。`./deploy.sh start` 也在启动当时解析同一地址，把主机名写入 `storage/run/deployment.json` 的 `listen.apiHost`，把端口写入 `ports.api`。之后的 `./deploy.sh tui`、`status`、`doctor` 使用这份地址。首次部署在 Home 没有 `config.yaml` 时，用 `dataagent/bootstrap/templates/config.yaml` 创建完整配置，再写入所选 `host` 和 `port`。已有文件只改这两个字段。语法无法解析时不覆盖原文件。改了监听地址后，重新执行 `./deploy.sh start` 或 `restart` 才会记下新地址。
 
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |
@@ -159,10 +156,10 @@
 
 ## 合并
 
-产品文件二选一：未传 `--config` 时用 Home `config.json`，传了就只用那份文件。插件 `plugins.config` 在选中的产品文件下面。
+产品文件二选一：未传 `--config` 时用 Home `config.yaml`，传了就只用那份文件。插件 `plugins.config` 在选中的产品文件下面。
 
 - 对象按字段递归合并，包括每个模型 ID 和 `plugins.config.<id>`。没写的字段保留插件默认值；插件也没写时用程序默认值。
 - `dataagent.hooks`，以及 `plugins.config.<id>.run_hooks.before_run` / `after_run`，按层追加。`[]` 或空事件组只表示这一层不追加。
 - 其他数组和标量由选中文件整段替换，包括 `dataagent.entry`、`plugins.enabled`、`plugins.paths`。`[]` 清空。
 
-启动目录中的 `config.json` 不参与。
+启动目录中的 `config.yaml` 不参与。

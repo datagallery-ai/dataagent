@@ -43,12 +43,12 @@ def configured_hooks(runtime, tmp_path, *, child=None, events=EVENTS):
     spec = {"schema_version": 3, "id": "trace", "hooks": hooks("dataagent")}
     if child:
         (root / "child.md").write_text("Compute the delegated statistics with tools.")
-        (root / "child.json").write_text(json.dumps({
+        (root / "child.yaml").write_text(json.dumps({
             "name": child, "description": "A statistics delegate", "system_prompt_file": "child.md",
             "tools": ["common__summarize_numbers"], "hooks": hooks(child),
         }))
-        spec["subagents"] = ["child.json"]
-    (root / ".plugin.json").write_text(json.dumps(spec))
+        spec["subagents"] = ["child.yaml"]
+    (root / ".plugin.yaml").write_text(json.dumps(spec))
     runtime = replace(runtime, settings=runtime.settings.model_copy(update={
         "plugins": runtime.settings.plugins.model_copy(update={"enabled": ["common", "trace"], "paths": [root]}),
     }))
