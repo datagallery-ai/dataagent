@@ -5,6 +5,10 @@ from a2a.types.a2a_pb2 import (
     AgentCard,
     AgentInterface,
     AgentSkill,
+    HTTPAuthSecurityScheme,
+    SecurityRequirement,
+    SecurityScheme,
+    StringList,
 )
 
 from dataagent import __version__
@@ -28,6 +32,7 @@ def build_agent_card(
     *,
     host: str,
     port: int,
+    requires_bearer: bool = False,
     name: str = "DataAgent",
     description: str = "DataAgent",
 ) -> AgentCard:
@@ -36,7 +41,7 @@ def build_agent_card(
     The executor waits for the whole graph, so the card does not advertise streaming.
     """
     base_url = f"http://{_card_host(host)}:{port}"
-    return AgentCard(
+    card = AgentCard(
         name=name,
         description=description,
         version=__version__,
@@ -61,3 +66,9 @@ def build_agent_card(
             ),
         ],
     )
+    if requires_bearer:
+        card.security_schemes["bearer"].CopyFrom(
+            SecurityScheme(http_auth_security_scheme=HTTPAuthSecurityScheme(scheme="bearer"))
+        )
+        card.security_requirements.append(SecurityRequirement(schemes={"bearer": StringList()}))
+    return card

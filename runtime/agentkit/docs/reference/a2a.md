@@ -73,7 +73,7 @@ A2A、REST API、TUI 和 Web 共用 Home 下的会话、checkpoint、trace 与�
 | 范围 | 行为 |
 | --- | --- |
 | `POST /a2a/jsonrpc` 全部方法 | 启用认证时都要 Bearer，包括查询、取消和任务列表 |
-| Agent Card | 仍可匿名读取；能读 Card 不代表能调用任务 |
+| Agent Card | 可匿名读取。启用令牌时，`securitySchemes` 和 `securityRequirements` 声明 JSON-RPC 需要 HTTP Bearer 认证，令牌值由部署方另行提供 |
 | `serve` 的 REST/AG-UI/健康/产物接口 | 此令牌不保护这些接口 |
 | 调用方身份 | 同一个共享令牌，不提供个人登录、任务所有权隔离或租户隔离 |
 

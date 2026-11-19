@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from uuid import uuid4
 
 import httpx
@@ -91,6 +92,8 @@ async def test_agent_card_uses_the_request_host(runtime):
     assert interfaces[0]["protocolBinding"] == "JSONRPC"
     assert interfaces[0]["protocolVersion"] == "1.0"
     assert interfaces[0]["url"] == "http://agents.example:9999/a2a/jsonrpc"
+    assert "securitySchemes" not in card
+    assert "securityRequirements" not in card
     assert "test-secret" not in response.text
 
 
@@ -119,21 +122,29 @@ async def test_invocation_failure_redacts_secrets(runtime):
     assert "[REDACTED]" in text
 
 
-async def test_bearer_token_protects_invocation_and_not_discovery(runtime):
+@pytest.mark.parametrize("explicit_token", [None, "secret-token"])
+async def test_bearer_token_protects_invocation_and_not_discovery(runtime, explicit_token):
+    secured = replace(runtime, a2a_auth_token="environment-token")
+    token = explicit_token or secured.a2a_auth_token
     model = ScriptedModel(responses=[AIMessage(content="ok")])
-    async with client_for(runtime, model, auth_token="secret-token") as client:
+    async with client_for(secured, model, auth_token=explicit_token) as client:
         denied = await rpc(client, message("hello", "thread-a2a-4"))
         opened = await client.get("/.well-known/agent-card.json")
         accepted = await rpc(
             client,
             message("hello", "thread-a2a-4"),
-            headers={"Authorization": "Bearer secret-token"},
+            headers={"Authorization": f"Bearer {token}"},
         )
     assert denied.status_code == 401
     assert denied.json()["error"]["code"] == "UNAUTHORIZED"
     assert opened.status_code == 200
+    card = opened.json()
+    assert card["securitySchemes"]["bearer"]["httpAuthSecurityScheme"]["scheme"] == "bearer"
+    assert card["securityRequirements"] == [{"schemes": {"bearer": {}}}]
+    assert "environment-token" not in opened.text
+    assert "secret-token" not in opened.text
     assert task_of(accepted)["status"]["state"] == "TASK_STATE_COMPLETED"
-    assert "secret-token" not in accepted.text
+    assert token not in accepted.text
 
 
 async def test_bearer_token_applies_under_a_mount_prefix(runtime):
@@ -306,8 +317,6 @@ async def test_other_profile_cannot_read_the_same_context(tmp_path, common_plugi
 
 
 async def test_serve_uses_shared_token_only_on_jsonrpc(runtime):
-    from dataclasses import replace
-
     secured = replace(runtime, a2a_auth_token="shared-token")
     assert "shared-token" in secured.redaction_secrets
     app = create_app(secured, instance_id="test", model=ScriptedModel(responses=[AIMessage(content="ok")]))
@@ -321,7 +330,12 @@ async def test_serve_uses_shared_token_only_on_jsonrpc(runtime):
                 headers={"Authorization": "Bearer shared-token"},
             )
             assert (await client.get("/healthz")).status_code == 200
-            assert (await client.get("/.well-known/agent-card.json")).status_code == 200
+            opened = await client.get("/.well-known/agent-card.json")
+            assert opened.status_code == 200
+            card = opened.json()
+            assert card["securitySchemes"]["bearer"]["httpAuthSecurityScheme"]["scheme"] == "bearer"
+            assert card["securityRequirements"] == [{"schemes": {"bearer": {}}}]
+            assert "shared-token" not in opened.text
     assert denied.status_code == 401
     assert denied.json()["error"]["code"] == "UNAUTHORIZED"
     assert task_of(accepted)["status"]["state"] == "TASK_STATE_COMPLETED"
@@ -344,8 +358,6 @@ def test_a2a_token_comes_from_effective_environment(tmp_path, monkeypatch):
 
 
 def test_serve_a2a_defaults_to_configured_listen_address(runtime, monkeypatch):
-    from dataclasses import replace
-
     import a2a_server
     import serve.__main__ as cli
     from dataagent.settings import ServerSettings
