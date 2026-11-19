@@ -223,6 +223,7 @@ def build_a2a_routes(
     card = build_agent_card(
         host=host or server.host,
         port=server.port if port is None else port,
+        requires_bearer=runtime is not None and bool(runtime.a2a_auth_token),
     )
     routes = _agent_card_routes(card)
     if runtime is None:
@@ -287,9 +288,9 @@ def create_a2a_server(
 
     middleware = [Middleware(A2AAuditMiddleware, instance_id=instance_id,
                              user_id=runtime.paths.user_id, secrets=runtime.redaction_secrets)]
-    if auth_token:
+    if runtime.a2a_auth_token:
         middleware.append(
-            Middleware(BearerGuard, token=auth_token, paths=frozenset({JSONRPC_PATH}))
+            Middleware(BearerGuard, token=runtime.a2a_auth_token, paths=frozenset({JSONRPC_PATH}))
         )
     app = Starlette(lifespan=lifespan, middleware=middleware)
     app.state.conversation_instance_id = instance_id
