@@ -141,7 +141,7 @@ HOOK_POINTS = frozenset({PERCEPTOR_SCHEMA_CONTEXT, GENERATOR_POST_SQL, REFLECTOR
 def build_scenario(ctx: HookContext) -> dict[str, Handler]:
     base = Path(__file__).resolve().parent
     rewrite = dimension_join_rewriter(     # 命名空间 common/ 装配
-        mappings=load_dimensions(base / "dimensions.json"),
+        mappings=load_dimensions(base / "dimensions.yaml"),
         model=ctx.model, dialect=ctx.config.get("database.dialect", "sqlite"))
     selector = BusinessTwinTableSelector(  # 重资产装配期加载（手册 / 行政区划 / 提示词）
         ctx, base=base, semantic_client=ctx.semantic_client)  # 透传宿主客户端（自带场景头）
@@ -195,7 +195,7 @@ def build_scenario(ctx: HookContext) -> dict[str, Handler]:
 
 ## 5. 配置
 
-这份 JSON 不是独立文件：`plugins` 段属于宿主 **Agent 配置文件**——`$DATAAGENT_HOME/config.json`（默认 `~/.dataagent/config.json`；`init_home` 从模板生成，启动可显式指定替代文件）。完整可运行示例见 `examples/config-udn.json`（business_twin 场景，含模型别名、语义服务连接与入口声明）；`nl2sql` 及以下全部内容进入该文件的 `plugins.config.nl2sql` 段（`model` 别名来自同级 `models` 段，语义服务连接与场景头在根级 `semantic` 段、由宿主建客户端注入，均非插件参数）：
+这份 YAML 不是独立文件：`plugins` 段属于宿主 **Agent 配置文件**——`$DATAAGENT_HOME/config.yaml`（默认 `~/.dataagent/config.yaml`；`init_home` 从模板生成，启动可显式指定替代文件）。完整可运行示例见 `examples/config-udn.yaml`（business_twin 场景，含模型别名、语义服务连接与入口声明）；`nl2sql` 及以下全部内容进入该文件的 `plugins.config.nl2sql` 段（`model` 别名来自同级 `models` 段，语义服务连接与场景头在根级 `semantic` 段、由宿主建客户端注入，均非插件参数）：
 
 ```yaml
 plugins:
@@ -278,4 +278,4 @@ npm run start:tui
 
 ### 6.5 切换到 traffic_insight
 
-复制 `examples/config-udn.json` 后改三处：`plugins.config.nl2sql.scenario` → `"udn.traffic_insight"`，`database.db_id` → `"yunhe"`，`semantic.semantic_scenario` → `"traffic_insight"`，再按 §6.4 启动。
+复制 `examples/config-udn.yaml` 后改三处：`plugins.config.nl2sql.scenario` → `"udn.traffic_insight"`，`database.db_id` → `"yunhe"`，`semantic.semantic_scenario` → `"traffic_insight"`，再按 §6.4 启动。

@@ -7,9 +7,9 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 
+from dataagent.config.settings import SemanticSettings
 from dataagent.diagnostics.errors import DataAgentError
 from dataagent.semantic_client import SemanticServiceClient, normalize_semantic_base_url
-from dataagent.settings import SemanticSettings
 
 
 @pytest.mark.parametrize(
@@ -156,7 +156,9 @@ def test_constructed_scenario_stamps_requests_and_skips_health():
 
 def test_from_settings_carries_the_configured_semantic_scenario():
     """The root semantic.semantic_scenario setting rides the settings-built client."""
-    configured = SemanticSettings(base_url="http://semantic.test", semantic_scenario="business_twin")
+    configured = SemanticSettings(
+        base_url="http://semantic.test", semantic_scenario="business_twin"
+    )
     with SemanticServiceClient.from_settings(configured) as client:
         assert client.scenario == "business_twin"
     plain = SemanticSettings(base_url="http://semantic.test")
