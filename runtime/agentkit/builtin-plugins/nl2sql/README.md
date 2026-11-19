@@ -169,7 +169,9 @@ nl2sql/                      插件根
 | `model_call_budget` | 单次任务内模型调用上限（默认 64），超出即报错返回 |
 | `result_files` | 是否为每次成功查询写会话结果文件（默认 `true`，见上文） |
 | `scenario` | 可选。场景包点名（点分名一段一级目录：`udn.business_twin` → `scenarios/udn/business_twin/`，目录须含 `scenario.py` 入口）；缺省走默认流程，配置后选表与生成后改写由场景包接管，见 `docs/udn-scenario-packs.md` |
-| `database.db_id` / `dialect` / `engine` | 语义层库名 / SQL 方言（必填）/ 执行引擎（默认同方言：`sqlite`、`mysql`、`gaussvector`、`hive`/`spark`；非 sqlite 引擎的驱动 `pymysql`/`psycopg2`/`pyspark` 为可选依赖，构建时缺失会明确报错） |
+| `database.db_id` | 语义服务中的数据库标识，需与实际查询库对应 |
+| `database.dialect` | 必填。生成与 SQLGlot 校验使用的 SQL 方言，例如 `sqlite`、`mysql`、`postgres`；GaussVector 使用 `postgres` |
+| `database.engine` | 执行引擎：`sqlite`、`mysql`、`gaussvector`、`hive`/`spark`；省略时取 dialect，二者不同时必须显式填写，例如 GaussVector |
 | `database.*`（其余键） | 引擎连接参数，如 sqlite 的 `path`、mysql 的 `host/port/user/password/database` |
 | `perceptor.schema_mode` | `full_schema` 或 `schema_linking` |
 | `perceptor.user_schema` | schema .md 文件路径，注入 schema 绕过语义服务（测试后门） |
@@ -185,6 +187,29 @@ nl2sql/                      插件根
 节点段（`perceptor`…`selector`）全部可省略——省略时启用完整六节点链；
 出现时必须构成 `perceptor→generator→validator→reflector→executor→selector`
 前缀链（在链中第一个缺失的节点处截断），且 `generator` 及其之前的节点必填。
+
+### GaussVector 配置
+
+在 `plugins.config.nl2sql.database` 中分别指定 SQL 方言和执行引擎：
+
+```json
+{
+  "db_id": "your-semantic-db-id",
+  "dialect": "postgres",
+  "engine": "gaussvector",
+  "host": "$env{GV_HOST}",
+  "port": 5432,
+  "user": "$env{GV_USER}",
+  "password": "$env{GV_PASSWORD}",
+  "database": "$env{GV_DATABASE}"
+}
+```
+
+端口按实际服务填写，环境引用放在后端有效环境中。`db_id` 用于语义元数据查询，`database` 是数据库连接参数；模型配置仍需提供；使用语义服务获取元数据时，还需配置根级 `semantic`。
+
+`dialect` 传给生成提示和 SQLGlot，`engine` 决定连接实现。不能把 dialect 写成 `gaussvector`，SQLGlot 不识别这个方言；也不能省略 engine 后让其变成不支持的 `postgres` 执行引擎。当前 GV 适配通过 `psycopg2` 执行 `EXPLAIN` 和查询，SQLite、MySQL、GV 所需驱动属于基础运行依赖，无需选择 extra；Spark/Hive 另需 `spark` extra 和 Java 环境。
+
+这说明已有连接与执行适配，不代表特定 GV 版本、专有语法或真实业务库已经通过验收；这些仍需在目标环境验证。
 
 ## 与旧版的差异
 

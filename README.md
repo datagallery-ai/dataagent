@@ -93,12 +93,14 @@ Home defaults to `~/.dataagent`; set `DATAAGENT_HOME` in the process environment
 | `--env-file` | Explicitly replaces Home `.env`, including for direct Python CLI launches |
 | `server.host / port` | Backend defaults to `127.0.0.1:8790`; Web defaults to port 3000 |
 
+Prepare the source environment with the required extras first; the commands below use it without synchronizing dependencies. See [staged installation](docs/en/guides/mirror-deployment.md#staged-installation).
+
 ```bash
 # Backend, including A2A routes
-uv run --project runtime/agentkit dataagent serve
+uv run --no-sync --project runtime/agentkit dataagent serve
 
 # A2A only: choose this OR serve, since one Home supports one backend
-uv run --project runtime/agentkit dataagent serve-a2a
+uv run --no-sync --project runtime/agentkit dataagent serve-a2a
 ```
 
 `serve` provides `/healthz`, `/ready`, `/api/v1/runs`, sessions, and outputs. `serve-a2a` has none of those REST/health routes. SDK callers can use `prepare_runtime`, `create_agent`, and `ainvoke` directly; their host manages the checkpointer, exception handling, and logging configuration.

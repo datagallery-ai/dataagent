@@ -49,6 +49,29 @@ Launchers use the prepared interpreter. When launching directly with uv, add `--
 
 Makefile preserves `PYTHON_VERSION`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, and `NPM_REGISTRY` as compatibility arguments mapped to native tool settings. Existing native settings take precedence. Calls to `make prepare`, `make build`, `make ut`, and `make st` remain valid; tests prepare development dependencies through the shared entrypoint without repeated implicit synchronization in each suite. When the environment is ready, use `make ut UV_RUN_OPTS=--no-sync` or `npm run test:product -- --no-sync` to skip preparation; the same applies to `make st`.
 
+<a id="staged-installation"></a>
+
+## Staged installation and native commands
+
+From the repository root, configure the interpreter and download sources in the same shell as above, then run each stage:
+
+```bash
+# Skip Python preparation in the root install hook to observe each stage separately.
+SKIP_POSTINSTALL_BUILD=1 npm ci
+uv sync --project runtime/agentkit --no-dev
+npm run build
+```
+
+The second command can also be `npm run prepare:python -- --no-dev`. Direct uv commands require the relevant environment variables to be exported first; they do not additionally load the root `.env`. Add `--extra video` when video is needed; use `--extra all` for Spark/Hive and video after preparing the required external environment. Synchronizing an existing environment also removes unselected dependencies.
+
+Create and fill in the repository root `.env` using the [configuration instructions](../quick-start.md#3-configure-the-model-service), then select that file explicitly when starting the prepared source backend:
+
+```bash
+uv run --no-sync --project runtime/agentkit dataagent serve --env-file .env
+```
+
+If model configuration is provided through Home `.env` or process variables instead, omit `--env-file .env`. For A2A only, replace `serve` with `serve-a2a`. Backend-only installations can skip npm installation and frontend builds. `serve-a2a` has no REST health, session, or artifact endpoints. To connect frontends to an existing backend, see [Web/TUI connections](agentkit-package.md#connect-web-and-tui).
+
 ## Model gateway and validation
 
 In the repository `.env`, set `LLM_BASE_URL` to a model gateway reachable from the deployment environment and configure its `LLM_MODEL` and `LLM_API_KEY`. Start from the repository `.env.example`. The model gateway and package mirrors serve separate purposes.

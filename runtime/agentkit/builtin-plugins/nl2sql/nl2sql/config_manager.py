@@ -101,7 +101,7 @@ class NL2SQLConfig:
             )
         dialect = database.get("dialect")
         if not isinstance(dialect, str) or not dialect.strip():
-            raise ValueError("database.dialect is required (e.g. sqlite, mysql, gaussvector)")
+            raise ValueError("database.dialect is required (e.g. sqlite, mysql, postgres)")
         for key in ("db_id", "engine"):
             if key in database and not isinstance(database.get(key), str):
                 raise ValueError(f"database.{key} must be a string, got {database.get(key)!r}")

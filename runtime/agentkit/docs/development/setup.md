@@ -42,7 +42,7 @@ npm run start:tui -- --runtime-url http://127.0.0.1:8790
 单独起服务，日志在 `$DATAAGENT_HOME/runtime/logs/backend.log`：
 
 ```bash
-uv run --project runtime/agentkit dataagent serve \
+uv run --no-sync --project runtime/agentkit dataagent serve \
   --env-file .env \
   --workspace "$PWD"
 ```
@@ -63,8 +63,9 @@ SDK 路径不初始化 Home。调试配置层时显式传入 `LaunchOptions(conf
 ## 检查
 
 ```bash
-uv run --project runtime/agentkit ruff check runtime/agentkit
-uv run --project runtime/agentkit pytest runtime/agentkit/tests -q -m 'not live'
+npm run prepare:python
+uv run --no-sync --project runtime/agentkit ruff check runtime/agentkit
+uv run --no-sync --project runtime/agentkit pytest runtime/agentkit/tests -q -m 'not live'
 ```
 
 Ruff 选择 `E4`、`E7`、`E9`、`F`、`I`，行宽 100，目标 `py312`。

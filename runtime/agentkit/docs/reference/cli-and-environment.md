@@ -1,11 +1,13 @@
 # 命令与环境变量
 
+以下源码命令使用已准备的项目环境，不重新同步依赖；首次准备见 [安装指南](../../../../docs/zh/guides/mirror-deployment.md#staged-installation)。安装 wheel 后则直接使用其虚拟环境中的 `dataagent` 命令。
+
 ## `dataagent serve`
 
 入口是 `serve.__main__:main`。`python -m serve` 调用同一实现。这是 Web 和当前 TUI 共用的后端。
 
 ```bash
-uv run --project runtime/agentkit dataagent serve \
+uv run --no-sync --project runtime/agentkit dataagent serve \
   --config path/to/config.json \
   --user default \
   --workspace /existing/data \
@@ -38,7 +40,7 @@ uv run --project runtime/agentkit dataagent serve \
 把同一个运行时暴露成 A2A 1.0 服务，供其他 agent 调用。准备配置、用户和输入目录的参数与 `serve` 相同。不接受 `--session`：每个 A2A `contextId` 自己对应一条会话。
 
 ```bash
-uv run --project runtime/agentkit dataagent serve-a2a \
+uv run --no-sync --project runtime/agentkit dataagent serve-a2a \
   --config path/to/config.json \
   --user default \
   --workspace /existing/data \
@@ -49,7 +51,7 @@ uv run --project runtime/agentkit dataagent serve-a2a \
 
 | 参数 | 默认 | 作用 |
 | --- | --- | --- |
-| `--host` | 配置的 `server.host` | 绑定地址。需要被其他机器访问时再改为 `0.0.0.0`，并设置令牌 |
+| `--host` | 配置的 `server.host` | 绑定地址。跨机器访问时配置本机 IP 或 `0.0.0.0`；调用方使用可达的 IP/域名。默认匿名共享团队，令牌按需设置 |
 | `--port` | 配置的 `server.port` | 绑定端口。被占用则失败 |
 | `--auth-token` | `DATAAGENT_A2A_AUTH_TOKEN` | 设置后，JSON-RPC 要带 `Authorization: Bearer <token>`。写在命令行会出现在进程列表里，优先用环境变量 |
 
@@ -64,7 +66,7 @@ SDK 的 `LaunchOptions` 另有 `cwd` 和 `init_home`。可重复的 `--workspace
 从语义服务下载历史 SQL，生成 de-agent `history_sql` 使用的语料快照。需要配置 `semantic`。
 
 ```bash
-uv run --project runtime/agentkit dataagent history-sql --config path/to/config.json
+uv run --no-sync --project runtime/agentkit dataagent history-sql --config path/to/config.json
 ```
 
 | 参数 | 默认 | 作用 |
@@ -103,7 +105,7 @@ uv run --project runtime/agentkit dataagent history-sql --config path/to/config.
 | `DATAAGENT_OTLP_TRACES_ENDPOINT` | 后端进程环境 | 实时 OTLP/HTTP traces 的完整 URL。未设置则只写本地 trace 文件 |
 | `DATAAGENT_OTLP_HEADERS` | 后端进程环境 | 实时导出的请求头，逗号分隔的 `key=value` |
 | `DATAAGENT_A2A_AUTH_TOKEN` | 后端有效环境 | A2A JSON-RPC 的 Bearer 令牌。`serve` 和 `serve-a2a` 都读。进入日志脱敏 |
-| `DATAAGENT_WEB_ORIGIN` | Web 进程环境 | 浏览器错误上报允许的 Origin，例如 `https://data.example.com`。代理、公网域名或通配地址部署时指定；不用于配置 Next 到后端的转发 |
+| `DATAAGENT_WEB_ORIGIN` | Web 进程环境 | 浏览器错误上报允许的 Origin，例如 `https://data.example.com`。代理、域名或通配地址部署时指定；不用于配置 Next 到后端的转发 |
 | `DATAAGENT_HISTORY_SQL_CORPUS` | 后端进程环境 | 历史 SQL 语料目录，绝对路径。优先于 `history_sql.corpus_path` |
 
 `$env{NAME}` 的名字必须匹配 `[A-Za-z_][A-Za-z0-9_]*`。
