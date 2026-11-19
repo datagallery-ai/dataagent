@@ -57,7 +57,7 @@ def test_real_deepseek_reads_semantic_context_after_plugin_refresh(tmp_path):
         "entrypoint": "hook.py:handle",
         "params": {"query": "probe-one"},
     }
-    manifest = plugin / ".plugin.json"
+    manifest = plugin / ".plugin.yaml"
     manifest.write_text(json.dumps({"schema_version": 3, "id": plugin.name, "hooks": [hook]}))
     (plugin / "hook.py").write_text(
         "import asyncio\n"
@@ -68,7 +68,7 @@ def test_real_deepseek_reads_semantic_context_after_plugin_refresh(tmp_path):
         '    code = result.get("verification_code")\n'
         '    return {"messages": [SystemMessage(content=f"语义服务校验码：{code}。只回复校验码，不调用工具。", id="semantic-context")]}\n'
     )
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(
         json.dumps(
             {
@@ -187,7 +187,7 @@ def test_real_deepseek_reads_deployed_semantic_types_without_plugins(tmp_path):
             '''),
         encoding="utf-8",
     )
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(
         json.dumps(
             {
@@ -342,7 +342,7 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
         "你是语义检查员。必须调用 semantic-consumer__inspect_types 一次获取实时结果，"
         "然后原样返回工具输出的完整 JSON，包括 verification。不要调用其他工具。"
     )
-    (plugin / "child.json").write_text(
+    (plugin / "child.yaml").write_text(
         json.dumps(
             {
                 "name": "semantic-inspector",
@@ -361,7 +361,7 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
             }
         )
     )
-    (plugin / ".plugin.json").write_text(
+    (plugin / ".plugin.yaml").write_text(
         json.dumps(
             {
                 "schema_version": 3,
@@ -375,11 +375,11 @@ async def test_real_deployed_context_reaches_child_hooks_and_tools(tmp_path, hos
                         "params": {"scope": "root"},
                     }
                 ],
-                "subagents": ["child.json"],
+                "subagents": ["child.yaml"],
             }
         )
     )
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(
         json.dumps(
             {

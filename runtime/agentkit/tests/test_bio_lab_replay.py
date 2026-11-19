@@ -30,7 +30,7 @@ async def test_sdk_bootstrap_with_generated_config(tmp_path, monkeypatch):
     monkeypatch.setenv("LLM_API_KEY", "test-key")
     db = tmp_path / "fixture.sqlite"
     sqlite3.connect(db).close()
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(json.dumps(replay.config_for(db)))
     replay.install_scenario(tmp_path / "home")
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=config))
@@ -99,7 +99,7 @@ async def test_prepare_all_is_self_contained_and_needs_no_model(tmp_path, monkey
         assert all(item["status"] == "prepared" for item in results)
         assert not (output / "home/plugins").exists()
         for item in results:
-            config = json.loads((output / item["key"] / "config.json").read_text())
+            config = json.loads((output / item["key"] / "config.yaml").read_text())
             assert config["plugins"]["enabled"] == ["nl2sql", "data-qa"]
             assert Path(config["plugins"]["config"]["nl2sql"]["database"]["path"]).is_file()
             assert Path(

@@ -1,3 +1,5 @@
+> 历史记录：本文描述旧 JSON 配置版本。当前运行时只读取 YAML，请参阅配置指南。
+
 # Semantic client
 
 `dataagent/semantic_client/` contains the built-in semantic-service HTTP client. It has no plugin manifest or registration requirement. The package exports `SemanticServiceClient` and `normalize_semantic_base_url`; `DataAgentError` lives in `dataagent/errors.py`.

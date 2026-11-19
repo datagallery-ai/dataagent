@@ -1,0 +1,39 @@
+schema_version: 4
+dataagent:
+  model: primary
+  limits:
+    timeout_seconds: 180
+  entry: nl2sql
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+    max_retries: 2
+    temperature: 0.0
+semantic:
+  base_url: $env{SEMANTIC_BASE_URL}
+  timeout_seconds: 30.0
+plugins:
+  enabled:
+  - nl2sql
+  paths: []
+  config:
+    nl2sql:
+      model: primary
+      scenario: udn.business_twin
+      database:
+        db_id: business_twin
+        dialect: postgres
+      perceptor: {}
+      generator:
+        strategies:
+        - prompt
+      validator:
+        sql_security_enabled: true
+      reflector:
+        threshold: 0.9
+server:
+  host: 127.0.0.1
+  port: 8790

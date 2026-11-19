@@ -7,7 +7,7 @@
 ```text
 浏览器 apps/web
   -> Next 同源转发 /api/v1/runs 与 /api/v1/*
-  -> dataagent serve（config.json 的 server.host:server.port，默认 127.0.0.1:8790）
+  -> dataagent serve（config.yaml 的 server.host:server.port，默认 127.0.0.1:8790）
   <- apps/tui 直接请求同一进程
 ```
 
@@ -33,7 +33,7 @@ Python SDK 可以不经 HTTP，直接准备同一份运行时。Web/TUI 的对�
 
 ## 配置和数据放在哪
 
-部署时要改的是 Home `~/.dataagent` 里的 `config.json` 和 `.env`，加上仓库根目录 `.env`。最少要填的模型字段和监听地址见 [配置](../reference/configuration-api.md)。
+部署时要改的是 Home `~/.dataagent` 里的 `config.yaml` 和 `.env`，加上仓库根目录 `.env`。最少要填的模型字段和监听地址见 [配置](../reference/configuration-api.md)。
 
 让模型读本机目录时，用工作区，不要在 Home 里找一份“数据源配置”。步骤见 [数据从哪里来](../guides/data-sources.md)。新产生的文件在该会话的 `outputs/`。
 

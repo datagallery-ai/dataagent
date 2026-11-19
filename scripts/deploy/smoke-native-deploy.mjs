@@ -1,3 +1,4 @@
+import { parse, stringify } from "yaml";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
@@ -106,11 +107,11 @@ async function main() {
     await copyCheckout(tempRoot);
     const home = path.join(tempRoot, "dataagent-home");
     await mkdir(home, { recursive: true });
-    const template = JSON.parse(await readFile(path.join(tempRoot, "runtime/agentkit/dataagent/bootstrap/templates/config.json"), "utf8"));
+    const template = parse(await readFile(path.join(tempRoot, "runtime/agentkit/dataagent/bootstrap/templates/config.yaml"), "utf8"));
     template.server = { host: "127.0.0.1", port: apiPort };
     await writeFile(
-      path.join(home, "config.json"),
-      `${JSON.stringify(template)}\n`
+      path.join(home, "config.yaml"),
+      `${stringify(template)}\n`
     );
 
     // Inject fixture secret into the shared redacting backend log used in production.

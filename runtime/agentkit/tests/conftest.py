@@ -106,7 +106,7 @@ def common_plugin(tmp_path):
 
 @pytest.fixture
 def runtime(tmp_path, common_plugin):
-    path = tmp_path / "home/config.json"
+    path = tmp_path / "home/config.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps({
         "models": {"primary": {

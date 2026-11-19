@@ -25,7 +25,7 @@ npm run build
 npm run start:tui
 ```
 
-地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。
+地址来自 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。
 
 在 `DATAAGENT_HOME`（默认 `~/.dataagent`）里填写 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。
 
@@ -35,7 +35,7 @@ npm run start:tui
 uv run --no-sync --project runtime/agentkit dataagent serve --workspace /existing/data
 ```
 
-默认地址是 `http://127.0.0.1:8790`，来自 `config.json` 的 `server.host` 和 `server.port`。端口被占用时启动失败，不会改动其他进程。
+默认地址是 `http://127.0.0.1:8790`，来自 `config.yaml` 的 `server.host` 和 `server.port`。端口被占用时启动失败，不会改动其他进程。
 
 让其他 agent 通过 A2A 1.0 调用本机 Agent：
 
@@ -60,3 +60,5 @@ uv run --no-sync --project runtime/agentkit dataagent serve-a2a --workspace /exi
 | 修改代码并验证 | [开发环境](docs/development/setup.md) |
 
 可运行示例在 [examples/](examples/README.md)。
+
+配置文件使用 YAML 1.2（`config.yaml`、`.plugin.yaml`、`.mcp.yaml`）。用 `uv run --project runtime/agentkit dataagent config migrate` 预览旧 JSON 迁移，确认计划后加 `--apply`。源文件保留；迁移后重启应用。

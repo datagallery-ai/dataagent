@@ -27,7 +27,7 @@ from dataagent.models import build_model
 
 @pytest.mark.parametrize("value", [True, False, None])
 def test_streaming_config_is_not_exposed(tmp_path, value):
-    path = config(tmp_path / "invalid.json", {"models": {"primary": {
+    path = config(tmp_path / "invalid.yaml", {"models": {"primary": {
         **MODEL["models"]["primary"], "streaming": value,
     }}})
     with pytest.raises(ValueError, match="streaming"):

@@ -8,7 +8,7 @@ from pathlib import Path
 
 from dataagent.bootstrap.config_files import expand_env, freeze, validate_against
 from dataagent.declarations import MCPConfig, StdioMCPServer
-from dataagent.strict_json import read_json
+from dataagent.strict_yaml import check_legacy, read_yaml
 
 
 def load_mcp_config(
@@ -17,12 +17,13 @@ def load_mcp_config(
     connections = {}
     sources = [("user", home), *((root.name, root) for root in plugin_roots)]
     for scope, root in sources:
-        path = root / ".mcp.json"
+        path = root / ".mcp.yaml"
+        check_legacy(path)
         if not path.exists() and not path.is_symlink():
             continue
         if not path.is_file():
             raise ValueError(f"Expected an MCP configuration file: {path}")
-        data = expand_env(read_json(path), env, source=path, home=home, dotenv=dotenv)
+        data = expand_env(read_yaml(path), env, source=path, home=home, dotenv=dotenv)
         config = validate_against(MCPConfig, data, path)
         for name, server in config.mcpServers.items():
             identity = f"mcp__{scope}__{name}"

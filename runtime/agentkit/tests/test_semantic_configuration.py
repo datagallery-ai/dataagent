@@ -29,7 +29,7 @@ def test_explicit_config_replaces_home_and_resolves_its_own_tls_paths(tmp_path):
     home, explicit = tmp_path / "home", tmp_path / "explicit"
     home.mkdir()
     explicit.mkdir()
-    (home / "config.json").write_text(
+    (home / "config.yaml").write_text(
         json.dumps(
             {
                 "models": {
@@ -48,7 +48,7 @@ def test_explicit_config_replaces_home_and_resolves_its_own_tls_paths(tmp_path):
             }
         )
     )
-    override = explicit / "config.json"
+    override = explicit / "config.yaml"
     override.write_text(
         json.dumps(
             {
@@ -93,8 +93,8 @@ def test_null_semantic_can_disable_or_be_overridden(tmp_path):
             "primary": {"name": "unused", "base_url": "https://unused.invalid", "api_key": "unused"}
         }
     }
-    automatic = home / "config.json"
-    override = tmp_path / "config.json"
+    automatic = home / "config.yaml"
+    override = tmp_path / "config.yaml"
     automatic.write_text(json.dumps({**base, "semantic": {"base_url": "http://home.test"}}))
     override.write_text(json.dumps({**base, "semantic": None}))
     assert merge(load_layers(home, {}, override)).semantic is None
@@ -200,7 +200,7 @@ def test_subagent_hooks_use_native_context(tmp_path, runtime):
         '    return {"marker": runtime.context.semantic_client.base_url}\n'
     )
     hook = {"event": "before_model", "entrypoint": "hook.py:handle"}
-    (tmp_path / "child.json").write_text(
+    (tmp_path / "child.yaml").write_text(
         json.dumps(
             {
                 "name": "child",
@@ -210,7 +210,7 @@ def test_subagent_hooks_use_native_context(tmp_path, runtime):
             }
         )
     )
-    plugin = PluginSpec(id="consumer", hooks=[hook], subagents=["child.json"])
+    plugin = PluginSpec(id="consumer", hooks=[hook], subagents=["child.yaml"])
     with SemanticServiceClient("semantic.test") as client:
         compiled = compile_extensions([(tmp_path, plugin)])
         (root_hook,) = compiled.get("middleware")
@@ -332,7 +332,7 @@ def test_rest_startup_failure_closes_semantic_client(runtime, monkeypatch):
 
 def test_rest_host_owns_client_and_refresh_preserves_startup_settings(tmp_path):
     """Keep one client across extension refreshes and close it on REST shutdown."""
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     values = {
         "models": {
             "primary": {"name": "unused", "base_url": "https://unused.invalid", "api_key": "unused"}

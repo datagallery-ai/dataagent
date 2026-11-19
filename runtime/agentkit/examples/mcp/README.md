@@ -1,11 +1,11 @@
 # MCP 配置示例
 
-- [.mcp.json](.mcp.json)：只连接随附的 [math_server.py](math_server.py)，用于本地快速验证。
-- [mcp.full.json](mcp.full.json)：覆盖当前支持的全部字段和三种连接类型，作为配置参考。
+- [.mcp.yaml](.mcp.yaml)：只连接随附的 [math_server.py](math_server.py)，用于本地快速验证。
+- [mcp.full.yaml](mcp.full.yaml)：覆盖当前支持的全部字段和三种连接类型，作为配置参考。
 
 **完整模板中的远程地址是占位地址，不能直接运行。** 使用前删除不需要的服务，替换其余服务的地址和凭证引用。
-`mcp.full.json` 不会被自动加载；将需要的 `mcpServers` 条目合并到 `<home>/.mcp.json`
-或启用插件的 `<plugin_root>/.mcp.json`。已有配置不要直接覆盖。MCP 不写入产品 `config.json`。
+`mcp.full.yaml` 不会被自动加载；将需要的 `mcpServers` 条目合并到 `<home>/.mcp.yaml`
+或启用插件的 `<plugin_root>/.mcp.yaml`。已有配置不要直接覆盖。MCP 不写入产品 `config.yaml`。
 
 ## 字段说明
 
@@ -28,7 +28,7 @@ JSON 不支持注释，不添加 `_comment`。当前不支持 `cwd`、`disabled`
 
 ## 路径和环境变量
 
-stdio 的工作目录固定为 `.mcp.json` 所在目录。示例 `math_server.py` 必须与它放在一起。
+stdio 的工作目录固定为 `.mcp.yaml` 所在目录。示例 `math_server.py` 必须与它放在一起。
 `command` 中带 `/` 的相对路径也以该目录解析；程序名称则由系统查找。
 例如 Node 服务可以使用 `"command": "node", "args": ["servers/index.js"]`，对应脚本和依赖需提前准备。
 参数不经过 shell，不在 `command` 中填写 `cd ... && ...`。
@@ -54,14 +54,14 @@ LEGACY_MCP_API_KEY=replace-with-your-service-api-key
 
 ## 启动后的行为
 
-1. 读取 Home 和启用插件的 `.mcp.json`，校验并展开环境变量。
+1. 读取 Home 和启用插件的 `.mcp.yaml`，校验并展开环境变量。
 2. 通过官方适配器连接每个服务、发现工具；任意保留的服务不可用都会导致启动失败。
 3. 将发现的原生工具装配到 Agent。Home 中 `math` 服务的 `add` 工具名为 `mcp__user__math__add`；
    插件 `analytics` 中同一服务的工具名为 `mcp__analytics__math__add`。
 4. REST/TUI 在下一轮请求前检测本地配置变化并刷新；当前按工具调用建立连接，不保留跨调用的服务内存状态。
    仅服务端工具列表变化而本地配置不变时，仍需重启；SDK 调用方显式重新加载工具并建图。
 
-本地示例配置好后，从仓库根运行 `npm run start:tui`。地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；控制面已经在跑时同一条命令直接连上。输入：
+本地示例配置好后，从仓库根运行 `npm run start:tui`。地址来自 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；控制面已经在跑时同一条命令直接连上。输入：
 `Use mcp__user__math__add to add 12 and 30.`
 
 完整配置语义及 SDK 用法见 [MCP 接入](../../docs/extensions/mcp.md) 和 [MCP 配置](../../docs/reference/mcp-configuration.md)。

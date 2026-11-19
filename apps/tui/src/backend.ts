@@ -1,50 +1,28 @@
 import { spawn, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { randomUUID } from "node:crypto";
+import { parseEnv } from "node:util";
 import { existsSync, readFileSync } from "node:fs";
 import { join, resolve } from "node:path";
 import { loadEnvFile } from "node:process";
 import { fileURLToPath } from "node:url";
 import { z } from "zod";
-import { resolveDataagentHome } from "./log-path.js";
+import { readServerListen } from "../../../scripts/server-listen.mjs";
 import { terminalText } from "./utils/terminal-text.js";
 import { captureOutput, createLogger, redactLogText } from "../../../scripts/lib/logging.mjs";
 import { venvPython } from "../../../scripts/python-environment.mjs";
-
-const DEFAULT_SERVER_HOST = "127.0.0.1";
-const DEFAULT_SERVER_PORT = "8790";
-
-function readServer(file: string | null | undefined): { host?: unknown; port?: unknown } {
-  if (!file || !existsSync(file)) return {};
-  try {
-    const server = JSON.parse(readFileSync(file, "utf8"))?.server;
-    return server && typeof server === "object" ? server : {};
-  } catch {
-    return {};
-  }
-}
 
 function bareHost(value: string): string {
   return value.trim().replace(/^\[(.*)\]$/u, "$1");
 }
 
-function pickHost(value: unknown, fallback: string): string {
-  if (typeof value !== "string") return fallback;
-  return bareHost(value) || fallback;
+/** Source-checkout defaults; existing process values retain precedence. */
+export function projectEnvironment(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const rootEnv = fileURLToPath(new URL("../../../.env", import.meta.url));
+  return existsSync(rootEnv) ? { ...parseEnv(readFileSync(rootEnv, "utf8")), ...env } : env;
 }
 
-function pickPort(value: unknown, fallback: string): string {
-  const port = Number(value);
-  if (Number.isInteger(port) && port >= 1 && port <= 65535) return String(port);
-  return fallback;
-}
-
-/** Listen address from Home config.json. */
-export function configuredListen(env: NodeJS.ProcessEnv = process.env): { host: string; port: string } {
-  const base = readServer(join(resolveDataagentHome(env), "config.json"));
-  return {
-    host: pickHost(base.host, DEFAULT_SERVER_HOST),
-    port: pickPort(base.port, DEFAULT_SERVER_PORT),
-  };
+export function configuredListen(env: NodeJS.ProcessEnv = process.env, configPath?: string, envFile?: string): { host: string; port: string } {
+  return readServerListen(env, configPath, envFile);
 }
 
 export function formatListenBase(host: string, port: string): string {

@@ -4,7 +4,7 @@ from pathlib import Path
 
 from dataagent.declarations import PluginSpec
 from dataagent.settings import PluginSettings
-from dataagent.strict_json import read_json
+from dataagent.strict_yaml import check_legacy, read_yaml
 
 
 def contained_path(root: Path, relative: str) -> Path:
@@ -36,7 +36,8 @@ def resolve_plugins(settings: PluginSettings, plugin_roots=()) -> list[tuple[Pat
                 f"Plugin {plugin_id!r} must resolve to exactly one directory: {locations}"
             )
         root = matches[0]
-        spec = PluginSpec.model_validate(read_json(contained_path(root, ".plugin.json")))
+        check_legacy(root / ".plugin.yaml")
+        spec = PluginSpec.model_validate(read_yaml(contained_path(root, ".plugin.yaml")))
         if spec.id != plugin_id:
             raise ValueError(f"Plugin directory and manifest ID disagree: {plugin_id}")
         visiting.append(plugin_id)

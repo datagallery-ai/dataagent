@@ -138,7 +138,7 @@ async function main() {
     const apiPort = await reservePort();
     const api = `http://127.0.0.1:${apiPort}`;
     await run(python, ["-I", "-c", `
-import json, os, sys
+import json, yaml, os, sys
 from pathlib import Path
 import dataagent, serve.app, a2a_server
 import pymysql, psycopg2, cryptography
@@ -151,16 +151,16 @@ assert all(find_spec(name) is None for name in ('pyspark', 'av', 'PIL'))
 for name in dataagent.__all__: getattr(dataagent, name)
 plugins = builtin_plugins_path()
 for name in ('data-qa', 'nl2sql', 'de-agent'):
-    assert (plugins / name / '.plugin.json').is_file()
+    assert (plugins / name / '.plugin.yaml').is_file()
 assert (plugins / 'nl2sql' / 'prompts' / 'routing.md').is_file()
 home = Path(os.environ['DATAAGENT_HOME'])
 initialize_home(home)
-config = json.loads((home / 'config.json').read_text())
+config = yaml.safe_load((home / 'config.yaml').read_text())
 config['models']['primary'] = dict(provider='openai', name='package-model', base_url=${JSON.stringify(`http://127.0.0.1:${providerPort}/v1`)}, api_key='fixture-package-key', max_retries=0)
 config['server'] = dict(host='127.0.0.1', port=${apiPort})
 config['plugins']['enabled'] = ['data-qa']
 config['plugins']['config'] = {'data-qa': {'database': 'fixture'}}
-(home / 'config.json').write_text(json.dumps(config))
+(home / 'config.yaml').write_text(yaml.safe_dump(config, allow_unicode=True))
 `], { cwd: temporary });
     await run(cli, ["--help"], { cwd: temporary });
     console.log("[smoke:agentkit-package] installed SDK invocation");
@@ -247,14 +247,14 @@ asyncio.run(main())
     for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) delete unconfigured[key];
     // Keep the same listen address while allowing the CLI to initialize its own templates.
     await run(python, ["-I", "-c", `
-import json, os
+import json, yaml, os
 from pathlib import Path
 from dataagent.bootstrap.paths import initialize_home
 home = Path(os.environ['DATAAGENT_HOME'])
 initialize_home(home)
-config = json.loads((home / 'config.json').read_text())
+config = yaml.safe_load((home / 'config.yaml').read_text())
 config['server'] = dict(host='127.0.0.1', port=${apiPort})
-(home / 'config.json').write_text(json.dumps(config))
+(home / 'config.yaml').write_text(yaml.safe_dump(config, allow_unicode=True))
 `], { cwd: temporary, env: unconfigured });
     backend = service(cli, ["serve"], { cwd: temporary, env: unconfigured });
     await waitFor(api + "/healthz", backend);

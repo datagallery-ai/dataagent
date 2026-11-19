@@ -60,7 +60,7 @@ def test_signed_urls_and_otlp_auth_are_redacted(configured_logging):
 
 def test_independent_backend_startup_failure_is_persisted(tmp_path):
     home = tmp_path / "standalone"
-    config = tmp_path / "bad.json"
+    config = tmp_path / "bad.yaml"
     config.write_text("{invalid json")
     result = subprocess.run([sys.executable, "-m", "serve", "serve", "--config", str(config)],
                             env={**os.environ, "DATAAGENT_HOME": str(home)},
@@ -105,13 +105,13 @@ def test_runtime_registers_credentials_without_scrubbing_addresses_and_parameter
     monkeypatch.setenv("KEYBOARD_LAYOUT", "en")
     monkeypatch.setenv("TOKENIZERS_PARALLELISM", "false")
     home = tmp_path / "home"
-    config = home / "config.json"
+    config = home / "config.yaml"
     config.write_text(json.dumps({
         "models": {"primary": {"name": "fixture", "base_url": "http://model.invalid/v1", "api_key": "model-private-key"}},
         "semantic": {"base_url": "http://10.0.0.8:8080", "username": "svc", "password": "semantic-private-password"},
         "plugins": {"enabled": []},
     }))
-    (home / ".mcp.json").write_text(json.dumps({"mcpServers": {"review": {
+    (home / ".mcp.yaml").write_text(json.dumps({"mcpServers": {"review": {
         "command": "node", "args": ["npx", "--token", "cli-private-token", "--password=cli-private-password"],
         "env": {"SCENARIO": "svc", "LANG": "en", "API_KEY": "mcp-private-key"},
     }}}))
@@ -158,7 +158,7 @@ def test_history_sql_keeps_working_when_the_log_directory_cannot_be_created(tmp_
     home = tmp_path / "home"
     (home / "runtime").mkdir(parents=True)
     (home / "runtime/logs").write_text("not a directory")
-    (home / "config.json").write_text(json.dumps({
+    (home / "config.yaml").write_text(json.dumps({
         "models": {"primary": {"name": "fixture", "base_url": "http://model.invalid/v1", "api_key": "fixture-api-key"}},
         "plugins": {"enabled": []},
     }))

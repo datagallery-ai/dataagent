@@ -114,7 +114,7 @@ def test_agui_inspects_compiled_graph_without_unbinding_execution(tool_runtime):
 
 def test_secondary_environment_is_lazy_and_uses_startup_snapshot(runtime, monkeypatch):
     home = runtime.paths.home
-    path = home / "config.json"
+    path = home / "config.yaml"
     settings = json.loads(path.read_text())
     settings["models"] = {"primary": {
         "name": "default", "base_url": "https://example.invalid/v1", "api_key": "primary-key",

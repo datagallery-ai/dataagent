@@ -8,7 +8,7 @@ SDK 与 REST 使用同一套准备和装配。只有一条路径：`prepare_runt
 
 ### 不配置文件日志
 
-先在 Home `config.json` / `.env` 配好可用模型，再将以下示例保存为脚本，从仓库根目录用 `uv run --project runtime/agentkit python /path/to/example.py` 运行。示例使用内存 Checkpoint，进程退出后不保留对话历史。
+先在 Home `config.yaml` / `.env` 配好可用模型，再将以下示例保存为脚本，从仓库根目录用 `uv run --project runtime/agentkit python /path/to/example.py` 运行。示例使用内存 Checkpoint，进程退出后不保留对话历史。
 
 ```python
 import asyncio
@@ -100,7 +100,7 @@ from dataagent import LaunchOptions, create_agent, prepare_runtime
 
 async def main():
     runtime = prepare_runtime(LaunchOptions(
-        config=Path.home() / ".dataagent/config.json",
+        config=Path.home() / ".dataagent/config.yaml",
         user_id="alice",
     ))
     async with create_agent(runtime) as agent:

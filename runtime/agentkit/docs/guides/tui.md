@@ -1,6 +1,6 @@
 # TUI
 
-TUI 是仓库里的 `apps/tui`，与 Web 共用会话列表。没有参数时，按 `config.json` 拉起 `dataagent serve`，或者连上已经在跑的那一份。
+TUI 是仓库里的 `apps/tui`，与 Web 共用会话列表。没有参数时，按 `config.yaml` 拉起 `dataagent serve`，或者连上已经在跑的那一份。
 
 ## 启动
 
@@ -8,7 +8,7 @@ TUI 是仓库里的 `apps/tui`，与 Web 共用会话列表。没有参数时，
 npm run start:tui
 ```
 
-地址来自 Home `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
+地址来自 Home `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 
 ```bash
 npm run start:tui -- --resume

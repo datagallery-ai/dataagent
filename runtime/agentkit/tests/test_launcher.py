@@ -40,7 +40,7 @@ def config_file(tmp_path, listener=None):
             port = sock.getsockname()[1]
     else:
         port = listener.getsockname()[1]
-    path = tmp_path / "config.json"
+    path = tmp_path / "config.yaml"
     path.write_text(json.dumps({
         "models": {"primary": {
             "name": "process-test", "base_url": "https://example.invalid/v1",
@@ -134,24 +134,24 @@ def _run_serve(tmp_path, *args):
 
 
 def test_missing_config_exits_without_listening(tmp_path):
-    code, text = _run_serve(tmp_path, "--config", str(tmp_path / "missing.json"))
+    code, text = _run_serve(tmp_path, "--config", str(tmp_path / "missing.yaml"))
     assert code == 1
     assert "dataagent.startup" in text
     assert "Configuration file does not exist" in text
-    assert "missing.json" in text
+    assert "missing.yaml" in text
 
 
 def test_invalid_config_exits_without_listening(tmp_path):
-    path = tmp_path / "broken.json"
+    path = tmp_path / "broken.yaml"
     path.write_text("{")
     code, text = _run_serve(tmp_path, "--config", str(path))
     assert code == 1
     assert "dataagent.startup" in text
-    assert "Invalid JSON" in text
+    assert "invalid YAML syntax" in text
 
 
 def test_old_config_exits_with_upgrade_steps(tmp_path):
-    path = tmp_path / "old.json"
+    path = tmp_path / "old.yaml"
     path.write_text(json.dumps({
         "schema_version": 3,
         "dataagent": {"model": {"name": "primary"}},
@@ -160,7 +160,7 @@ def test_old_config_exits_with_upgrade_steps(tmp_path):
     }))
     code, text = _run_serve(tmp_path, "--config", str(path))
     assert code == 1
-    assert "old.json" in text
+    assert "old.yaml" in text
     assert "schema_version 3 is not supported" in text
     assert "dataagent.model a string" in text
     assert "a2a.agents to a2a.remote_agents" in text
@@ -178,10 +178,10 @@ def test_loaded_config_without_model_env_stays_unready(tmp_path, monkeypatch, ca
 def test_serve_config_comes_only_from_the_flag():
     serve = _parser().parse_args(["serve"])
     a2a = _parser().parse_args(["serve-a2a"])
-    chosen = _parser().parse_args(["serve", "--config", "/tmp/chosen.json"])
+    chosen = _parser().parse_args(["serve", "--config", "/tmp/chosen.yaml"])
     assert serve.config is None
     assert a2a.config is None
-    assert chosen.config == "/tmp/chosen.json"
+    assert chosen.config == "/tmp/chosen.yaml"
 
 
 def test_backend_entrypoints_share_serve_module():
@@ -213,20 +213,21 @@ def test_backend_entrypoints_share_serve_module():
 
 
 def test_degraded_start_keeps_configured_listen_address(tmp_path, monkeypatch) -> None:
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(json.dumps({"server": {"host": "0.0.0.0", "port": 8801}}))
     assert _listen(None, str(config)) == ("0.0.0.0", 8801)
 
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
     assert _listen(None) == ("127.0.0.1", 8790)
-    (tmp_path / "broken.json").write_text("{")
-    assert _listen(None, str(tmp_path / "broken.json")) == ("127.0.0.1", 8790)
+    (tmp_path / "broken.yaml").write_text("{")
+    with pytest.raises(ValueError, match="invalid YAML syntax"):
+        _listen(None, str(tmp_path / "broken.yaml"))
 
 
 def test_degraded_start_expands_env_in_listen_address(tmp_path, monkeypatch) -> None:
     monkeypatch.delenv("BIND_HOST", raising=False)
     monkeypatch.delenv("BIND_PORT", raising=False)
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(json.dumps({"server": {"host": "$env{BIND_HOST}", "port": "$env{BIND_PORT}"}}))
     env_file = tmp_path / "custom.env"
     env_file.write_text("BIND_HOST=0.0.0.0\nBIND_PORT=8802\n")
@@ -242,7 +243,7 @@ def test_missing_env_in_any_section_stays_unready_like_models(tmp_path, monkeypa
     monkeypatch.delenv("SEMANTIC_PASSWORD", raising=False)
     for name, value in (("LLM_MODEL", "m"), ("LLM_BASE_URL", "http://127.0.0.1:1/v1"), ("LLM_API_KEY", "k")):
         monkeypatch.setenv(name, value)
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(json.dumps({
         "models": {"primary": {"name": "$env{LLM_MODEL}", "base_url": "$env{LLM_BASE_URL}",
                                "api_key": "$env{LLM_API_KEY}"}},

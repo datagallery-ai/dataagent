@@ -57,7 +57,7 @@ builtin-plugins/nl2sql/
 │       ├── business_twin/           # scenario: "udn.business_twin"
 │       │   ├── scenario.py          # 入口：build_scenario() 装配（纯接线）
 │       │   ├── table_selector.py    # 选表流水线（装配期载资产，运行期 select(question) → SchemaContext）
-│       │   ├── dimensions.json      # 15 维映射
+│       │   ├── dimensions.yaml      # 15 维映射
 │       │   ├── sql_rules.md         # 场景规则手册
 │       │   ├── prompts/             # 感知阶段提示词（场景包 __file__ 自解析 + from_file 直读）
 │       │   │   ├── filter_business_twin_business_id_{system,user}.md  # 列抽取：内嵌 156 字段规范目录
@@ -71,7 +71,7 @@ builtin-plugins/nl2sql/
 │       └── traffic_insight/         # scenario: "udn.traffic_insight"
 │           ├── scenario.py          # 入口：build_scenario() 装配（纯接线）
 │           ├── table_selector.py    # 选表流水线（结构同 business_twin）
-│           ├── dimensions.json      # 51 维映射
+│           ├── dimensions.yaml      # 51 维映射
 │           ├── sql_rules.md         # 场景规则手册（含静态派生公式）
 │           ├── prompts/
 │           │   ├── filter_traffic_insight_fields_{system,user}.md        # 字段抽取：88 项目录 + 抽取原则
@@ -141,7 +141,7 @@ SEMANTIC_SCENARIO = "business_twin"        # 模块常量：X-Semantic-Scenario 
 def build_scenario(ctx: HookContext) -> dict[str, Handler]:
     base = Path(__file__).resolve().parent
     rewrite = dimension_join_rewriter(     # 命名空间 common/ 装配
-        mappings=load_dimensions(base / "dimensions.json", SEMANTIC_SCENARIO),
+        mappings=load_dimensions(base / "dimensions.yaml", SEMANTIC_SCENARIO),
         model=ctx.model, dialect=ctx.config.get("database.dialect", "sqlite"))
     semantic = ctx.semantic_client.with_scenario(SEMANTIC_SCENARIO) if ctx.semantic_client else None
     selector = BusinessTwinTableSelector(  # 重资产装配期加载（手册 / 行政区划 / 提示词）
@@ -196,25 +196,27 @@ def build_scenario(ctx: HookContext) -> dict[str, Handler]:
 
 ## 5. 配置
 
-这份 JSON 不是独立文件：`plugins` 段属于宿主 **Agent 配置文件**——`$DATAAGENT_HOME/config.json`（默认 `~/.dataagent/config.json`；`init_home` 从模板生成，启动可显式指定替代文件）。完整可运行示例见 `examples/config-udn.json`（business_twin 场景，含模型别名、语义服务连接与入口声明）；`nl2sql` 及以下全部内容进入该文件的 `plugins.config.nl2sql` 段（`model` 别名来自同级 `models` 段，语义服务连接在根级 `semantic` 段、由宿主建客户端注入，均非插件参数）：
+这份 YAML 不是独立文件：`plugins` 段属于宿主 **Agent 配置文件**——`$DATAAGENT_HOME/config.yaml`（默认 `~/.dataagent/config.yaml`；`init_home` 从模板生成，启动可显式指定替代文件）。完整可运行示例见 `examples/config-udn.yaml`（business_twin 场景，含模型别名、语义服务连接与入口声明）；`nl2sql` 及以下全部内容进入该文件的 `plugins.config.nl2sql` 段（`model` 别名来自同级 `models` 段，语义服务连接在根级 `semantic` 段、由宿主建客户端注入，均非插件参数）：
 
-```json
-{
-  "plugins": {
-    "enabled": ["nl2sql"],
-    "config": {
-      "nl2sql": {
-        "model": "primary",
-        "scenario": "udn.business_twin",
-        "database": { "db_id": "business_twin", "dialect": "postgres" },
-        "perceptor": {},
-        "generator": { "strategies": ["prompt"] },
-        "validator": { "sql_security_enabled": true },
-        "reflector": { "threshold": 0.9 }
-      }
-    }
-  }
-}
+```yaml
+plugins:
+  enabled:
+  - nl2sql
+  config:
+    nl2sql:
+      model: primary
+      scenario: udn.business_twin
+      database:
+        db_id: business_twin
+        dialect: postgres
+      perceptor: {}
+      generator:
+        strategies:
+        - prompt
+      validator:
+        sql_security_enabled: true
+      reflector:
+        threshold: 0.9
 ```
 
 | 规则 | 说明 |
@@ -252,12 +254,12 @@ SEMANTIC_BASE_URL=http://your-semantic-service
 
 ### 6.4 启动
 
-后端默认地址 `http://127.0.0.1:8790`（来自配置文件 `server.host` / `server.port`），Web 界面默认 `http://127.0.0.1:3000`（`--web-host` / `--web-port` 可覆盖）；`examples/config-udn.json` 已设 `dataagent.entry = "nl2sql"` 直连对外与 `scenario = "udn.business_twin"`。
+后端默认地址 `http://127.0.0.1:8790`（来自配置文件 `server.host` / `server.port`），Web 界面默认 `http://127.0.0.1:3000`（`--web-host` / `--web-port` 可覆盖）；`examples/config-udn.yaml` 已设 `dataagent.entry = "nl2sql"` 直连对外与 `scenario = "udn.business_twin"`。
 
 #### 6.4.1 启动 GUI
 
 ```bash
-npm run start -- --config runtime/agentkit/examples/config-udn.json
+npm run start -- --config runtime/agentkit/examples/config-udn.yaml
 ```
 
 #### 6.4.2 启动 TUI
@@ -265,7 +267,7 @@ npm run start -- --config runtime/agentkit/examples/config-udn.json
 方式一：目前 TUI 不会自动加载根 `.env`，需要显式传给后端
 
 ```bash
-npm run start:tui -- --config runtime/agentkit/examples/config-udn.json --env-file .env
+npm run start:tui -- --config runtime/agentkit/examples/config-udn.yaml --env-file .env
 ```
 
 方式二：如果已经启动了 GUI，TUI 探测到后端会直接附着，此时只需
@@ -276,4 +278,4 @@ npm run start:tui
 
 ### 6.5 切换到 traffic_insight
 
-复制 `examples/config-udn.json` 后改两处：`plugins.config.nl2sql.scenario` → `"udn.traffic_insight"`，`database.db_id` → `"yunhe"`，再按 §6.4 启动。
+复制 `examples/config-udn.yaml` 后改两处：`plugins.config.nl2sql.scenario` → `"udn.traffic_insight"`，`database.db_id` → `"yunhe"`，再按 §6.4 启动。

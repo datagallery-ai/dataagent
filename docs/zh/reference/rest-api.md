@@ -1,6 +1,6 @@
 # REST API 参考
 
-这篇给要调用控制面的集成方，不写服务内部模块。控制面默认地址是 `http://127.0.0.1:8790`，来自 Home `config.json` 的 `server.host` 和 `server.port`。REST 没有访问令牌；A2A JSON-RPC 有可选共享令牌，见下文。网页通过 Next 把 `/api/v1/*` 转到这个地址。
+这篇给要调用控制面的集成方，不写服务内部模块。控制面默认地址是 `http://127.0.0.1:8790`，来自 Home `config.yaml` 的 `server.host` 和 `server.port`。REST 没有访问令牌；A2A JSON-RPC 有可选共享令牌，见下文。网页通过 Next 把 `/api/v1/*` 转到这个地址。
 
 ## 信封
 

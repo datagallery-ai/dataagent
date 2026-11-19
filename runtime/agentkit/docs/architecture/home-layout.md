@@ -6,13 +6,13 @@
 
 ## Home
 
-`init_home`（CLI 默认会做，SDK 默认不做）创建下面这些目录和模板。已有文件不覆盖。新建目录模式 `0700`，新建的 `config.json` 和 `.env` 模式 `0600`。
+`init_home`（CLI 默认会做，SDK 默认不做）创建下面这些目录和模板。已有文件不覆盖。新建目录模式 `0700`，新建的 `config.yaml` 和 `.env` 模式 `0600`。
 
 ```text
 <home>/
-  config.json
+  config.yaml
   .env
-  .mcp.json                 # 可选，初始化不会创建
+  .mcp.yaml                 # 可选，初始化不会创建
   skills/<name>/SKILL.md
   hooks/                    # 只是目录；不会自动导入
   plugins/<id>/
@@ -32,12 +32,12 @@
 
 | 路径 | 作用 |
 | --- | --- |
-| `config.json` | 个人配置。字段见 [配置参考](../reference/configuration.md) |
+| `config.yaml` | 个人配置。字段见 [配置参考](../reference/configuration.md) |
 | `.env` | `$env{...}` 用到的模型名、地址和密钥 |
-| `.mcp.json` | Home 级 MCP 连接。已启用插件根目录里也可以各有一份 |
+| `.mcp.yaml` | Home 级 MCP 连接。已启用插件根目录里也可以各有一份 |
 | `skills/` | 用户 Skill。来源标签是 `User` |
 | `hooks/` | 初始化时创建。Hook 只来自配置里的 `entrypoint`，不会扫描这个目录 |
-| `plugins/<id>/` | 用户插件。目录名必须等于 `.plugin.json` 的 `id`，并且出现在 `plugins.enabled` |
+| `plugins/<id>/` | 用户插件。目录名必须等于 `.plugin.yaml` 的 `id`，并且出现在 `plugins.enabled` |
 | `runtime/` | 这个 Home 的全部进程状态。同一时刻只能有一个后端持有 `backend.lock` |
 
 包内 `builtin-plugins/` 不在 Home 里。它和 `plugins.paths` 里的目录一起作为插件候选。
@@ -64,14 +64,12 @@
 
 配置写在 `dataagent.workspaces`：
 
-```json
-{
-  "dataagent": {
-    "workspaces": [
-      {"name": "input", "path": "/data/reports", "read_only": true}
-    ]
-  }
-}
+```yaml
+dataagent:
+  workspaces:
+  - name: input
+    path: /data/reports
+    read_only: true
 ```
 
 | 字段 | 约束 |
@@ -90,7 +88,7 @@
 
 产品怎么启动写在仓库 `docs/zh/quick-start.md`。这里只记录进程关系。
 
-`dataagent serve` 是唯一的控制面，默认听 `config.json` 的 `server.host` 和 `server.port`（`127.0.0.1:8790`）。
+`dataagent serve` 是唯一的控制面，默认听 `config.yaml` 的 `server.host` 和 `server.port`（`127.0.0.1:8790`）。
 
 | 展示 | 怎么接上 |
 | --- | --- |

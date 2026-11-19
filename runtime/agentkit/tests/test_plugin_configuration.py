@@ -23,14 +23,14 @@ def _plugin(home, name, *, requires=(), config=None):
     path.mkdir(parents=True, exist_ok=True)
     manifest = {"id": name, "requires": list(requires)}
     if config is not None:
-        manifest["defaults_file"] = "defaults.json"
-        (path / "defaults.json").write_text(json.dumps({"plugins": {"config": config}}))
-    (path / ".plugin.json").write_text(json.dumps(manifest))
+        manifest["defaults_file"] = "defaults.yaml"
+        (path / "defaults.yaml").write_text(json.dumps({"plugins": {"config": config}}))
+    (path / ".plugin.yaml").write_text(json.dumps(manifest))
     return path
 
 
 def _runtime(tmp_path, enabled, config=None):
-    path = tmp_path / "config.json"
+    path = tmp_path / "config.yaml"
     path.write_text(
         json.dumps(
             {
@@ -73,7 +73,7 @@ def test_dependencies_merge_defaults_and_keep_hook_sources(tmp_path):
     assert value.get("nested") == {"left": 1, "right": 2}
     assert value.get("nodes") == [4]
     assert runtime.extensions.run_hooks.get("a")[0].base_dir == d.resolve()
-    assert any(item.path == a / "defaults.json" for item in runtime.report.configs)
+    assert any(item.path == a / "defaults.yaml" for item in runtime.report.configs)
 
 
 def test_dependency_errors_and_paths_are_checked(tmp_path):
@@ -85,8 +85,8 @@ def test_dependency_errors_and_paths_are_checked(tmp_path):
     _plugin(home, "b", requires=["a"])
     with pytest.raises(ValueError, match="a -> b -> a"):
         _runtime(tmp_path, ["a"])
-    (a.parent / "outside.json").write_text("{}")
-    (a / ".plugin.json").write_text(json.dumps({"id": "a", "defaults_file": "../outside.json"}))
+    (a.parent / "outside.yaml").write_text("{}")
+    (a / ".plugin.yaml").write_text(json.dumps({"id": "a", "defaults_file": "../outside.yaml"}))
     with pytest.raises(ValueError, match="escapes"):
         _runtime(tmp_path, ["a"])
 
@@ -102,7 +102,7 @@ def test_refresh_rebuilds_defaults_and_tracks_external_hook_source(tmp_path):
     old = extension_revision(runtime)
     hook.write_text(hook.read_text() + "# changed\n")
     assert extension_revision(runtime) != old
-    (p / "defaults.json").write_text(json.dumps({"plugins": {"config": {"a": {"x": 2}}}}))
+    (p / "defaults.yaml").write_text(json.dumps({"plugins": {"config": {"a": {"x": 2}}}}))
     updated = refresh_extensions(runtime)
     assert updated.settings.plugins.config.get("a").get("x") == 2
     assert len(updated.extensions.run_hooks.get("a")) == 1
@@ -238,7 +238,7 @@ async def test_nl2sql_perceptor_preserves_explicit_context_including_empty_value
 def test_plugin_defaults_cannot_change_host_settings(tmp_path):
     """Config fragments cannot recursively enable plugins or override model credentials."""
     root = _plugin(tmp_path / "home", "a", config={})
-    (root / "defaults.json").write_text(json.dumps({"plugins": {"enabled": ["b"]}}))
+    (root / "defaults.yaml").write_text(json.dumps({"plugins": {"enabled": ["b"]}}))
     with pytest.raises(ValueError, match="only contribute plugins.config"):
         _runtime(tmp_path, ["a"])
 

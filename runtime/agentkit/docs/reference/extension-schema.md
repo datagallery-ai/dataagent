@@ -21,7 +21,7 @@
 
 根 Agent 名固定为 `dataagent`，不能作为子代理名。
 
-## 插件 `.plugin.json`
+## 插件 `.plugin.yaml`
 
 `schema_version` 必须是 `3`。其他版本加载失败，报错说明怎样升级：版本 3 把 `system_prompt` 改名为 `system_prompt_file`，把 `config` 改名为 `defaults_file`。
 
@@ -29,11 +29,11 @@
 | --- | --- | --- | --- |
 | `id` | 字符串 | 必填 | 等于目录名 |
 | `requires` | 插件 ID 数组 | `[]` | 自动启用本地传递依赖，依赖先加载 |
-| `defaults_file` | 相对路径或省略 | 省略 | 只含 plugins.config 的 JSON 默认片段 |
+| `defaults_file` | 相对路径或省略 | 省略 | 只含 plugins.config 的 YAML 默认片段 |
 | `system_prompt_file` | 相对路径或省略 | 省略 | UTF-8 Markdown |
 | `tools` | 对象 | `{}` | 本地 ID 到 `{ "entrypoint": "file.py:symbol", "scope": "all" }` |
 | `skills` | 相对路径数组 | `[]` | 每个路径是含 `SKILL.md` 子目录的目录 |
-| `subagents` | 相对路径数组 | `[]` | 每个路径是一份子代理 JSON |
+| `subagents` | 相对路径数组 | `[]` | 每个路径是一份子代理 YAML |
 | `hooks` | 分组对象或列表 | `[]` | 只作用于根 Agent |
 
 入口路径相对插件根，解析后必须仍在根内。`file.py:symbol` 的 `symbol` 必须是标识符。
@@ -58,7 +58,7 @@
 
 函数契约见 [Hook](../extensions/hooks.md)。
 
-## 子代理 JSON
+## 子代理 YAML
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |

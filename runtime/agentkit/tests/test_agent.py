@@ -328,7 +328,7 @@ async def test_compiled_hook_exceptions_propagate_without_swallowing_or_retry(ru
     (root / "policy.py").write_text(
         f"async def handle({signature}, *, params):\n    raise RuntimeError('Policy failure')\n"
     )
-    (root / ".plugin.json").write_text(json.dumps({
+    (root / ".plugin.yaml").write_text(json.dumps({
         "schema_version": 3, "id": "policy",
         "hooks": [{"entrypoint": "policy.py:handle", "event": event}],
     }))
@@ -384,11 +384,11 @@ def _write_direct_plugin(root: Path):
         encoding="utf-8",
     )
     (root / "subagents").mkdir()
-    (root / "subagents" / "direct.json").write_text(json.dumps({
+    (root / "subagents" / "direct.yaml").write_text(json.dumps({
         "kind": "compiled", "name": "direct", "description": "Compiled entry.",
         "entrypoint": "subagents/direct.py:build",
     }))
-    (root / "subagents" / "notes.json").write_text(json.dumps({
+    (root / "subagents" / "notes.yaml").write_text(json.dumps({
         "name": "notes", "description": "Standard sibling.", "system_prompt_file": "prompts/notes.md",
     }))
     (root / "subagents" / "direct.py").write_text(
@@ -413,17 +413,17 @@ def _write_direct_plugin(root: Path):
         "    return RunnableLambda(run)\n",
         encoding="utf-8",
     )
-    (root / ".plugin.json").write_text(json.dumps({
+    (root / ".plugin.yaml").write_text(json.dumps({
         "id": "direct",
         "system_prompt_file": "prompts/agent.md",
         "tools": {"ping": {"entrypoint": "tools.py:ping"}},
         "skills": ["skills"],
-        "subagents": ["subagents/direct.json", "subagents/notes.json"],
+        "subagents": ["subagents/direct.yaml", "subagents/notes.yaml"],
     }))
 
 
 def _select_home(runtime, tmp_path, body):
-    (runtime.paths.home / "config.json").write_text(json.dumps({
+    (runtime.paths.home / "config.yaml").write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
         }},
@@ -483,10 +483,10 @@ def test_unknown_entry_fails_before_a_broken_factory(runtime, tmp_path):
     root = tmp_path / "home" / "plugins" / "direct"
     root.mkdir(parents=True)
     (root / "subagents").mkdir()
-    (root / ".plugin.json").write_text(json.dumps({
-        "id": "direct", "subagents": ["subagents/direct.json"],
+    (root / ".plugin.yaml").write_text(json.dumps({
+        "id": "direct", "subagents": ["subagents/direct.yaml"],
     }))
-    (root / "subagents" / "direct.json").write_text(json.dumps({
+    (root / "subagents" / "direct.yaml").write_text(json.dumps({
         "kind": "compiled", "name": "direct", "description": "Factory must not run.",
         "entrypoint": "subagents/direct.py:build",
     }))

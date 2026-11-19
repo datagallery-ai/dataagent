@@ -14,7 +14,7 @@ Put secrets in the process environment or Home `.env`, and reference them with `
 
 `--user` only selects `runtime/users/<id>/`. It is not a login. Another user cannot read that session through the API. A local process that can read Home can still open the files directly.
 
-New Home directories are mode `0700`. `config.json` and `.env` created at init are mode `0600`. Existing files keep their mode.
+New Home directories are mode `0700`. `config.yaml` and `.env` created at init are mode `0600`. Existing files keep their mode.
 
 Workspaces are marked read-only in configuration. The system prompt tells the model to write new files under the session `outputs/`. The prompt does not change operating-system permissions. File tools and the shell use the control-plane process permissions. The default working directory is that session's `outputs/`.
 

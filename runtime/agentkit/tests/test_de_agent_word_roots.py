@@ -13,6 +13,7 @@ from dataagent.declarations import PluginSpec
 from dataagent.extensions.hooks import compile_hooks
 from dataagent.extensions.loading import PythonLoader
 from dataagent.extensions.tools import collect_tools
+from dataagent.strict_yaml import read_yaml
 
 PLUGIN = Path(__file__).resolve().parents[1] / "builtin-plugins/de-agent"
 
@@ -165,7 +166,7 @@ async def test_raw_tool_csv_matching_and_async_candidates(tmp_path):
 @pytest.mark.asyncio
 async def test_registered_hooks_skip_root_lookup_on_structural_errors(tmp_path, monkeypatch):
     loader = PythonLoader()
-    spec = PluginSpec.model_validate_json((PLUGIN / ".plugin.json").read_text())
+    spec = PluginSpec.model_validate(read_yaml((PLUGIN / ".plugin.yaml")))
     validate = loader.load(PLUGIN, "utils/word_roots.py:validate_identifier_word_roots")
     mock = AsyncMock()
     monkeypatch.setitem(validate.__globals__, "validate_word_roots", mock)
@@ -191,7 +192,7 @@ async def test_registered_hooks_skip_root_lookup_on_structural_errors(tmp_path, 
 
 
 def test_native_tool_schema_hides_runtime():
-    spec = PluginSpec.model_validate_json((PLUGIN / ".plugin.json").read_text())
+    spec = PluginSpec.model_validate(read_yaml((PLUGIN / ".plugin.yaml")))
     registry = {}
     collect_tools(PLUGIN, spec, PythonLoader(), registry)
     schema = registry["de-agent__validate_word_roots"].tool_call_schema.model_json_schema()

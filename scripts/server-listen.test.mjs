@@ -1,6 +1,7 @@
+import { parse } from "yaml";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { mkdtempSync, statSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
@@ -13,13 +14,18 @@ function tempHome() {
   return mkdtempSync(join(tmpdir(), "dataagent-listen-"));
 }
 
-function loadPrimaryModel(home) {
-  const result = spawnSync(
+function runPython(args, options) {
+  return spawnSync(
     "uv",
-    ["run", "--project", agentkit, "--python", "3.12", "python", "-"],
+    ["run", "--project", agentkit, "--python", "3.12", "python", ...args],
+    { cwd: agentkit, encoding: "utf8", ...options },
+  );
+}
+
+function loadPrimaryModel(home) {
+  const result = runPython(
+    ["-"],
     {
-      cwd: agentkit,
-      encoding: "utf8",
       input: [
         "import json, os",
         "from dataagent.bootstrap import LaunchOptions, prepare_runtime",
@@ -46,10 +52,10 @@ function loadPrimaryModel(home) {
   return JSON.parse(result.stdout);
 }
 
-test("listen address comes from Home config.json", () => {
+test("listen address comes from Home config.yaml", () => {
   const home = tempHome();
   try {
-    writeFileSync(join(home, "config.json"), JSON.stringify({
+    writeFileSync(join(home, "config.yaml"), JSON.stringify({
       server: { host: "0.0.0.0", port: 8877 },
     }));
     assert.deepEqual(readServerListen({ DATAAGENT_HOME: home }), {
@@ -57,8 +63,8 @@ test("listen address comes from Home config.json", () => {
       port: "8877",
     });
     // A blank value means unset, like the backend: both read ~/.dataagent.
-    assert.deepEqual(readServerListen({ DATAAGENT_HOME: "  " }), readServerListen({}));
-    const selected = join(home, "selected.json");
+    assert.equal(resolveHome({ DATAAGENT_HOME: "  " }), resolveHome({}));
+    const selected = join(home, "selected.yaml");
     writeFileSync(selected, JSON.stringify({ plugins: { enabled: [] } }));
     assert.deepEqual(readServerListen({ DATAAGENT_HOME: home }, selected), {
       host: "127.0.0.1",
@@ -73,7 +79,7 @@ test("a new Home gets the full template and can load its model", () => {
   const home = tempHome();
   try {
     writeServerListen({ DATAAGENT_HOME: home }, { host: "127.0.0.1", port: "8801" });
-    const doc = JSON.parse(readFileSync(join(home, "config.json"), "utf8"));
+    const doc = parse(readFileSync(join(home, "config.yaml"), "utf8"));
     assert.equal(doc.schema_version, 4);
     assert.equal(doc.models.primary.provider, "openai");
     assert.equal(doc.models.primary.name, "$env{LLM_MODEL}");
@@ -96,7 +102,7 @@ test("a new Home gets the full template and can load its model", () => {
 
 test("an existing config only updates the listen fields", () => {
   const home = tempHome();
-  const file = join(home, "config.json");
+  const file = join(home, "config.yaml");
   const original = {
     schema_version: 4,
     models: {
@@ -109,7 +115,7 @@ test("an existing config only updates the listen fields", () => {
   try {
     writeFileSync(file, JSON.stringify(original));
     writeServerListen({ DATAAGENT_HOME: home }, { host: "127.0.0.1", port: 8810 });
-    const doc = JSON.parse(readFileSync(file, "utf8"));
+    const doc = parse(readFileSync(file, "utf8"));
     assert.deepEqual(doc.models, original.models);
     assert.deepEqual(doc.plugins, original.plugins);
     assert.deepEqual(doc.dataagent, original.dataagent);
@@ -120,15 +126,15 @@ test("an existing config only updates the listen fields", () => {
   }
 });
 
-test("invalid JSON is left byte for byte unchanged", () => {
+test("invalid YAML is left byte for byte unchanged", () => {
   const home = tempHome();
-  const file = join(home, "config.json");
-  const original = Buffer.from('{\n  "models": {"primary": {"name": "kept"}},\n}\n');
+  const file = join(home, "config.yaml");
+  const original = Buffer.from('models: [SECRET_VALUE\n');
   try {
     writeFileSync(file, original);
     assert.throws(
       () => writeServerListen({ DATAAGENT_HOME: home }, { host: "127.0.0.1", port: "8802" }),
-      /not valid JSON and was left unchanged/,
+      /invalid YAML syntax/,
     );
     assert.deepEqual(readFileSync(file), original);
   } finally {
@@ -138,13 +144,13 @@ test("invalid JSON is left byte for byte unchanged", () => {
 
 test("a JSON value that is not an object is left unchanged", () => {
   const home = tempHome();
-  const file = join(home, "config.json");
+  const file = join(home, "config.yaml");
   const original = Buffer.from("[1, 2]\n");
   try {
     writeFileSync(file, original);
     assert.throws(
       () => writeServerListen({ DATAAGENT_HOME: home }, { host: "127.0.0.1", port: "8803" }),
-      /not a JSON object and was left unchanged/,
+      /expected a nonempty mapping document/,
     );
     assert.deepEqual(readFileSync(file), original);
   } finally {
@@ -160,4 +166,94 @@ test("resolveHome follows the backend rule for blank, ~ and relative values", ()
   assert.equal(resolveHome({ DATAAGENT_HOME: "~" }), homedir());
   assert.equal(resolveHome({ DATAAGENT_HOME: "~/da" }), join(homedir(), "da"));
   assert.equal(resolveHome({ DATAAGENT_HOME: "rel/home" }), resolve(process.cwd(), "rel/home"));
+});
+
+test('block YAML comments and placeholders survive a private atomic edit', () => {
+  const home = tempHome();
+  const file = join(home, 'config.yaml');
+  try {
+    writeFileSync(file, '# preserved header\nmodels: # preserved models\n  primary:\n    api_key: "$env{SECRET}"\nserver:\n  host: localhost # retained host comment\n  port: 8790\n');
+    writeServerListen({ DATAAGENT_HOME: home }, { host: '127.0.0.2', port: 8812 });
+    const text = readFileSync(file, 'utf8');
+    assert.match(text, /# preserved header/);
+    assert.match(text, /# preserved models/);
+    assert.match(text, /# retained host comment/);
+    assert.match(text, /\$env\{SECRET\}/);
+    assert.equal(statSync(file).mode & 0o777, 0o600);
+    assert.deepEqual(readServerListen({ DATAAGENT_HOME: home }), { host: '127.0.0.2', port: '8812' });
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('server env uses Home dotenv and nonempty process values with explicit yml', () => {
+  const home = tempHome();
+  try {
+    const file = join(home, 'team.yml');
+    writeFileSync(file, 'server:\n  host: $env{BIND_HOST}\n  port: $env{BIND_PORT}\nmodels:\n  unused:\n    api_key: $env{ABSENT}\n');
+    writeFileSync(join(home, '.env'), 'BIND_HOST=127.0.0.2\nBIND_PORT=8813\n');
+    assert.deepEqual(readServerListen({ DATAAGENT_HOME: home, BIND_HOST: '', BIND_PORT: '8814' }, file), { host: '127.0.0.2', port: '8814' });
+    writeFileSync(join(home, 'config.json'), '{}');
+    assert.throws(() => readServerListen({ DATAAGENT_HOME: home }), /migrate/);
+    assert.throws(() => writeServerListen({ DATAAGENT_HOME: home }, { host: 'localhost', port: 1 }), /migrate/);
+    assert.throws(() => readServerListen({ DATAAGENT_HOME: home }, join(home, 'config.json')), /migrate/);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+const dotenvCases = [
+  { name: 'file order', text: 'BASE_PORT=8811\nAPI_PORT=${BASE_PORT}\n' },
+  { name: 'duplicate bindings and process precedence', text: 'BASE_PORT=8811\nAPI_PORT=${BASE_PORT}\nBASE_PORT=8812\nNEXT=${BASE_PORT}\n', env: { BASE_PORT: '8890', API_PORT: '8813' } },
+  { name: 'forward references use process then defaults', text: 'API_PORT=${BASE_PORT:-8814}\nBASE_PORT=8812\n', env: { BASE_PORT: '8815' } },
+  { name: 'missing default', text: 'API_PORT=${ABSENT:-8816}\n' },
+  { name: 'empty and valueless shadow interpolation only', text: 'EMPTY=\nNONE\nCHECK=${EMPTY:-fallback}/${NONE:-fallback}\nAPI_PORT=8817\n', env: { EMPTY: 'process', NONE: 'process', API_PORT: '' } },
+  { name: 'reserved bindings participate before filtering', text: 'DATAAGENT_HOME=ignored\nDATAAGENT_INSTANCE_ID=ignored\nCHECK=${DATAAGENT_HOME}/${DATAAGENT_INSTANCE_ID}\nAPI_PORT=8818\n' },
+  { name: 'quotes comments multiline and export', text: '\uFEFFexport BASE_PORT=8819 # comment\nAPI_PORT="${BASE_PORT}"\n\'KEY\'=\'中文\nline\'\nESCAPED="a\\nb\\tend"\nHASH=value#kept\n' },
+];
+for (const item of dotenvCases) test(`Python/Node dotenv parity: ${item.name}`, async () => {
+  const { effectiveEnvironment } = await import('./lib/config-env.mjs');
+  const home = tempHome();
+  try {
+    const config = join(home, 'config.yaml');
+    writeFileSync(config, 'server:\n  host: backend.example.test\n  port: $env{API_PORT}\n');
+    writeFileSync(join(home, '.env'), item.text);
+    const env = { DATAAGENT_HOME: home, ...item.env };
+    const result = runPython(['-c', `
+import json, os, sys
+from pathlib import Path
+from dataagent.bootstrap.environment import load_env
+from dataagent.bootstrap.startup import server_listen
+from dataagent.bootstrap.options import LaunchOptions
+payload = json.load(sys.stdin)
+os.environ.clear()
+os.environ.update(payload)
+values = dict(load_env((Path(payload['DATAAGENT_HOME']) / '.env',)).values)
+host, port = server_listen(LaunchOptions())
+print(json.dumps({'values': values, 'listen': {'host': host, 'port': str(port)}}))
+`], { input: JSON.stringify(env), encoding: 'utf8', env: { ...process.env, DATAAGENT_HOME: home } });
+    assert.equal(result.status, 0, result.stderr);
+    const expected = JSON.parse(result.stdout);
+    assert.deepEqual({ ...effectiveEnvironment(env, home) }, expected.values);
+    assert.deepEqual(readServerListen(env), expected.listen);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('explicit env file replaces Home dotenv for Python and Node', () => {
+  const home = tempHome();
+  try {
+    const config = join(home, 'selected.yml');
+    const selected = join(home, 'selected.env');
+    writeFileSync(config, 'server:\n  host: backend.example.test\n  port: $env{REVIEW_API_PORT}\n');
+    writeFileSync(join(home, '.env'), 'REVIEW_API_PORT=9999\n');
+    writeFileSync(selected, 'BASE_PORT=8811\nREVIEW_API_PORT=${BASE_PORT}\n');
+    const result = runPython(['-c', `
+import json, os, sys
+from dataagent.bootstrap.startup import server_listen
+from dataagent.bootstrap.options import LaunchOptions
+os.environ.clear()
+os.environ.update(json.load(sys.stdin))
+host, port = server_listen(LaunchOptions(config=sys.argv[1], env_file=sys.argv[2]))
+print(json.dumps({'host': host, 'port': str(port)}))
+`, config, selected], { input: JSON.stringify({ DATAAGENT_HOME: home }), env: { ...process.env, DATAAGENT_HOME: home } });
+    assert.equal(result.status, 0, result.stderr);
+    assert.deepEqual(readServerListen({ DATAAGENT_HOME: home }, config, selected), JSON.parse(result.stdout));
+    assert.throws(() => readServerListen({ DATAAGENT_HOME: home }, config, selected + '.missing'), /environment file does not exist/);
+  } finally { rmSync(home, { recursive: true, force: true }); }
 });

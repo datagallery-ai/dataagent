@@ -26,7 +26,7 @@
 | `SemanticServiceClient` | 语义服务 HTTP 客户端 |
 | `collect_model_stream(model, messages, **kwargs)` | 以流式调用模型并合成一条完整消息，保留工具调用、推理和用量。插件里调用 `AgentContext.get_model()` 返回的模型时用它 |
 | `SubagentServices` | 编译子代理工厂 `factory(params, services)` 的第二个参数：`get_model`、`semantic_client`、`outputs_dir`、`run_hooks` |
-| `ConfigurationLoadError` | 配置文件不存在、不是合法 JSON 或校验失败。`ValueError` 的子类 |
+| `ConfigurationLoadError` | 配置文件不存在、不是合法 YAML 或校验失败。`ValueError` 的子类 |
 | `DataAgentError` | 所有 DataAgent 异常的基类，字段为 `source`、`component`、`fact`、`trace_id`。`ConfigurationLoadError`、`LoopDetectedError`、`A2ACallError` 都继承它，并保留各自的内置基类（`ValueError`、`RuntimeError`）。语义服务客户端也抛出它 |
 | `LoopDetectedError` | 循环检测终止本轮。`kind` 说明是文本复读还是工具循环 |
 | `safe_error` | 把异常渲染成 `{"code", "message"}`：去掉已知密钥和终端控制符，消息截断到 1500。`code` 的取值见 [事件](events.md) |
@@ -50,7 +50,7 @@ async with create_agent(runtime, checkpointer=checkpointer) as agent:
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
-| `config` | `None` | 配置文件。省略时读 Home `config.json` |
+| `config` | `None` | 配置文件。省略时读 Home `config.yaml` |
 | `env_file` | `None` | 环境文件。设置后用这一份代替 Home `.env` |
 | `user_id` | `"default"` | 本地用户 ID，决定 `runtime/users/<user>/` |
 | `workspaces` | `()` | 只读输入目录 |
@@ -67,7 +67,7 @@ create_agent(runtime, *, model=None, checkpointer=None, mcp_tools=None, semantic
 | 参数 | 说明 |
 | --- | --- |
 | `checkpointer` | LangGraph checkpointer。要跨进程保留对话历史时传持久化实现 |
-| `mcp_tools` | 配置了 MCP 时必传，值来自 `await load_mcp_tools(runtime)`。没有 `.mcp.json` 时省略 |
+| `mcp_tools` | 配置了 MCP 时必传，值来自 `await load_mcp_tools(runtime)`。没有 `.mcp.yaml` 时省略 |
 | `semantic_client` | 宿主已有语义客户端时传入，Agent 不关闭它。省略时，配置了 `semantic` 就由 Agent 创建并拥有 |
 | `model` | 覆盖默认模型对象，主要用于测试 |
 

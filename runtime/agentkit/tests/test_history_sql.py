@@ -26,6 +26,7 @@ from dataagent.history_sql.downloader import (
     write_corpus,
 )
 from dataagent.semantic_client import SemanticServiceClient
+from dataagent.strict_yaml import read_yaml
 from serve.__main__ import main as dataagent_main
 
 PLUGIN = Path(__file__).resolve().parents[1] / "builtin-plugins/de-agent"
@@ -268,7 +269,7 @@ def test_cli_downloads_native_config_and_explicit_output_wins(tmp_path, monkeypa
 
 
 def test_history_child_has_only_local_read_tools_and_private_skill():
-    spec = SubAgentSpec.model_validate_json((PLUGIN / "subagents/history-sql-recall.json").read_text())
+    spec = SubAgentSpec.model_validate(read_yaml((PLUGIN / "subagents/history-sql-recall.yaml")))
     assert spec.tools == []
     assert set(spec.filesystem_tools) == {"ls", "glob", "grep", "read_file"}
     assert spec.skills == ["history-skills"]
@@ -281,7 +282,7 @@ async def test_native_task_reads_corpus_without_semantic_calls(tmp_path, is_enab
     root.mkdir()
     sql = root / "DOWNLOAD.sql"
     sql.write_text("INSERT OVERWRITE db.demo SELECT user_id FROM db.download GROUP BY user_id")
-    cfg = tmp_path / "agent.json"
+    cfg = tmp_path / "agent.yaml"
     cfg.write_text(json.dumps({
         "models": {"primary": {"name": "test", "base_url": "https://example.invalid/v1", "api_key": "offline"}},
         "plugins": {"enabled": ["de-agent"], "config": {"de-agent": {

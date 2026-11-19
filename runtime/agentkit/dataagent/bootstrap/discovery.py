@@ -34,7 +34,7 @@ def extension_revision(runtime) -> str:
     home = runtime.paths.home
     roots = {
         home / "skills",
-        home / ".mcp.json",
+        home / ".mcp.yaml",
         selected_env_path(home, runtime.report.env_file),
     }
     roots.update(item.path for item in runtime.report.configs)

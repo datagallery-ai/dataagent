@@ -290,18 +290,12 @@ Markdown 表格渲染器（`render_metrics_table`），所以产出的表格形�
 开关通过插件配置 `plugins.config.de-agent.dataops.enable_thinking` 控制,
 适用于数据试算链路的 CTE 内联与失败日志分析:
 
-```json
-{
-  "plugins": {
-    "config": {
-      "de-agent": {
-        "dataops": {
-          "enable_thinking": false
-        }
-      }
-    }
-  }
-}
+```yaml
+plugins:
+  config:
+    de-agent:
+      dataops:
+        enable_thinking: false
 ```
 
 改一个工具的配置不会影响其他链路，更不会影响 Agent 的 planner。

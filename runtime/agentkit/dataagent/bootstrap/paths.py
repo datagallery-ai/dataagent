@@ -17,8 +17,9 @@ from importlib.resources import files
 from pathlib import Path
 
 from dataagent.declarations import OPAQUE_ID_PATTERN
+from dataagent.strict_yaml import check_legacy
 
-TEMPLATES = (("config.json", "config.json"), (".env", "env.example"))
+TEMPLATES = (("config.yaml", "config.yaml"), (".env", "env.example"))
 _OPAQUE_ID = re.compile(OPAQUE_ID_PATTERN)
 
 
@@ -359,8 +360,10 @@ def _parse_session_binding(
     return SessionBinding(user_id, thread_id, tuple(workspaces), outputs)
 
 
-def initialize_home(home: Path) -> None:
-    """Explicitly create Home directories and templates, without overwriting existing files."""
+def initialize_home(home: Path, *, initialize_config: bool = True) -> None:
+    """Create private Home resources; an explicit product file skips the Home config entirely."""
+    if initialize_config:
+        check_legacy(home / "config.yaml")
     for path in (home, *(home / name for name in ("skills", "hooks", "plugins", "runtime"))):
         missing = []
         candidate = path
@@ -372,6 +375,8 @@ def initialize_home(home: Path) -> None:
         if not path.is_dir():
             raise ValueError(f"Expected a directory: {path}")
     for name, template in TEMPLATES:
+        if name == "config.yaml" and not initialize_config:
+            continue
         destination = home / name
         try:
             descriptor = os.open(destination, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)

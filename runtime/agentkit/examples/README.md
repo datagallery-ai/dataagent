@@ -1,27 +1,36 @@
-# JSON 配置说明
+# YAML 配置说明
 
-[config.json](config.json) 是覆盖当前全部产品配置字段的可运行示例，并启用两个随附的 Python Hook。
-只需要默认配置时，使用 [config.example.json](../config.example.json)。JSON 不允许注释；字段说明集中在本文，不引入 JSONC 或 `_comment` 字段。
+[config.yaml](config.yaml) 是覆盖当前全部产品配置字段的可运行示例，并启用两个随附的 Python Hook。
+只需要默认配置时，使用 [config.example.yaml](../config.example.yaml)。YAML 支持注释；字段说明集中在本文。
 
 ## 文件清单与迁移范围
 
-| 用途 | JSON 文件 | 加载位置 |
+| 用途 | YAML 文件 | 加载位置 |
 | --- | --- | --- |
-| 个人产品配置 | `<home>/config.json` | bootstrap 自动读取 |
-| 显式产品配置 | `--config <path>/config.json` | 替代 Home config.json，不与它叠加 |
-| Home 初始化模板 | `dataagent/bootstrap/templates/config.json` | 首次初始化时复制，不覆盖已有目标文件 |
-| 最小配置示例 | `config.example.json` | 手动复制或显式指定 |
-| 完整配置示例 | `examples/config.json` | 显式指定，随附 `hooks/` |
-| nl2sql 入口 | `examples/nl2sql-entry.json` | 显式指定；`dataagent.entry` 为 `nl2sql` |
-| 插件清单 | `<plugin>/.plugin.json` | Compiler 读取已启用插件 |
-| 子 Agent 声明 | 如 `subagents/statistics.json` | 由插件 `subagents` 引用 |
-| MCP 服务配置 | `<home>/.mcp.json`、启用插件的 `<plugin_root>/.mcp.json` | 只加载这两处；使用 `mcpServers`，不参与 config.json 合并 |
+| 个人产品配置 | `<home>/config.yaml` | bootstrap 自动读取 |
+| 显式产品配置 | `--config <path>/config.yaml` | 替代 Home config.yaml，不与它叠加 |
+| Home 初始化模板 | `dataagent/bootstrap/templates/config.yaml` | 首次初始化时复制，不覆盖已有目标文件 |
+| 最小配置示例 | `config.example.yaml` | 手动复制或显式指定 |
+| 完整配置示例 | `examples/config.yaml` | 显式指定，随附 `hooks/` |
+| nl2sql 入口 | `examples/nl2sql-entry.yaml` | 显式指定；`dataagent.entry` 为 `nl2sql` |
+| 插件清单 | `<plugin>/.plugin.yaml` | Compiler 读取已启用插件 |
+| 子 Agent 声明 | 如 `subagents/statistics.yaml` | 由插件 `subagents` 引用 |
+| MCP 服务配置 | `<home>/.mcp.yaml`、启用插件的 `<plugin_root>/.mcp.yaml` | 只加载这两处；使用 `mcpServers`，不参与 config.yaml 合并 |
 
-产品配置版本为 `4`，插件清单版本为 `3`。只接受标准 JSON。
+产品配置版本为 `4`，插件清单版本为 `3`，子 Agent 版本为 `1`。
+自动发现只读取规范名 `.yaml`；显式文件路径也支持 `.yml`。旧 JSON 不参与运行时合并。
 
-已有 Home、显式配置和外部插件需要把配置**内容**转为 JSON，并改名为上述文件名；仅改后缀不够。
-插件清单中的 `subagents` 路径也要同步改为 `.json`。原文件可留作备份，但不会被自动加载；不要把真实凭证提交到仓库。
-此代码迁移不自动改写本机 Home 或仓库外的插件。
+先预览，再执行迁移（JSON 源文件保留）：
+
+```sh
+uv run --project runtime/agentkit dataagent config migrate
+uv run --project runtime/agentkit dataagent config migrate --home /path/to/home --apply
+uv run --project runtime/agentkit dataagent config migrate --plugin /path/to/plugin --apply
+uv run --project runtime/agentkit dataagent config migrate --file /path/to/team.json --apply
+```
+
+显式 `--file` / `--plugin` 不隐式迁移 Home。迁移追踪声明的配置引用，不转换业务数据。
+已有等价 YAML 会跳过；不同内容会停止，不覆盖。全部预检通过后才创建目标，失败时撤回本次输出。迁移后重启应用。
 
 不转换 `.env`、Prompt Markdown、Python Hook/Tool 文件、`pyproject.toml`，也不改变
 Deep Agents 原生 `SKILL.md` 的 YAML frontmatter。`session.json` 已是 JSON，无需迁移。
@@ -30,7 +39,7 @@ Deep Agents 原生 `SKILL.md` 的 YAML frontmatter。`session.json` 已是 JSON�
 
 从仓库根目录运行：
 
-`npm run start:tui` 连接 `/api/v1/runs`（默认 `http://127.0.0.1:8790`，地址来自 `config.json` 的 `server.host` 和 `server.port`）。示例配置用 `--config` 传给它拉起的后端。
+`npm run start:tui` 连接 `/api/v1/runs`（默认 `http://127.0.0.1:8790`，地址来自 `config.yaml` 的 `server.host` 和 `server.port`）。示例配置用 `--config` 传给它拉起的后端。
 
 在控制面的 `DATAAGENT_HOME/.env` 设置 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY`。
 复制完整示例到其他目录时，需同时复制 `hooks/`，或修改/移除两个示例 Hook。
@@ -38,7 +47,7 @@ Deep Agents 原生 `SKILL.md` 的 YAML frontmatter。`session.json` 已是 JSON�
 nl2sql 入口示例不带 Hook：
 
 ```bash
-npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.json
+npm run start:tui -- --config runtime/agentkit/examples/nl2sql-entry.yaml
 ```
 
 除模型的 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` 外，再设置 `SEMANTIC_BASE_URL` 和 `NL2SQL_DATABASE_PATH`。
@@ -62,7 +71,7 @@ SDK 的完整调用示例见 [不配置文件日志](../docs/guides/sdk.md#不�
 | `dataagent.limits.model_calls_per_agent` | `128`；每个 Agent 每次调用的模型循环上限，非整棵子 Agent 树的预算；不覆盖摘要器所有内部调用 |
 | `dataagent.limits.tool_calls_per_agent` | `128`；每个 Agent 每次调用的工具次数上限；主/子 Agent 独立计数，新一轮重置；超限抛错 |
 | `dataagent.workspaces` | `[]`；可选只读输入列表，在 Home 或显式配置声明；空列表不创建默认输入目录 |
-| `dataagent.entry` | `null`；编译型子代理名。设置后图只有该子代理。本示例保持 `null`，仍装配 Deep Agents 根。入口示例见 [nl2sql-entry.json](nl2sql-entry.json) |
+| `dataagent.entry` | `null`；编译型子代理名。设置后图只有该子代理。本示例保持 `null`，仍装配 Deep Agents 根。入口示例见 [nl2sql-entry.yaml](nl2sql-entry.yaml) |
 | `dataagent.hooks` | 默认空；六事件分组，见下一节 |
 | `models.<id>.provider` | `"openai"`；当前唯一支持值，OpenAI-compatible 服务也使用它 |
 | `models.<id>.name` | 必填非空；服务商实际模型名 |
@@ -84,19 +93,18 @@ SDK 的完整调用示例见 [不配置文件日志](../docs/guides/sdk.md#不�
 每个事件对应数组；条目包含 `entrypoint`、可选 `params`（默认 `{}`），工具事件还可包含 `matcher`。
 组内不写 `event`。也可以写成带 `event` 的扁平列表。产品、插件和 SubAgent 共用同一声明格式。
 
-```json
-{
-  "dataagent": {
-    "hooks": {
-      "before_model": [
-        {"entrypoint": "hooks/check_input.py:handle", "params": {"max_chars": 4000}}
-      ],
-      "before_tool": [
-        {"entrypoint": "hooks/check_tool.py:handle", "matcher": "common__summarize_numbers", "params": {"blocked_tools": []}}
-      ]
-    }
-  }
-}
+```yaml
+dataagent:
+  hooks:
+    before_model:
+    - entrypoint: hooks/check_input.py:handle
+      params:
+        max_chars: 4000
+    before_tool:
+    - entrypoint: hooks/check_tool.py:handle
+      matcher: common__summarize_numbers
+      params:
+        blocked_tools: []
 ```
 
 | 事件 | 调用点与 Python 签名 |
@@ -118,11 +126,11 @@ SDK 的完整调用示例见 [不配置文件日志](../docs/guides/sdk.md#不�
 工具 Hook 还可返回原生请求/结果替换对象；拒绝单个工具可返回错误 ToolMessage，抛异常则结束整轮。完整返回契约见 [Hook](../docs/extensions/hooks.md#函数签名)，不使用 `action: deny`；异步 Hook 需用 `ainvoke` / `astream`。
 
 插件清单里的 Hook 先装配，随后是选中产品文件里的 `dataagent.hooks`。before 正序、after 逆序，重复声明不去重。
-根 Hooks 不自动继承到子 Agent；子 Agent 在自己的 JSON 中注册。
+根 Hooks 不自动继承到子 Agent；子 Agent 在自己的 YAML 中注册。
 
 ## 插件、路径和内部状态
 
-插件目录名、`.plugin.json` 的 `id`、`plugins.enabled` 中的 ID 必须一致。
+插件目录名、`.plugin.yaml` 的 `id`、`plugins.enabled` 中的 ID 必须一致。
 候选目录来自内置插件、Home `plugins/<id>` 和显式 `plugins.paths`。
 同一真实目录只计一次，同一启用 ID 对应多个不同目录时报错，不做隐式覆盖。
 
@@ -140,7 +148,7 @@ Home 由进程 `DATAAGENT_HOME` 指定，默认 `~/.dataagent`；它同时决定
 `--user` 仅选择本地资源 profile，不是登录。A2A JSON-RPC 可用共享 Bearer 令牌，REST 不受该令牌保护。
 
 独立 Skills 仅自动发现于 Home；任意 `--config` 旁的 `skills/` 不会自动发现。
-Tools、SubAgents 和 Prompts 在插件 `.plugin.json` 中声明，不是顶层产品字段。
+Tools、SubAgents 和 Prompts 在插件 `.plugin.yaml` 中声明，不是顶层产品字段。
 模型固定使用 Chat Completions，`max_retries` 默认 `2`。仅使用 SDK 原生连接/超时和可重试 HTTP 错误的退避，
 不重跑 Agent、Hook 或工具；已建立流式响应后的读取失败不自动重放。主/子 Agent 共用模型配置。
 REST 的 Agent 事件迭代时限包含其中的模型请求、重试等待和工具耗时；并非 HTTP 从接收到结束的总耗时。SDK 直接调用由调用方控制整轮时限。
@@ -150,7 +158,7 @@ REST 的 Agent 事件迭代时限包含其中的模型请求、重试等待和�
 ## MCP
 
 格式与语义见 [MCP 配置](../docs/reference/mcp-configuration.md)。可运行本地示例见
-[mcp/.mcp.json](mcp/.mcp.json) 与 [math_server.py](mcp/math_server.py)。
-MCP 服务声明不写入产品 `config.json` 或插件 `.plugin.json`。
-覆盖 stdio、HTTP、SSE 全部支持字段的模板见 [mcp/mcp.full.json](mcp/mcp.full.json)，
+[mcp/.mcp.yaml](mcp/.mcp.yaml) 与 [math_server.py](mcp/math_server.py)。
+MCP 服务声明不写入产品 `config.yaml` 或插件 `.plugin.yaml`。
+覆盖 stdio、HTTP、SSE 全部支持字段的模板见 [mcp/mcp.full.yaml](mcp/mcp.full.yaml)，
 字段、路径及凭证配置见 [MCP 示例说明](mcp/README.md)。完整模板包含占位远程地址，使用前需替换或删除。

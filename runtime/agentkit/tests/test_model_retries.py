@@ -100,10 +100,10 @@ async def models(runtime):
 
 def test_retry_config_defaults_and_layer_override(tmp_path):
     home = tmp_path / "home"
-    config(home / "config.json", MODEL)
+    config(home / "config.yaml", MODEL)
     assert prepare_runtime().settings.models["primary"].max_retries == 2
-    config(home / "config.json", {"models": {"primary": {**MODEL["models"]["primary"], "max_retries": 4}}})
-    override = config(tmp_path / "override.json", {"models": {"primary": {
+    config(home / "config.yaml", {"models": {"primary": {**MODEL["models"]["primary"], "max_retries": 4}}})
+    override = config(tmp_path / "override.yaml", {"models": {"primary": {
         **MODEL["models"]["primary"], "max_retries": 0,
     }}})
     assert prepare_runtime().settings.models["primary"].max_retries == 4
@@ -112,7 +112,7 @@ def test_retry_config_defaults_and_layer_override(tmp_path):
 
 @pytest.mark.parametrize("value", [-1, 1.5, True, "2", None])
 def test_invalid_retry_config_is_rejected_before_model_creation(tmp_path, value):
-    path = config(tmp_path / "invalid.json", {"models": {"primary": {
+    path = config(tmp_path / "invalid.yaml", {"models": {"primary": {
         **MODEL["models"]["primary"], "max_retries": value,
     }}})
     with pytest.raises(ValueError, match="max_retries"):

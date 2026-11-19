@@ -39,7 +39,7 @@ def build_scenario(ctx: HookContext) -> dict[str, Any]:
     """Wire the business_twin pack: table selection plus the shared dimension rewriter."""
     base = Path(__file__).resolve().parent
     rewrite = dimension_join_rewriter(
-        mappings=load_dimensions(base / "dimensions.json", SEMANTIC_SCENARIO),
+        mappings=load_dimensions(base / "dimensions.yaml", SEMANTIC_SCENARIO),
         model=ctx.model,
         dialect=ctx.config.get("database.dialect", "sqlite"),
     )

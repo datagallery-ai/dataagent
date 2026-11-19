@@ -8,14 +8,12 @@ The control plane has no datasource registration API. Web and TUI cannot create,
 
 To let the model read local files, list the directories as workspaces. Each directory must exist before startup.
 
-```json
-{
-  "dataagent": {
-    "workspaces": [
-      {"name": "input", "path": "/data/reports", "read_only": true}
-    ]
-  }
-}
+```yaml
+dataagent:
+  workspaces:
+  - name: input
+    path: /data/reports
+    read_only: true
 ```
 
 You can also repeat `--workspace` when starting the control plane, or set `DATAAGENT_WORKSPACE`. The command line wins over the other two.

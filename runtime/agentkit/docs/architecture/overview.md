@@ -69,6 +69,6 @@ apps/web  --HTTP-->  dataagent serve  <--HTTP--  apps/tui
 
 网页经 Next 同源转发。TUI 直接请求控制面。对话都走 `POST /api/v1/runs`。会话、Checkpoint 和产物在同一个 Home。Python SDK 可以跳过 HTTP，调用同一套 `prepare_runtime`。网页怎么部署、页面上能做什么，写在仓库 `docs/`，不在这篇架构说明里。
 
-监听地址只有 `config.json` 的 `server.host` 和 `server.port`。目录布局见 [Home 与工作区](home-layout.md)。
+监听地址只有 `config.yaml` 的 `server.host` 和 `server.port`。目录布局见 [Home 与工作区](home-layout.md)。
 
 一个状态目录同时只能有一个后端。锁文件是 `<home>/runtime/backend.lock` 上的操作系统锁，不是 PID 文件。

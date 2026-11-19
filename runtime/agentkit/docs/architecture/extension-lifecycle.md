@@ -10,7 +10,7 @@
 2. 编译插件 Skill，再编译 Home 的独立 Skill
 3. 加载工具，名字变成 `<plugin-id>__<local-id>`
 4. 收集插件 Hook
-5. 读取子代理 JSON
+5. 读取子代理 YAML
 
 然后编译根 Hook：插件条目在前，独立条目在后。子代理各自再编译自己的 Hook、工具子集和 Skill 子集。
 
@@ -20,7 +20,7 @@ MCP 工具在编译前就已经是 `BaseTool`。它们先进入注册表，名�
 
 ## 指纹
 
-`extension_revision` 对下列路径做 SHA-256：配置文件、相关 `.env`、已启用插件目录、Home `skills/`、Home `.mcp.json`、各 Hook 入口文件。目录成员和纳秒级 mtime、ctime、大小参与摘要。目录符号链接成环时跳过。业务输入和会话生成物不参与。
+`extension_revision` 对下列路径做 SHA-256：配置文件、相关 `.env`、已启用插件目录、Home `skills/`、Home `.mcp.yaml`、各 Hook 入口文件。目录成员和纳秒级 mtime、ctime、大小参与摘要。目录符号链接成环时跳过。业务输入和会话生成物不参与。
 
 忽略的目录名包括 `__pycache__`、`.git`、`.venv`、`node_modules`、`.pytest_cache`、`.ruff_cache`。
 

@@ -6,28 +6,19 @@ Hook 是一个普通 Python 函数，挂在六个生命周期点上。拒绝有�
 
 ## 在配置里登记
 
-登记在选中的产品文件里。未传 `--config` 时是 Home `config.json`，传了就只用那份文件：
+登记在选中的产品文件里。未传 `--config` 时是 Home `config.yaml`，传了就只用那份文件：
 
-```json
-{
-  "schema_version": 4,
-  "dataagent": {
-    "hooks": {
-      "before_model": [
-        {
-          "entrypoint": "hooks/check_input.py:handle",
-          "params": { "max_chars": 4000 }
-        }
-      ],
-      "before_tool": [
-        {
-          "entrypoint": "hooks/check_tool.py:handle",
-          "matcher": "common__summarize_numbers"
-        }
-      ]
-    }
-  }
-}
+```yaml
+schema_version: 4
+dataagent:
+  hooks:
+    before_model:
+    - entrypoint: hooks/check_input.py:handle
+      params:
+        max_chars: 4000
+    before_tool:
+    - entrypoint: hooks/check_tool.py:handle
+      matcher: common__summarize_numbers
 ```
 
 分组里不要再写 `event`。旧的扁平列表仍然可以，每条自己带 `event`。只把文件放进 `hooks/` 不会注册。
@@ -87,19 +78,15 @@ Hook 位于工具错误处理之外，所以 Hook 里的异常不会被转换成
 编译子代理在自己的工厂中使用 `services.run_hooks`。它们与上面六种 Agent 生命周期事件分别声明，
 当前内置使用方是 NL2SQL。默认配置片段可以给依赖的工作流登记：
 
-```json
-{
-  "plugins": {
-    "config": {
-      "nl2sql": {
-        "run_hooks": {
-          "before_run": [{"entrypoint": "hooks/nl2sql.py:prepare_input"}],
-          "after_run": [{"entrypoint": "hooks/nl2sql.py:finish_output"}]
-        }
-      }
-    }
-  }
-}
+```yaml
+plugins:
+  config:
+    nl2sql:
+      run_hooks:
+        before_run:
+        - entrypoint: hooks/nl2sql.py:prepare_input
+        after_run:
+        - entrypoint: hooks/nl2sql.py:finish_output
 ```
 
 入口相对贡献这段配置的插件根或用户配置目录。函数签名为

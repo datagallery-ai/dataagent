@@ -51,10 +51,14 @@
     "start:tui": "node -- apps/tui/dist/index.js",
     "docs:dev": "python -m mkdocs serve -a 127.0.0.1:8000",
     "docs:build": "python -m mkdocs build --strict",
-    "smoke:docs": "node scripts/smoke-doc-links.mjs"
+    "smoke:docs": "node scripts/smoke-doc-links.mjs",
+    "test:yaml": "node --test scripts/lib/config-yaml.test.mjs scripts/server-listen.test.mjs"
   },
   "overrides": {
     "@ag-ui/client": "^0.0.57",
     "@ag-ui/core": "^0.0.57"
+  },
+  "dependencies": {
+    "yaml": "^2.9.1"
   }
 }

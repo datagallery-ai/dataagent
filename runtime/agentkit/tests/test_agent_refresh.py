@@ -17,7 +17,7 @@ from serve import agents
 
 def home_config(runtime, value):
     """Patch the selected Home file. Models and untouched sections stay in that file."""
-    path = runtime.paths.home / "config.json"
+    path = runtime.paths.home / "config.yaml"
     path.parent.mkdir(parents=True, exist_ok=True)
     current = json.loads(path.read_text()) if path.is_file() else {}
     current.update(value)
@@ -111,7 +111,7 @@ async def test_install_enabled_plugin_and_remove_its_tools(runtime):
         plugin = runtime.paths.home / "plugins/extra"
         plugin.mkdir(parents=True)
         (plugin / "tools.py").write_text('def ping() -> str:\n    """Return plugin evidence."""\n    return "pong"\n')
-        (plugin / ".plugin.json").write_text(json.dumps({
+        (plugin / ".plugin.yaml").write_text(json.dumps({
             "id": "extra", "tools": {"ping": {"entrypoint": "tools.py:ping"}},
         }))
         home_config(runtime, {"plugins": {"enabled": ["common", "extra"]}})
@@ -151,7 +151,7 @@ async def test_mcp_install_reuses_discovery_until_connection_changes(runtime):
     with patch.object(agents, "load_mcp_tools", discover):
         async with client_for(runtime, model) as (client, app):
             await ask(client)
-            path = runtime.paths.home / ".mcp.json"
+            path = runtime.paths.home / ".mcp.yaml"
             path.write_text(json.dumps({"mcpServers": {"calc": stdio()}}))
             await ask(client)
             assert discover.await_count == 1
@@ -173,7 +173,7 @@ async def test_explicit_env_file_is_preserved_and_host_settings_are_not_hot_chan
         async with client_for(runtime, model) as (client, app):
             await ask(client)
             home_config(runtime, {"server": {"port": 9000}, "dataagent": {"limits": {"timeout_seconds": 999}}})
-            (runtime.paths.home / ".mcp.json").write_text(json.dumps({"mcpServers": {"remote": {
+            (runtime.paths.home / ".mcp.yaml").write_text(json.dumps({"mcpServers": {"remote": {
                 "type": "http", "url": "https://example.invalid/mcp",
                 "headers": {"Authorization": "Bearer $env{MCP_TEST_TOKEN}"},
             }}}))
@@ -242,7 +242,7 @@ async def test_mcp_reload_failure_does_not_publish_tools_or_expose_new_credentia
         await ask(client)
         previous = app.state.agents.runtime
         tools = app.state.agents.mcp_tools
-        (runtime.paths.home / ".mcp.json").write_text(json.dumps({"mcpServers": {"remote": {
+        (runtime.paths.home / ".mcp.yaml").write_text(json.dumps({"mcpServers": {"remote": {
             "type": "http", "url": "https://example.invalid/mcp",
             "headers": {"Authorization": "synthetic-new-secret"},
         }}}))
@@ -265,7 +265,7 @@ async def test_cancelling_reload_releases_preparation_lock_and_session_busy_flag
     async with client_for(runtime, model) as (client, app):
         await ask(client)
         previous = app.state.agents.runtime
-        path = runtime.paths.home / ".mcp.json"
+        path = runtime.paths.home / ".mcp.yaml"
         path.write_text(json.dumps({"mcpServers": {"calc": stdio()}}))
         with patch.object(agents, "load_mcp_tools", wait_for_discovery):
             request = asyncio.create_task(client.post("/api/v1/runs", json=query("cancelled")))
@@ -284,10 +284,10 @@ async def test_cancelling_reload_releases_preparation_lock_and_session_busy_flag
 def _write_direct_entry(root):
     root.mkdir(parents=True)
     (root / "subagents").mkdir()
-    (root / ".plugin.json").write_text(json.dumps({
-        "id": "direct", "subagents": ["subagents/direct.json"],
+    (root / ".plugin.yaml").write_text(json.dumps({
+        "id": "direct", "subagents": ["subagents/direct.yaml"],
     }))
-    (root / "subagents" / "direct.json").write_text(json.dumps({
+    (root / "subagents" / "direct.yaml").write_text(json.dumps({
         "kind": "compiled", "name": "direct", "description": "Refresh keeps this entry.",
         "entrypoint": "subagents/direct.py:build",
     }))

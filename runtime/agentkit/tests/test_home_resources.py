@@ -116,13 +116,13 @@ def test_skill_symlinks_dedup_and_same_name_conflict(tmp_path):
 
 
 def test_disabled_plugins_hidden_dirs_and_unreferenced_hooks_are_not_imported(tmp_path):
-    config(tmp_path / "home/config.json", MODEL)
+    config(tmp_path / "home/config.yaml", MODEL)
     (tmp_path / "home/hooks").mkdir()
     (tmp_path / "home/hooks/unused.py").write_text("raise RuntimeError('must not import')")
     for name in ("broken", ".hidden"):
         root = tmp_path / "home/plugins" / name
         root.mkdir(parents=True)
-        (root / ".plugin.json").write_text("broken: [")
+        (root / ".plugin.yaml").write_text("broken: [")
     (tmp_path / "home/plugins/ordinary-file").touch()
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path))
     # Builtin plugin directories come first, then user ones; hidden and non-directory
@@ -138,14 +138,14 @@ def test_disabled_plugins_hidden_dirs_and_unreferenced_hooks_are_not_imported(tm
 def test_plugin_conflicts_and_enabled_order(tmp_path):
     """Enabled order is stable and ambiguous plugins fail before defaults are merged."""
     for name in ("first", "second"):
-        config(tmp_path / "home/plugins" / name / ".plugin.json", {"id": name})
-    cli = config(tmp_path / "config.json", {**MODEL, "plugins": {"enabled": ["second", "first"]}})
+        config(tmp_path / "home/plugins" / name / ".plugin.yaml", {"id": name})
+    cli = config(tmp_path / "config.yaml", {**MODEL, "plugins": {"enabled": ["second", "first"]}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert [
         spec.id
         for _, spec in select_plugins(runtime.settings.plugins, runtime.extensions.plugin_roots)
     ] == ["second", "first"]
-    config(tmp_path / "external/first/.plugin.json", {"id": "first"})
+    config(tmp_path / "external/first/.plugin.yaml", {"id": "first"})
     config(cli, {**MODEL, "plugins": {"enabled": ["first"], "paths": ["./external/first"]}})
     with pytest.raises(ValueError, match="exactly one directory") as error:
         prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
@@ -162,9 +162,9 @@ def test_plugin_candidate_origins_keep_enabled_order_and_unique_scope_labels(tmp
     explicit_custom = tmp_path / "external/custom"
     explicit_common.mkdir(parents=True)
     explicit_custom.mkdir()
-    config(explicit_custom / ".plugin.json", {"id": "custom"})
+    config(explicit_custom / ".plugin.yaml", {"id": "custom"})
     cli = config(
-        tmp_path / "config.json",
+        tmp_path / "config.yaml",
         {
             **MODEL,
             "plugins": {
@@ -206,7 +206,7 @@ async def test_explicit_config_runs_only_its_own_hooks(tmp_path):
             f"    with Path({str(output)!r}).open('a') as stream: stream.write({scope!r} + '\\n')\n"
         )
         config(
-            root / "config.json",
+            root / "config.yaml",
             {
                 **MODEL,
                 "dataagent": {
@@ -217,7 +217,7 @@ async def test_explicit_config_runs_only_its_own_hooks(tmp_path):
                 },
             },
         )
-    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=tmp_path / "config.json"))
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=tmp_path / "config.yaml"))
     await build_graph(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
         {
             "messages": [HumanMessage(content="hello")],
@@ -250,7 +250,7 @@ async def test_accumulated_hooks_keep_native_before_and_after_order(tmp_path, tr
             "def after_tool(request, result, *, params): record(params)\n"
         )
         config(
-            root / "config.json",
+            root / "config.yaml",
             {
                 **MODEL,
                 "dataagent": {
@@ -266,7 +266,7 @@ async def test_accumulated_hooks_keep_native_before_and_after_order(tmp_path, tr
                 },
             },
         )
-    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=tmp_path / "config.json"))
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=tmp_path / "config.yaml"))
     model = ScriptedModel(
         responses=[
             call("common__summarize_numbers", {"numbers": [1, 2, 3]}),
@@ -307,7 +307,7 @@ async def test_explicit_config_does_not_run_home_hooks(tmp_path, upper_hooks):
         f"    Path({str(output)!r}).write_text('user hook executed')\n"
     )
     config(
-        home / "config.json",
+        home / "config.yaml",
         {
             **MODEL,
             "dataagent": {
@@ -321,7 +321,7 @@ async def test_explicit_config_does_not_run_home_hooks(tmp_path, upper_hooks):
         },
     )
     upper = {"dataagent": {"hooks": upper_hooks}} if upper_hooks is not None else {}
-    cli = config(tmp_path / "config.json", {**MODEL, **upper})
+    cli = config(tmp_path / "config.yaml", {**MODEL, **upper})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     await build_graph(runtime, model=ScriptedModel(responses=[AIMessage(content="ok")])).ainvoke(
         {
@@ -335,7 +335,7 @@ def test_standalone_skills_accumulate_even_when_plugins_are_disabled(tmp_path):
     user = skill(tmp_path / "home/skills", "user-guide")
     skill(tmp_path / ".dataagent/skills", "project-guide")
     cli = config(
-        tmp_path / "config.json", {**MODEL, "plugins": {"enabled": []}, "dataagent": {"hooks": []}}
+        tmp_path / "config.yaml", {**MODEL, "plugins": {"enabled": []}, "dataagent": {"hooks": []}}
     )
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert compile_runtime(runtime)["skills"] == [
@@ -351,7 +351,7 @@ def test_subscribed_loose_hook_cannot_escape_source_root(tmp_path, entry):
     (home / "hooks").mkdir(parents=True)
     (home / "hooks/link.py").symlink_to(outside)
     config(
-        home / "config.json",
+        home / "config.yaml",
         {
             **MODEL,
             "dataagent": {
@@ -370,13 +370,13 @@ async def test_native_file_tools_read_home_files_with_glob_characters(tmp_path, 
     workspace.mkdir()
     home = tmp_path / "用户 home {keys}[2]"
     monkeypatch.setenv("DATAAGENT_HOME", str(home))
-    config(home / "config.json", MODEL)
+    config(home / "config.yaml", MODEL)
     (home / ".env").write_text("SECRET_MARKER=secret-content\n")
     (home / "public.txt").write_text("public-evidence\n")
     runtime = prepare_runtime(LaunchOptions(cwd=workspace, workspaces=(workspace,)))
     calls = [
         call("read_file", {"file_path": str(home / ".env")}),
-        call("read_file", {"file_path": str(home / "config.json")}),
+        call("read_file", {"file_path": str(home / "config.yaml")}),
         call("ls", {"path": str(home)}),
         call("glob", {"pattern": "*", "path": str(home)}),
         call("grep", {"pattern": "public-evidence", "path": str(home)}),
@@ -406,7 +406,7 @@ async def test_native_file_tools_read_home_files_with_glob_characters(tmp_path, 
         results = [str(message.content) for message in messages if message.name == name]
         assert results and any("public.txt" in value for value in results)
         if name != "grep":
-            assert any("config.json" in value for value in results)
+            assert any("config.yaml" in value for value in results)
     assert any("public-evidence" in str(message.content) for message in messages)
 
 

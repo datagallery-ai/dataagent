@@ -79,8 +79,9 @@
 
 配置示例（合入已有配置，保留模型等字段）：
 
-```json
-{"dataagent": {"output_root": "/data/reports"}}
+```yaml
+dataagent:
+  output_root: /data/reports
 ```
 
 使用上面的配置，且 SDK 调用未传 `output_dir` 时：
@@ -105,7 +106,7 @@ from dataagent import LaunchOptions, create_agent, prepare_runtime
 
 async def main():
     runtime = prepare_runtime(LaunchOptions(
-        config=Path.home() / ".dataagent/config.json",
+        config=Path.home() / ".dataagent/config.yaml",
         user_id="alice",
     ))
     async with create_agent(runtime) as agent:

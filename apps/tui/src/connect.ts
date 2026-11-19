@@ -30,10 +30,13 @@ function isIpLiteral(host: string): boolean {
 }
 
 /** Accept `http://<server.host>:<server.port>` or the same origin plus `/api/v1/runs`. */
-export function normalizeRuntimeUrl(value: string, env: NodeJS.ProcessEnv = process.env): string {
-  const listen = configuredListen(env);
-  const expected = formatListenBase(listen.host, listen.port);
+export function normalizeRuntimeUrl(value: string, env: NodeJS.ProcessEnv = process.env, configPath?: string, envFile?: string): string {
   const target = readHttpListen(value);
+  if (target && (isIpLiteral(target.host) || target.host === "localhost")) {
+    return `${formatListenBase(clientListenHost(target.host), target.port)}/api/v1/runs`;
+  }
+  const listen = configuredListen(env, configPath, envFile);
+  const expected = formatListenBase(listen.host, listen.port);
   if (!target) throw new Error(`The TUI requires the configured listen URL: ${expected}`);
   const host = clientListenHost(target.host);
   const allowed = new Set([
@@ -54,8 +57,10 @@ export function sessionTransport(
   runtimeUrl: string,
   fetchImpl: typeof fetch,
   env: NodeJS.ProcessEnv = process.env,
+  configPath?: string,
+  envFile?: string,
 ): typeof fetch {
-  const runtime = new URL(normalizeRuntimeUrl(runtimeUrl, env));
+  const runtime = new URL(normalizeRuntimeUrl(runtimeUrl, env, configPath, envFile));
   return async (input, init) => {
     const url = new URL(input instanceof Request ? input.url : String(input));
     if (url.origin !== runtime.origin) throw new Error("Refusing to send a request to another origin");
@@ -87,6 +92,8 @@ export async function connectTui(options: {
   fetchImpl: typeof fetch;
   renderApp: (options: RenderAppOptions) => Promise<AppExitReason>;
   env?: NodeJS.ProcessEnv | undefined;
+  configPath?: string | undefined;
+  envFile?: string | undefined;
   instanceId?: string | undefined;
   shutdownSignal?: AbortSignal | undefined;
   initialResume?: { enabled: boolean; sessionId?: string | undefined } | undefined;
@@ -94,8 +101,8 @@ export async function connectTui(options: {
   const env = options.env ?? process.env;
   // A self-started backend advertises its bind address. Health, the stream, and
   // session calls share one client URL, including 0.0.0.0 and :: rewritten to loopback.
-  const runtimeUrl = normalizeRuntimeUrl(options.runtimeUrl, env);
-  const transport = sessionTransport(runtimeUrl, options.fetchImpl, env);
+  const runtimeUrl = normalizeRuntimeUrl(options.runtimeUrl, env, options.configPath, options.envFile);
+  const transport = sessionTransport(runtimeUrl, options.fetchImpl, env, options.configPath, options.envFile);
   const baseUrl = new URL(runtimeUrl).origin;
   let response: Response;
   try {

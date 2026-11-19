@@ -32,11 +32,11 @@ cd datafoundry
 
 部署成功后 Web + API 在后台常驻（独立进程组）。关闭终端，或在 `./deploy.sh logs` 中按 `Ctrl+C`，**都不会**停止 DataGallery——停止请用 `./deploy.sh stop`。一键部署会一并构建 TUI，但 TUI **不会**随 stack 后台常驻；需要时另开终端按成功提示启动（见下文「启动 TUI」）。
 
-打开 `http://127.0.0.1:3000/data-tasks`（若网页端口被改过，以脚本打印的地址为准，路径仍是 `/data-tasks`）。模型来自 `config.json` 和环境变量，不在网页里创建 Profile。
+打开 `http://127.0.0.1:3000/data-tasks`（若网页端口被改过，以脚本打印的地址为准，路径仍是 `/data-tasks`）。模型来自 `config.yaml` 和环境变量，不在网页里创建 Profile。
 
 ### 交互与配置规则
 
-- 首次部署：脚本生成 `.env`，并确认端口 / 客户端可达地址。Home 还没有 `config.json` 时，按默认模板写入完整配置，再把所选监听地址写入 `server.host` 和 `server.port`。已有配置只更新这两个字段；文件无法解析时停止写入并保留原文件。部署阶段不要求填写模型 Key。
+- 首次部署：脚本生成 `.env`，并确认端口 / 客户端可达地址。Home 还没有 `config.yaml` 时，按默认模板写入完整配置，再把所选监听地址写入 `server.host` 和 `server.port`。已有配置只更新这两个字段；文件无法解析时停止写入并保留原文件。部署阶段不要求填写模型 Key。
 - 之后再执行交互式 `./deploy.sh` / `./deploy.sh deploy`：若已有完整 `.env`，会跳过配置问答。
 - 需要重新配置端口或客户端可达地址时（保留现有密钥，并先备份 `.env`）：
 
@@ -165,7 +165,7 @@ npm run start
 npm run start:tui
 ```
 
-分开启动时，网页和 TUI 都会在控制面没起时拉起它。地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`：
+分开启动时，网页和 TUI 都会在控制面没起时拉起它。地址来自 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`：
 
 ```bash
 npm run start:api
@@ -210,7 +210,7 @@ TUI 自行启动后端时，会与 `npm start` 一样加载仓库根 `.env`。�
 npm run start:tui
 ```
 
-地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。`--runtime-url` 只连接、不拉起。
+地址来自 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。`--runtime-url` 只连接、不拉起。
 
 部署栈已经在跑时也可以 `./deploy.sh tui`。它连接这次启动记下的 API 地址。
 
@@ -295,9 +295,9 @@ curl http://127.0.0.1:8790/ready
 | 服务 | 端口 |
 | --- | --- |
 | Web | 3000 |
-| API | 8790（`config.json` 的 `server.port`） |
+| API | 8790（`config.yaml` 的 `server.port`） |
 
-如果端口被占用，先停止占用进程，或改 `config.json` 的 `server.port`。`npm run start:web` 会读这个端口。
+如果端口被占用，先停止占用进程，或改 `config.yaml` 的 `server.port`。`npm run start:web` 会读这个端口。
 
 ### 模型读不到本机目录
 

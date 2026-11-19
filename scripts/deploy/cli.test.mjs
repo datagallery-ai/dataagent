@@ -35,7 +35,7 @@ function createAsk(answers) {
 
 test("health probes use the configured web and api hosts", () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "df-listen-"));
-  writeFileSync(path.join(home, "config.json"), JSON.stringify({
+  writeFileSync(path.join(home, "config.yaml"), JSON.stringify({
     server: { host: "0.0.0.0", port: 8877 }
   }));
   const env = { DATAAGENT_HOME: home };
@@ -48,7 +48,7 @@ test("health probes use the configured web and api hosts", () => {
       resolveTuiRuntimeUrl(env),
       "http://127.0.0.1:8877/api/v1/runs"
     );
-    writeFileSync(path.join(home, "config.json"), JSON.stringify({
+    writeFileSync(path.join(home, "config.yaml"), JSON.stringify({
       server: { host: "::", port: 8877 }
     }));
     assert.deepEqual(healthProbeUrls(env, { host: "::", port: "3000" }), {
@@ -66,7 +66,7 @@ test("health probes use the configured web and api hosts", () => {
 
 test("later commands use the API address recorded at start", () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "df-listen-"));
-  writeFileSync(path.join(home, "config.json"), JSON.stringify({
+  writeFileSync(path.join(home, "config.yaml"), JSON.stringify({
     server: { host: "127.0.0.1", port: 8790 }
   }));
   const env = { DATAAGENT_HOME: home };
@@ -86,7 +86,7 @@ test("later commands use the API address recorded at start", () => {
     );
     assert.deepEqual(
       apiListenFromState({
-        listen: { webHost: "127.0.0.1", apiHost: "0.0.0.0", configPath: "team.json" },
+        listen: { webHost: "127.0.0.1", apiHost: "0.0.0.0", configPath: "team.yaml" },
         ports: { web: 3000, api: 8877 }
       }),
       { host: "0.0.0.0", port: "8877" }
@@ -114,12 +114,12 @@ test("a running deployment remembers the web listen host", () => {
 test("a relative --config stays the caller's file after the stack cwd changes", () => {
   const outside = realpathSync(mkdtempSync(path.join(os.tmpdir(), "df-caller-")));
   const repo = realpathSync(mkdtempSync(path.join(os.tmpdir(), "df-repo-")));
-  const selected = path.join(outside, "review-team.json");
+  const selected = path.join(outside, "review-team.yaml");
   writeFileSync(selected, JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } }));
   const previous = process.cwd();
   try {
     process.chdir(outside);
-    const parsed = parseDeployArgs(["start", "--config", "./review-team.json"]);
+    const parsed = parseDeployArgs(["start", "--config", "./review-team.yaml"]);
     assert.equal(parsed.config, selected);
     assert.deepEqual(readServerListen({}, parsed.config), { host: "0.0.0.0", port: "8877" });
     const startArgs = managedWebStartArgs({ host: "127.0.0.1", port: "3000" }, parsed.config);
@@ -128,14 +128,14 @@ test("a relative --config stays the caller's file after the stack cwd changes", 
     process.chdir(repo);
     assert.deepEqual(readServerListen({}, parsed.config), { host: "0.0.0.0", port: "8877" });
     assert.throws(
-      () => readServerListen({}, "review-team.json"),
-      /Configuration file does not exist: review-team\.json/,
+      () => readServerListen({}, "review-team.yaml"),
+      /Configuration file does not exist: review-team\.yaml/,
     );
     writeFileSync(
-      path.join(repo, "review-team.json"),
+      path.join(repo, "review-team.yaml"),
       JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }),
     );
-    assert.equal(readServerListen({}, "review-team.json").port, "1");
+    assert.equal(readServerListen({}, "review-team.yaml").port, "1");
     const child = resolveStackRuntimeConfig({}, startArgs);
     assert.equal(child.configPath, selected);
     assert.equal(child.apiPort, "8877");
@@ -157,8 +157,8 @@ test("deploy start uses the same web host and port flags as npm run start", () =
   assert.deepEqual(managedWebStartArgs({}), [
     "--api", "--web", "--web-host", "127.0.0.1", "--web-port", "3000"
   ]);
-  assert.deepEqual(managedWebStartArgs({ host: "127.0.0.1", port: "3000" }, "team.json"), [
-    "--api", "--web", "--web-host", "127.0.0.1", "--web-port", "3000", "--config", "team.json"
+  assert.deepEqual(managedWebStartArgs({ host: "127.0.0.1", port: "3000" }, "team.yaml"), [
+    "--api", "--web", "--web-host", "127.0.0.1", "--web-port", "3000", "--config", "team.yaml"
   ]);
 });
 
@@ -183,7 +183,7 @@ test("first run selects Web and API ports with defaults", async () => {
 test("existing complete config skips prompts unless reconfigure", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = "LLM_MODEL=qwen-plus\n";
+  const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
   let asked = 0;
   const result = await configureDeploymentInteractively({
     root,
@@ -268,7 +268,7 @@ test("non-interactive does not copy process env into .env", async () => {
     sourceText: "",
     reconfigure: false,
     nonInteractive: true,
-    processEnv: { UNRELATED: "1" },
+    processEnv: { UNRELATED: "1", DATAAGENT_HOME: path.join(root, "home") },
     ask: async () => assert.fail("must not prompt"),
     print: () => {},
     probe: async () => ({ available: true, owner: null })
@@ -315,7 +315,7 @@ test("port menu aborts after too many invalid choices", async () => {
 test("reconfigure creates backup and keeps secrets", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = "LLM_MODEL=qwen-plus\n";
+  const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
   await writeFile(path.join(root, ".env"), `${source}\n`);
   const result = await configureDeploymentInteractively({
     root,
@@ -386,7 +386,7 @@ test("collectManagedPorts marks state ports only when pid is alive and launchId 
 test("non-interactive fails when ports are occupied without a running managed state", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-occupied-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = "LLM_MODEL=qwen-plus\n";
+  const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
 
   await assert.rejects(
     () =>
@@ -408,11 +408,11 @@ test("reconfigure reuses managed listening ports only for a verified running sta
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
   await mkdir(path.join(root, "storage/run"), { recursive: true });
-  const source = "LLM_MODEL=qwen-plus\n";
+  const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
   const home = path.join(root, "dataagent-home");
   await mkdir(home, { recursive: true });
   await writeFile(
-    path.join(home, "config.json"),
+    path.join(home, "config.yaml"),
     `${JSON.stringify({ server: { host: "127.0.0.1", port: 8877 } })}\n`
   );
   await writeFile(
@@ -452,10 +452,10 @@ test("reconfigure reuses managed listening ports only for a verified running sta
 test("deploy --config takes the API listen from that file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   const home = path.join(root, "home");
-  const selected = path.join(root, "team.json");
+  const selected = path.join(root, "team.yaml");
   await mkdir(home, { recursive: true });
   await writeFile(
-    path.join(home, "config.json"),
+    path.join(home, "config.yaml"),
     `${JSON.stringify({ server: { host: "10.0.0.1", port: 8801 } })}\n`
   );
   await writeFile(
@@ -464,7 +464,7 @@ test("deploy --config takes the API listen from that file", async () => {
   );
   const result = await configureDeploymentInteractively({
     root,
-    sourceText: "LLM_MODEL=qwen-plus\n",
+    sourceText: `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`,
     reconfigure: true,
     nonInteractive: true,
     ask: async () => assert.fail("must not prompt"),
@@ -481,7 +481,7 @@ test("deploy --config takes the API listen from that file", async () => {
 test("reconfigure leaves an existing public URL line unchanged", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
   await mkdir(path.join(root, "apps/web"), { recursive: true });
-  const source = "LLM_MODEL=qwen-plus\n";
+  const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
   const result = await configureDeploymentInteractively({
     root,
     sourceText: source,
@@ -500,7 +500,7 @@ test("runDeploymentDoctor reports os, deps, config, ports, permissions, disk, pi
   await mkdir(path.join(root, "storage"), { recursive: true });
   await writeFile(
     path.join(root, ".env"),
-    "LLM_MODEL=qwen-plus\n"
+    `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`
   );
   const beforeEntries = await readdir(path.join(root, "storage"));
   const lines = [];
@@ -536,7 +536,7 @@ test("doctor probes configured sources without downloads or credential disclosur
   t.after(() => rm(root, { recursive: true, force: true }));
   const home = path.join(root, "home");
   await mkdir(home);
-  await writeFile(path.join(home, "config.json"), JSON.stringify({ server: { host: "127.0.0.1", port: 38473 } }));
+  await writeFile(path.join(home, "config.yaml"), JSON.stringify({ server: { host: "127.0.0.1", port: 38473 } }));
   const requests = [];
   const commands = [];
   const result = await runDeploymentDoctor(root, {
@@ -582,6 +582,7 @@ for (const override of [false, true]) {
       npm_config_registry: "https://process.example/npm/",
       DATAAGENT_NODE_PACKAGE_URL: "https://process.example/node.rpm",
     } : {};
+    env.DATAAGENT_HOME = path.join(root, "home");
     const expected = override ? "process" : "file";
     const requests = [];
     const result = await runDeploymentDoctor(root, {
@@ -629,7 +630,7 @@ test("runDeploymentDoctor reports actionable fix for stale launchId state", asyn
   await mkdir(path.join(root, "storage/run"), { recursive: true });
   await writeFile(
     path.join(root, ".env"),
-    "LLM_MODEL=qwen-plus\n"
+    `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`
   );
   await writeFile(
     path.join(root, "storage/run/deployment.json"),
@@ -660,7 +661,7 @@ test("runDeploymentDoctor reports actionable fix for stale launchId state", asyn
 });
 test("runDeploymentDoctor reports the API address recorded at start", async () => {
   const home = await mkdtemp(path.join(os.tmpdir(), "df-cli-doctor-home-"));
-  await writeFile(path.join(home, "config.json"), JSON.stringify({
+  await writeFile(path.join(home, "config.yaml"), JSON.stringify({
     server: { host: "127.0.0.1", port: 8790 }
   }));
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-doctor-saved-"));
@@ -677,10 +678,10 @@ test("runDeploymentDoctor reports the API address recorded at start", async () =
       status: "healthy",
       startedAt: "2026-07-26T00:00:00.000Z",
       ports: { web: 3000, api: 8877 },
-      listen: { webHost: "127.0.0.1", apiHost: "0.0.0.0", configPath: "team.json" }
+      listen: { webHost: "127.0.0.1", apiHost: "0.0.0.0", configPath: "team.yaml" }
     })}\n`
   );
-  rmSync(path.join(home, "config.json"));
+  rmSync(path.join(home, "config.yaml"));
 
   const lines = [];
   await runDeploymentDoctor(root, {
@@ -700,7 +701,7 @@ test("runDeploymentDoctor reports the API address recorded at start", async () =
 
 test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
   const home = mkdtempSync(path.join(os.tmpdir(), "df-listen-"));
-  writeFileSync(path.join(home, "config.json"), JSON.stringify({
+  writeFileSync(path.join(home, "config.yaml"), JSON.stringify({
     server: { host: "0.0.0.0", port: 8877 }
   }));
   try {
@@ -809,7 +810,7 @@ test("status uses the terminal Home before the project env Home", async t => {
   t.after(() => rm(root, { recursive: true, force: true }));
   for (const [home, port] of [["file-home", 8877], ["terminal-home", 9988]]) {
     await mkdir(path.join(root, home));
-    await writeFile(path.join(root, home, "config.json"), JSON.stringify({ server: { host: "127.0.0.1", port } }));
+    await writeFile(path.join(root, home, "config.yaml"), JSON.stringify({ server: { host: "127.0.0.1", port } }));
   }
   await writeFile(path.join(root, ".env"), `DATAAGENT_HOME=${JSON.stringify(path.join(root, "file-home"))}\n`);
   const result = spawnSync(process.execPath, ["--input-type=module", "-e", `

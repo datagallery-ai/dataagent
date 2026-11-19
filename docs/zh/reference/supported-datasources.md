@@ -11,7 +11,7 @@
 | 本机目录 | `dataagent.workspaces`，或 `--workspace` / `DATAAGENT_WORKSPACE` |
 | Skill | `<home>/skills/<name>/SKILL.md` |
 | 插件 | `<home>/plugins/<id>/` 或 `plugins.paths`，再写入 `plugins.enabled` |
-| MCP | Home 或已启用插件根目录的 `.mcp.json` |
-| 语义服务 | `config.json` 的 `semantic`。未配置则不创建客户端 |
+| MCP | Home 或已启用插件根目录的 `.mcp.yaml` |
+| 语义服务 | `config.yaml` 的 `semantic`。未配置则不创建客户端 |
 
 数据库、数仓和表格文件若要被查询，必须由已启用插件自己的配置声明。不要按旧的数据源类型表去调用 REST。

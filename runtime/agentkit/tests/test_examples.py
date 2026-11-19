@@ -21,9 +21,9 @@ from dataagent.settings import (
     PluginSettings,
     Settings,
 )
-from dataagent.strict_json import read_json
+from dataagent.strict_yaml import read_yaml as read_json
 
-EXAMPLE = Path(__file__).resolve().parents[1] / "examples/config.json"
+EXAMPLE = Path(__file__).resolve().parents[1] / "examples/config.yaml"
 
 
 def test_full_config_example_explicitly_covers_all_settings_fields():

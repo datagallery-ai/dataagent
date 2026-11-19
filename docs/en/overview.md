@@ -4,7 +4,7 @@ This is one local control plane and two presentations: Web in the browser, and T
 
 ## What you can do
 
-After the model is configured, ask in the browser or the terminal. The runtime loads the model, plugins, Skills, and MCP from Home `config.json`, streams the reply, and keeps the session and outputs under `~/.dataagent`.
+After the model is configured, ask in the browser or the terminal. The runtime loads the model, plugins, Skills, and MCP from Home `config.yaml`, streams the reply, and keeps the session and outputs under `~/.dataagent`.
 
 If read-only workspaces are configured, the model can read files in those directories. New files go to that session's `outputs/`.
 

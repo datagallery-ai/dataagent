@@ -526,10 +526,10 @@ def test_every_block_of_an_unstreamed_channel_is_checked():
 def _write_swallowing_entry(root):
     """An entry like NL2SQL: it catches every model error and returns a reply."""
     (root / "subagents").mkdir(parents=True)
-    (root / ".plugin.json").write_text(json.dumps({
-        "id": "direct", "subagents": ["subagents/direct.json"],
+    (root / ".plugin.yaml").write_text(json.dumps({
+        "id": "direct", "subagents": ["subagents/direct.yaml"],
     }))
-    (root / "subagents" / "direct.json").write_text(json.dumps({
+    (root / "subagents" / "direct.yaml").write_text(json.dumps({
         "kind": "compiled", "name": "direct", "description": "Swallows errors.",
         "entrypoint": "subagents/direct.py:build",
     }))
@@ -552,7 +552,7 @@ def _write_swallowing_entry(root):
 
 async def test_compiled_entry_cannot_turn_a_detection_into_a_reply(runtime, tmp_path):
     _write_swallowing_entry(tmp_path / "home" / "plugins" / "direct")
-    (runtime.paths.home / "config.json").write_text(json.dumps({
+    (runtime.paths.home / "config.yaml").write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
         }},
@@ -642,10 +642,10 @@ def test_untracked_runs_are_ignored():
 
 
 def test_config_layers_preserve_loop_settings(tmp_path):
-    config(tmp_path / "home/config.json", {
+    config(tmp_path / "home/config.yaml", {
         **MODEL, "dataagent": {"loop_detection": {"ignored_tools": ["poll_job"]}},
     })
-    override = config(tmp_path / "override.json", {
+    override = config(tmp_path / "override.yaml", {
         "dataagent": {"loop_detection": {"enabled": False}},
     })
     home = tmp_path / "home"

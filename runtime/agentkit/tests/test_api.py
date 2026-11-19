@@ -610,7 +610,7 @@ async def test_configured_hook_error_reaches_http_without_false_success_or_retry
     (root / "policy.py").write_text(
         f"async def handle({signature}, *, params):\n    raise RuntimeError('Policy failure')\n"
     )
-    (root / ".plugin.json").write_text(json.dumps({
+    (root / ".plugin.yaml").write_text(json.dumps({
         "schema_version": 3, "id": "policy",
         "hooks": [{"entrypoint": "policy.py:handle", "event": event}],
     }))
@@ -646,10 +646,10 @@ class StreamingScriptedModel(ScriptedModel):
 def _write_entry_stream_plugin(root, *, model_source="services"):
     root.mkdir(parents=True)
     (root / "subagents").mkdir()
-    (root / ".plugin.json").write_text(json.dumps({
-        "id": "direct", "subagents": ["subagents/direct.json"],
+    (root / ".plugin.yaml").write_text(json.dumps({
+        "id": "direct", "subagents": ["subagents/direct.yaml"],
     }))
-    (root / "subagents" / "direct.json").write_text(json.dumps({
+    (root / "subagents" / "direct.yaml").write_text(json.dumps({
         "kind": "compiled", "name": "direct", "description": "Entry model calls.",
         "entrypoint": "subagents/direct.py:build",
     }))
@@ -679,7 +679,7 @@ def _write_entry_stream_plugin(root, *, model_source="services"):
 
 def _entry_runtime(runtime, tmp_path, **plugin):
     _write_entry_stream_plugin(tmp_path / "home" / "plugins" / "direct", **plugin)
-    (runtime.paths.home / "config.json").write_text(json.dumps({
+    (runtime.paths.home / "config.yaml").write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
         }},

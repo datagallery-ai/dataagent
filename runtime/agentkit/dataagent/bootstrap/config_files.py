@@ -1,6 +1,6 @@
 """Read, validate and merge configuration layers into effective Settings.
 
-The product file is Home `config.json`, or the explicit `--config` file when
+The product file is Home `config.yaml`, or the explicit `--config` file when
 that flag is set. Plugin `plugins.config` is merged underneath the chosen file.
 Dictionaries merge by field; independent Hooks accumulate in layer order. Other
 lists and scalars replace earlier values. Defaults fill only missing fields.
@@ -25,7 +25,7 @@ from dataagent.settings import (
     SemanticSettings,
     Settings,
 )
-from dataagent.strict_json import read_json
+from dataagent.strict_yaml import check_legacy, check_yaml_path, read_yaml
 
 ENV_REFERENCE = re.compile(r"\$env\{([A-Za-z_][A-Za-z0-9_]*)\}")
 Scope = Literal["user", "cli", "plugin"]
@@ -228,16 +228,18 @@ def merge(layers: tuple[Layer, ...]) -> Settings:
 
 
 def _config_sources(home: Path, cli_config: Path | None) -> list[tuple[Scope, Path]]:
-    """Use `--config` by itself. Otherwise use Home `config.json`."""
+    """Use `--config` by itself. Otherwise use Home `config.yaml`."""
     if cli_config is not None:
         return [("cli", cli_config)]
-    return [("user", home / "config.json")]
+    return [("user", home / "config.yaml")]
 
 
 def _load_layer(
     scope: Scope, path: Path, *, env: Mapping, home: Path, dotenv: Path | None = None
 ) -> Layer | None:
     """Read one file; only an absent automatic configuration may be skipped."""
+    check_yaml_path(path)
+    check_legacy(path)
     if not path.exists() and not path.is_symlink():
         if scope == "cli":
             raise ValueError(f"Configuration file does not exist: {path}")
@@ -245,7 +247,7 @@ def _load_layer(
     if not path.is_file():
         raise ValueError(f"Expected a configuration file: {path}")
 
-    raw = read_json(path)
+    raw = read_yaml(path)
     if scope == "plugin" and (
         set(raw) - {"plugins"}
         or not isinstance(raw.get("plugins", {}), dict)

@@ -50,7 +50,7 @@ def test_administrative_division_index_stays_with_scenario_data() -> None:
     # declare it (the loader resolves the path module-relatively, never via config).
     assert administrative_divisions_module._INDEX_PATH == INDEX_PATH
     assert INDEX_PATH.is_file()
-    assert "administrative_divisions" not in (PACK_DIR / "dimensions.json").read_text(encoding="utf-8")
+    assert "administrative_divisions" not in (PACK_DIR / "dimensions.yaml").read_text(encoding="utf-8")
 
 
 def test_administrative_division_alias_index_contract() -> None:

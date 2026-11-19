@@ -32,7 +32,7 @@ cd datafoundry
 
 On success Web + API keep running in the background (detached process group). Closing the terminal or pressing `Ctrl+C` in `./deploy.sh logs` does **not** stop DataGallery — use `./deploy.sh stop`. One-click deploy also builds the TUI, but the TUI does **not** stay running with the stack; start it in another terminal when needed (see “Start the TUI” below).
 
-Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL the script prints and keep the `/data-tasks` path). The model comes from `config.json` and the environment, not from a profile created in the Web UI.
+Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL the script prints and keep the `/data-tasks` path). The model comes from `config.yaml` and the environment, not from a profile created in the Web UI.
 
 ### Configuration rules
 
@@ -165,7 +165,7 @@ In another terminal:
 npm run start:tui
 ```
 
-Started separately, both the web app and the TUI start the control plane when it is down. The address comes from `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`:
+Started separately, both the web app and the TUI start the control plane when it is down. The address comes from `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`:
 
 ```bash
 npm run start:api
@@ -208,7 +208,7 @@ One-click deploy builds the TUI during the build stage, but does **not** auto-st
 npm run start:tui
 ```
 
-The address comes from `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches. `--runtime-url` only attaches and does not start a backend.
+The address comes from `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches. `--runtime-url` only attaches and does not start a backend.
 
 `./deploy.sh tui` also attaches when the deployed stack is already running. It uses the API address recorded at start.
 
@@ -293,9 +293,9 @@ Default ports:
 | Service | Port |
 | --- | --- |
 | Web | 3000 |
-| API | 8790 (`server.port` in `config.json`) |
+| API | 8790 (`server.port` in `config.yaml`) |
 
-Stop the conflicting process, or change `server.port` in `config.json`. `npm run start:web` reads that port.
+Stop the conflicting process, or change `server.port` in `config.yaml`. `npm run start:web` reads that port.
 
 ### The model cannot read a local directory
 

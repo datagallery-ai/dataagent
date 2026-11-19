@@ -8,26 +8,22 @@
 
 | 文件 | 作用 |
 | --- | --- |
-| `<home>/config.json` | 个人配置。Home 默认是 `~/.dataagent` |
+| `<home>/config.yaml` | 个人配置。Home 默认是 `~/.dataagent` |
 | `<home>/.env` | 模型名、地址和密钥 |
 | 仓库根目录 `.env` | `npm run start` 和 `./deploy.sh` 把它载入进程环境。进程里的非空值盖过这次选中的环境文件。没传 `--env-file` 时选中 Home `.env`，`--config` 不改变它 |
 
-`DATAAGENT_HOME` 只认进程环境。启动目录里的 `config.json`，以及当前目录下的 `.dataagent/`，都不会被读取。
+`DATAAGENT_HOME` 只认进程环境。启动目录里的 `config.yaml`，以及当前目录下的 `.dataagent/`，都不会被读取。
 
 ## 最少的模型
 
-```json
-{
-  "schema_version": 4,
-  "models": {
-    "primary": {
-      "provider": "openai",
-      "name": "$env{LLM_MODEL}",
-      "base_url": "$env{LLM_BASE_URL}",
-      "api_key": "$env{LLM_API_KEY}"
-    }
-  }
-}
+```yaml
+schema_version: 4
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
 ```
 
 `provider` 使用 `openai`。兼容服务也用这个值。监听地址在同一份文件的 `server.host` 和 `server.port`，默认 `127.0.0.1` 和 `8790`。网页和 TUI 都读这两个字段。

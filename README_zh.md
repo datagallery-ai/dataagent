@@ -87,7 +87,7 @@ Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI
 
 | 文件/设置 | 作用 |
 | --- | --- |
-| `<Home>/config.json` | 产品配置，`schema_version: 4`，包含 `models`、`dataagent`、`plugins`、`server` 等 |
+| `<Home>/config.yaml` | 产品配置，`schema_version: 4`，包含 `models`、`dataagent`、`plugins`、`server` 等 |
 | `<Home>/.env` | 配置中 `$env{NAME}` 的值；非空进程环境覆盖文件值 |
 | `--config` | 替代 Home 配置，不自动改读旁边的 `.env` |
 | `--env-file` | 显式替代 Home `.env`；需要时用于直接 Python CLI |
@@ -153,3 +153,5 @@ npm run test:product
 ```
 
 Apache-2.0，见 [LICENSE](LICENSE)。
+
+配置文件使用 YAML 1.2（`config.yaml`、`.plugin.yaml`、`.mcp.yaml`）。用 `uv run --project runtime/agentkit dataagent config migrate` 预览旧 JSON 迁移，确认计划后加 `--apply`。源文件保留；迁移后重启应用。

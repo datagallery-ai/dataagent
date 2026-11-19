@@ -459,7 +459,7 @@ def test_node_sections_default_to_full_chain_and_require_prefix():
 @pytest.mark.parametrize("custom_output", [False, True])
 async def test_compiled_entry_runs_nl2sql_and_writes_the_session_file(tmp_path, custom_output):
     db_path, schema_path = _sqlite_fixture(tmp_path)
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
@@ -496,7 +496,7 @@ async def test_compiled_nl2sql_propagates_loop_detection(tmp_path, monkeypatch, 
     from dataagent import LoopDetectedError
 
     db_path, schema_path = _sqlite_fixture(tmp_path)
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
@@ -713,3 +713,16 @@ def _sqlite_fixture(tmp_path: Path) -> tuple[Path, Path]:
         encoding="utf-8",
     )
     return db_path, schema_path
+
+
+def test_standalone_nl2sql_yaml_and_yml(tmp_path):
+    from nl2sql.config_manager import NL2SQLConfig
+
+    for suffix in ('.yaml', '.yml'):
+        path = tmp_path / ('standalone' + suffix)
+        path.write_text('# standalone parameters\nmodel: primary\ndatabase:\n  dialect: sqlite\n')
+        assert NL2SQLConfig.load(path).get('model') == 'primary'
+    legacy = tmp_path / 'standalone.json'
+    legacy.write_text('{"model": "primary", "database": {"dialect": "sqlite"}}')
+    with pytest.raises(ValueError, match='migrate'):
+        NL2SQLConfig.load(legacy)

@@ -4,13 +4,13 @@ This guide is for terminal users, remote server users, and developers. After rea
 
 ## How to start
 
-With no extra flags it connects to `/api/v1/runs` from `config.json`: it starts `dataagent serve` when nothing is listening, and attaches when a control plane is already up. The old login and CopilotKit client are gone.
+With no extra flags it connects to `/api/v1/runs` from `config.yaml`: it starts `dataagent serve` when nothing is listening, and attaches when a control plane is already up. The old login and CopilotKit client are gone.
 
 ```bash
 npm run start:tui
 ```
 
-The address comes from Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. A control plane started with `npm run start -- --config` on another file's port is not discovered; if the Home address is free, this command starts a second backend from Home. Attach to the running one with `--runtime-url`. `./deploy.sh tui` connects to the API address recorded by `./deploy.sh start`. `--runtime-url` only attaches. Its host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
+The address comes from Home `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. A control plane started with `npm run start -- --config` on another file's port is not discovered; if the Home address is free, this command starts a second backend from Home. Attach to the running one with `--runtime-url`. `./deploy.sh tui` connects to the API address recorded by `./deploy.sh start`. `--runtime-url` only attaches. Its host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
 
 Resume the latest server session:
 
@@ -92,13 +92,13 @@ In three sentences, say what you can do right now.
 | Environment | Browser, local demos, business analysis. | SSH, remote servers, terminal workflows. |
 | Interaction | Clicks, input box, console. | Keyboard and slash commands. |
 | Trace | Right console, step details, trace list. | Chat transcript and `/outputs` page. |
-| Configuration | Cannot be edited in the page. Both use the `config.json` loaded when the control plane started. | Same. `/resume` restores a session and `/outputs` lists files. |
+| Configuration | Cannot be edited in the page. Both use the `config.yaml` loaded when the control plane started. | Same. `/resume` restores a session and `/outputs` lists files. |
 
 Use the Web workbench for full visual demos. Use the TUI to verify agent runtime over SSH or lightweight terminal environments.
 
 ## Troubleshooting
 
-- Cannot connect: run `npm run start:tui`. It uses Home `config.json` `server.host` and `server.port`, default `http://127.0.0.1:8790`, and starts a backend when nothing is listening there. For a control plane already started with another `--config`, pass `--runtime-url`. For a stack managed by `./deploy.sh`, run `./deploy.sh tui`; it uses the API address recorded at start.
+- Cannot connect: run `npm run start:tui`. It uses Home `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`, and starts a backend when nothing is listening there. For a control plane already started with another `--config`, pass `--runtime-url`. For a stack managed by `./deploy.sh`, run `./deploy.sh tui`; it uses the API address recorded at start.
 - Attach without starting: pass `--runtime-url`. The host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
 - Model not responding: check `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in root `.env`.
 - Session restore fails: confirm `GET /api/v1/sessions` on the stream origin (`http://<server.host>:<server.port>`) answers. The TUI sends that request with no authentication.

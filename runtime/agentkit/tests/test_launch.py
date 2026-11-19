@@ -1,10 +1,10 @@
-import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import FrozenInstanceError, fields, replace
 from pathlib import Path
 
 import pytest
+import yaml
 
 from dataagent.bootstrap import (
     LaunchOptions,
@@ -28,12 +28,12 @@ MODEL = {
 
 def config(path, value):
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(json.dumps(value), encoding="utf-8")
+    path.write_text(yaml.safe_dump(value, allow_unicode=True, sort_keys=False), encoding="utf-8")
     return path
 
 
 def options(tmp_path, **kwargs):
-    cli = config(tmp_path / "explicit.json", MODEL)
+    cli = config(tmp_path / "explicit.yaml", MODEL)
     return LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,), config=cli, **kwargs)
 
 
@@ -54,13 +54,13 @@ def test_prepare_has_no_sdk_initialization_or_workspace_writes(tmp_path):
 
 def test_cwd_never_selects_configuration_or_extensions(tmp_path):
     home = tmp_path / "home"
-    config(home / "config.json", MODEL)
+    config(home / "config.yaml", MODEL)
     runtimes = []
     for name in ("first", "second"):
         cwd = tmp_path / name
         source = cwd / ".dataagent"
         source.mkdir(parents=True)
-        (source / "config.json").write_text("malformed: must not be read")
+        (source / "config.yaml").write_text("malformed: must not be read")
         for kind in ("skills", "hooks", "plugins"):
             (source / kind).write_text("not a directory: must not be inspected")
         runtimes.append(prepare_runtime(LaunchOptions(cwd=cwd)))
@@ -75,7 +75,7 @@ def test_switching_home_switches_configuration_extensions_and_state(tmp_path, mo
     for name in ("first", "second"):
         home = tmp_path / name
         config(
-            home / "config.json",
+            home / "config.yaml",
             {
                 "models": {
                     "primary": {
@@ -102,7 +102,7 @@ def test_switching_home_switches_configuration_extensions_and_state(tmp_path, mo
 
 def test_explicit_config_can_clear_inputs_without_synthesizing_default(tmp_path):
     config(
-        tmp_path / "home/config.json",
+        tmp_path / "home/config.yaml",
         {
             **MODEL,
             "dataagent": {
@@ -110,7 +110,7 @@ def test_explicit_config_can_clear_inputs_without_synthesizing_default(tmp_path)
             },
         },
     )
-    cli = config(tmp_path / "empty.json", {**MODEL, "dataagent": {"workspaces": []}})
+    cli = config(tmp_path / "empty.yaml", {**MODEL, "dataagent": {"workspaces": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert runtime.paths.workspaces == runtime.settings.dataagent.workspaces == ()
     assert not (runtime.paths.home / "workspaces").exists()
@@ -153,7 +153,7 @@ def test_home_initialization_is_exclusive_and_non_overwriting(tmp_path):
     with ThreadPoolExecutor(max_workers=4) as pool:
         list(pool.map(initialize_home, [home] * 8))
     assert {item.name for item in home.iterdir()} == {
-        "config.json",
+        "config.yaml",
         ".env",
         "skills",
         "hooks",
@@ -165,9 +165,9 @@ def test_home_initialization_is_exclusive_and_non_overwriting(tmp_path):
     (home / ".env").write_text("USER_CONTENT=keep\n")
     initialize_home(home)
     assert (home / ".env").read_text() == "USER_CONTENT=keep\n"
-    (home / "config.json").unlink()
+    (home / "config.yaml").unlink()
     initialize_home(home)
-    assert json.loads((home / "config.json").read_text())["schema_version"] == 4
+    assert yaml.safe_load((home / "config.yaml").read_text())["schema_version"] == 4
 
 
 def test_home_resolution_and_initialization_stay_separate(tmp_path):
@@ -181,7 +181,7 @@ def test_home_resolution_and_initialization_stay_separate(tmp_path):
     assert not home.exists()
 
     initialize_home(home)
-    assert (home / "config.json").is_file()
+    assert (home / "config.yaml").is_file()
 
 
 def test_template_error_has_variable_field_and_help_path_without_values(tmp_path):
@@ -196,7 +196,7 @@ def test_template_error_has_variable_field_and_help_path_without_values(tmp_path
 def test_explicit_config_replaces_home_config(tmp_path):
     cli = options(tmp_path).config
     config(
-        tmp_path / "home/config.json",
+        tmp_path / "home/config.yaml",
         {
             **MODEL,
             "models": {
@@ -258,7 +258,7 @@ def test_explicit_config_replaces_home_config(tmp_path):
 @pytest.mark.parametrize("scope", ["user", "cli"])
 def test_workspace_field_is_rejected_in_every_layer(tmp_path, scope):
     opts = options(tmp_path)
-    path = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
+    path = {"user": tmp_path / "home/config.yaml", "cli": opts.config}[scope]
     config(path, {**MODEL, "workspace": {"path": str(tmp_path)}})
     with pytest.raises(ValueError) as error:
         prepare_runtime(replace(opts, config=None) if scope == "user" else opts)
@@ -268,7 +268,7 @@ def test_workspace_field_is_rejected_in_every_layer(tmp_path, scope):
 @pytest.mark.parametrize("scope", ["user", "cli"])
 def test_invalid_overridden_fields_still_fail_at_their_source(tmp_path, scope):
     opts = options(tmp_path)
-    path = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
+    path = {"user": tmp_path / "home/config.yaml", "cli": opts.config}[scope]
     config(path, {"dataagent": {"limits": {"model_calls_per_agent": "secret-invalid-value"}}})
     with pytest.raises(ValueError) as error:
         prepare_runtime(replace(opts, config=None) if scope == "user" else opts)
@@ -280,7 +280,7 @@ def test_invalid_overridden_fields_still_fail_at_their_source(tmp_path, scope):
 def test_duplicate_plugins_fail_at_source_even_when_cli_overrides_them(tmp_path, scope):
     opts = options(tmp_path)
     config(opts.config, {**MODEL, "plugins": {"enabled": []}})
-    path = tmp_path / ("home/config.json" if scope == "user" else "explicit.json")
+    path = tmp_path / ("home/config.yaml" if scope == "user" else "explicit.yaml")
     config(path, {"plugins": {"enabled": ["common", "common"]}})
     with pytest.raises(ValueError) as error:
         prepare_runtime(replace(opts, config=None) if scope == "user" else opts)
@@ -324,7 +324,7 @@ def test_config_keeps_home_env_until_env_file_replaces_it(tmp_path, monkeypatch,
     monkeypatch.setenv("LLM_MODEL", "")
     assert prepare_runtime(replace(opts, env_file=env_file)).model_name == "explicit"
 
-    config(home / "config.json", selected)
+    config(home / "config.yaml", selected)
     home_runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,)))
     assert home_runtime.model_name == "home"
     assert home_runtime.redaction_secrets == ("home-key",)
@@ -334,7 +334,7 @@ def test_missing_variable_names_the_selected_env_file(tmp_path):
     from dataagent.models import build_model
 
     cli = config(
-        tmp_path / "team/config.json",
+        tmp_path / "team/config.yaml",
         {
             "models": {
                 "primary": {
@@ -378,7 +378,7 @@ def test_missing_variable_names_the_selected_env_file(tmp_path):
 def test_extension_revision_tracks_only_the_selected_env_file(tmp_path):
     from dataagent.host import extension_revision
 
-    cli = config(tmp_path / "team/config.json", MODEL)
+    cli = config(tmp_path / "team/config.yaml", MODEL)
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     before = extension_revision(runtime)
     cli.with_name(".env").write_text("LLM_MODEL=sibling\n")
@@ -434,7 +434,7 @@ def test_relative_workspace_from_env_uses_launch_cwd_not_env_directory(tmp_path,
     cwd = tmp_path / "launch"
     workspace = cwd / "work"
     workspace.mkdir(parents=True)
-    cli = config(tmp_path / "configuration/config.json", MODEL)
+    cli = config(tmp_path / "configuration/config.yaml", MODEL)
     env_file = {
         "home": tmp_path / "home/.env",
         "config": cli.with_name(".env"),
@@ -443,10 +443,10 @@ def test_relative_workspace_from_env_uses_launch_cwd_not_env_directory(tmp_path,
     env_file.parent.mkdir(parents=True, exist_ok=True)
     env_file.write_text("DATAAGENT_WORKSPACE=work\n")
     if source == "home":
-        config(tmp_path / "home/config.json", MODEL)
+        config(tmp_path / "home/config.yaml", MODEL)
         options = LaunchOptions(cwd=cwd)
     elif source == "config":
-        config(tmp_path / "home/config.json", MODEL)
+        config(tmp_path / "home/config.yaml", MODEL)
         (tmp_path / "home/.env").write_text("DATAAGENT_WORKSPACE=work\n")
         env_file.write_text("DATAAGENT_WORKSPACE=ignored-sibling\n")
         options = LaunchOptions(cwd=cwd, config=cli)
@@ -459,7 +459,7 @@ def test_relative_workspace_from_env_uses_launch_cwd_not_env_directory(tmp_path,
 
 def test_hidden_empty_project_and_legacy_paths_are_ignored(tmp_path):
     opts = options(tmp_path)
-    config(tmp_path / "config.json", {"invalid": True})
+    config(tmp_path / "config.yaml", {"invalid": True})
     (tmp_path / ".dataagent_v2").mkdir()
     for name in ("skills", "hooks", "plugins", "state"):
         root = tmp_path / ".dataagent" / name
@@ -472,7 +472,7 @@ def test_hidden_empty_project_and_legacy_paths_are_ignored(tmp_path):
 
 def test_explicit_symlinks_keep_declaration_anchor(tmp_path):
     target = config(
-        tmp_path / "storage/config.json",
+        tmp_path / "storage/config.yaml",
         {
             **MODEL,
             "dataagent": {
@@ -484,7 +484,7 @@ def test_explicit_symlinks_keep_declaration_anchor(tmp_path):
     env_target.write_text("UNUSED_TEST_SETTING=value\n")
     declared = tmp_path / "declared"
     declared.mkdir()
-    cli, env_file = declared / "config.json", declared / "settings.env"
+    cli, env_file = declared / "config.yaml", declared / "settings.env"
     cli.symlink_to(target)
     env_file.symlink_to(env_target)
 
@@ -498,7 +498,7 @@ def test_explicit_symlinks_keep_declaration_anchor(tmp_path):
 
 
 def test_default_prepare_uses_call_time_cwd_and_does_not_init_home(tmp_path, monkeypatch):
-    config(tmp_path / "home/config.json", MODEL)
+    config(tmp_path / "home/config.yaml", MODEL)
     monkeypatch.chdir(tmp_path)
     assert prepare_runtime().paths.workspaces == ()
     assert prepare_runtime(LaunchOptions()).settings.models["primary"].name == "test-model"
@@ -534,9 +534,9 @@ def test_nested_home_permissions_and_existing_items_preserved(tmp_path):
     initialize_home(home)
     for directory in (home.parent, home, home / "skills", home / "hooks", home / "plugins"):
         assert directory.stat().st_mode & 0o777 == 0o700
-    (home / "config.json").chmod(0o640)
+    (home / "config.yaml").chmod(0o640)
     initialize_home(home)
-    assert (home / "config.json").stat().st_mode & 0o777 == 0o640
+    assert (home / "config.yaml").stat().st_mode & 0o777 == 0o640
 
 
 @pytest.mark.parametrize("target", ["home", "home/runtime"])
@@ -554,7 +554,7 @@ def test_default_home_symlink_and_state_symlink_resolve(tmp_path, monkeypatch):
     user = tmp_path / "fake-user"
     user.mkdir()
     real_home = tmp_path / "real-home"
-    config(real_home / "config.json", MODEL)
+    config(real_home / "config.yaml", MODEL)
     (user / ".dataagent").symlink_to(real_home, target_is_directory=True)
     monkeypatch.delenv("DATAAGENT_HOME")
     monkeypatch.setattr(Path, "home", classmethod(lambda cls: user))
@@ -581,16 +581,16 @@ def test_same_environment_file_only_applied_once_at_highest_position(tmp_path):
 
 
 def test_explicit_config_does_not_keep_home_plugin_paths(tmp_path):
-    config(tmp_path / "home/config.json", {**MODEL, "plugins": {"enabled": ["common"], "paths": ["./one"]}})
-    cli = config(tmp_path / "override.json", {**MODEL, "plugins": {"paths": []}})
+    config(tmp_path / "home/config.yaml", {**MODEL, "plugins": {"enabled": ["common"], "paths": ["./one"]}})
+    cli = config(tmp_path / "override.yaml", {**MODEL, "plugins": {"paths": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert runtime.settings.plugins.enabled == () and runtime.settings.plugins.paths == ()
 
 
 def test_explicit_empty_hook_list_does_not_keep_home_hooks(tmp_path):
     entry = {"entrypoint": "missing.py:handle", "event": "before_agent"}
-    config(tmp_path / "home/config.json", {**MODEL, "dataagent": {"hooks": [entry]}})
-    cli = config(tmp_path / "override.json", {**MODEL, "dataagent": {"hooks": []}})
+    config(tmp_path / "home/config.yaml", {**MODEL, "dataagent": {"hooks": [entry]}})
+    cli = config(tmp_path / "override.yaml", {**MODEL, "dataagent": {"hooks": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert runtime.settings.dataagent.hooks == ()
     assert runtime.extensions.hooks == ()
@@ -602,7 +602,7 @@ def test_hook_merge_is_repeatable_without_mutating_layers_or_hook_config(tmp_pat
     layers = tuple(
         Layer(
             scope,
-            tmp_path / scope / "config.json",
+            tmp_path / scope / "config.yaml",
             freeze(
                 {
                     **(MODEL if scope == "user" else {}),
@@ -637,7 +637,7 @@ def test_removed_factory_fields_fail_at_every_source_even_when_overridden(
     tmp_path, scope, field, value
 ):
     opts = options(tmp_path)
-    source = {"user": tmp_path / "home/config.json", "cli": opts.config}[scope]
+    source = {"user": tmp_path / "home/config.yaml", "cli": opts.config}[scope]
     config(source, {**MODEL, "dataagent": {field: value}})
     with pytest.raises(ValueError) as caught:
         prepare_runtime(replace(opts, config=None) if scope == "user" else opts)
@@ -649,10 +649,10 @@ def test_removed_factory_fields_fail_at_every_source_even_when_overridden(
 @pytest.mark.parametrize("scope", ["user", "cli"])
 def test_selected_config_keeps_its_own_hook_directory(tmp_path, scope):
     roots = {"user": tmp_path / "home", "cli": tmp_path / "explicit"}
-    config(roots["user"] / "config.json", MODEL)
+    config(roots["user"] / "config.yaml", MODEL)
     for layer in ("user", "cli"):
         config(
-            roots[layer] / "hooks.json" if layer == "cli" else roots[layer] / "config.json",
+            roots[layer] / "hooks.yaml" if layer == "cli" else roots[layer] / "config.yaml",
             {
                 **MODEL,
                 "dataagent": {
@@ -669,7 +669,7 @@ def test_selected_config_keeps_its_own_hook_directory(tmp_path, scope):
         LaunchOptions(
             cwd=tmp_path,
             workspaces=(tmp_path,),
-            config=roots["cli"] / "hooks.json" if scope == "cli" else None,
+            config=roots["cli"] / "hooks.yaml" if scope == "cli" else None,
         )
     )
     selected = ["cli"] if scope == "cli" else ["user"]
@@ -694,7 +694,7 @@ def test_selected_config_keeps_its_own_hook_directory(tmp_path, scope):
 
 def test_explicit_config_without_hooks_does_not_keep_home_hooks(tmp_path):
     config(
-        tmp_path / "home/config.json",
+        tmp_path / "home/config.yaml",
         {
             **MODEL,
             "dataagent": {
@@ -708,7 +708,7 @@ def test_explicit_config_without_hooks_does_not_keep_home_hooks(tmp_path):
         },
     )
     cli = config(
-        tmp_path / "explicit/config.json",
+        tmp_path / "explicit/config.yaml",
         {
             **MODEL,
             "dataagent": {
@@ -757,5 +757,29 @@ def test_home_creation_failure_preserves_already_created_items(tmp_path, monkeyp
     monkeypatch.setattr(os, "open", fail_env)
     with pytest.raises(PermissionError):
         initialize_home(home)
-    assert (home / "config.json").exists() and (home / "skills").is_dir()
+    assert (home / "config.yaml").exists() and (home / "skills").is_dir()
     assert not (home / ".env").exists()
+
+
+@pytest.mark.parametrize('explicit', [False, True])
+def test_initialization_checks_only_selected_product_config(tmp_path, monkeypatch, explicit):
+    home = tmp_path / 'home'
+    home.mkdir()
+    legacy = home / 'config.json'
+    legacy.write_text('{"untouched": "legacy"}')
+    original = legacy.read_bytes()
+    selected = config(tmp_path / 'selected.yaml', MODEL)
+    monkeypatch.setenv('DATAAGENT_HOME', str(home))
+    options = LaunchOptions(config=selected if explicit else None, init_home=True, cwd=tmp_path)
+    if explicit:
+        runtime = prepare_runtime(options)
+        assert runtime.settings.models['primary'].name == MODEL['models']['primary']['name']
+        assert (home / '.env').is_file()
+        assert (home / '.env').stat().st_mode & 0o777 == 0o600
+        for directory in ('skills', 'hooks', 'plugins', 'runtime'):
+            assert (home / directory).is_dir()
+    else:
+        with pytest.raises(ValueError, match='legacy JSON'):
+            prepare_runtime(options)
+    assert legacy.read_bytes() == original
+    assert not (home / 'config.yaml').exists()

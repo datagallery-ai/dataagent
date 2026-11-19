@@ -120,7 +120,7 @@ def live_backend(runtime, tmp_path):
         pytest.skip("Set the three DATAAGENT_A2A_LIVE_* variables to enable real model calls")
     secret = os.environ[required[1]]
     report = []
-    config_file = runtime.paths.home / "config.json"
+    config_file = runtime.paths.home / "config.yaml"
     config = json.loads(config_file.read_text())
     with observed_gateway(os.environ[required[0]]) as (url, controls, calls):
         config["models"]["primary"].update(
@@ -474,7 +474,7 @@ def test_live_a2a_error_codes_and_correlation(live_backend, tmp_path, monkeypatc
     if failure == "timeout":
         config["dataagent"]["limits"]["timeout_seconds"] = 3
         controls[tag] = {"release": release}
-        (runtime.paths.home / "config.json").write_text(json.dumps(config))
+        (runtime.paths.home / "config.yaml").write_text(json.dumps(config))
     else:
         # A real gateway rejection, distinct from the anonymous A2A service's auth.
         controls[tag] = {"expected_status": 401}

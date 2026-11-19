@@ -193,7 +193,7 @@ class SubAgentSpec(StrictModel):
     ) = None
 
     _supported_version = field_validator("schema_version", mode="before")(
-        supported_version("SubAgent JSON", 1, "Set schema_version to 1.")
+        supported_version("SubAgent YAML", 1, "Set schema_version to 1.")
     )
 
     @model_validator(mode="before")
@@ -267,7 +267,7 @@ class PluginSpec(StrictModel):
 
     _supported_version = field_validator("schema_version", mode="before")(
         supported_version(
-            ".plugin.json", 3,
+            ".plugin.yaml", 3,
             "Version 3 renames system_prompt to system_prompt_file and config to defaults_file.",
         )
     )

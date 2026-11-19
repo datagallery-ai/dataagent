@@ -15,18 +15,14 @@ def summarize_numbers(values: list[float]) -> str:
     return f"count={len(values)} sum={total} mean={total / len(values)}"
 ```
 
-`.plugin.json`：
+`.plugin.yaml`：
 
-```json
-{
-  "schema_version": 3,
-  "id": "common",
-  "tools": {
-    "summarize_numbers": {
-      "entrypoint": "tools/statistics.py:summarize_numbers"
-    }
-  }
-}
+```yaml
+schema_version: 3
+id: common
+tools:
+  summarize_numbers:
+    entrypoint: tools/statistics.py:summarize_numbers
 ```
 
 注册名是 `common__summarize_numbers`。本地 ID 必须匹配 `[a-z][a-z0-9_-]{0,63}`。模型调用时使用这个全名。

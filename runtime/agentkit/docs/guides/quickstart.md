@@ -36,7 +36,7 @@ LLM_BASE_URL=https://your-openai-compatible-host/v1
 LLM_API_KEY=replace-with-your-key
 ```
 
-模板 `config.json` 把模型名、地址和密钥写成 `$env{LLM_MODEL}`、`$env{LLM_BASE_URL}`、`$env{LLM_API_KEY}`。引用写在 JSON 字符串里，形式是 `$env{NAME}`。
+模板 `config.yaml` 把模型名、地址和密钥写成 `$env{LLM_MODEL}`、`$env{LLM_BASE_URL}`、`$env{LLM_API_KEY}`。引用写在 JSON 字符串里，形式是 `$env{NAME}`。
 
 仓库根目录 `.env` 可以由 `npm run start` 或 `./deploy.sh start` 读取。TUI 自己拉起后端时，用 `--env-file` 把这份文件传给它。
 
@@ -48,7 +48,7 @@ LLM_API_KEY=replace-with-your-key
 npm run start:tui
 ```
 
-地址来自 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。`--runtime-url` 只连接、不拉起。
+地址来自 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。`--runtime-url` 只连接、不拉起。
 
 TUI 打开对话。输入：
 
@@ -64,7 +64,7 @@ Summarize 1, 2, 3.
 uv run --project runtime/agentkit dataagent serve
 ```
 
-就绪后可访问 `http://127.0.0.1:8790/healthz`。端口来自 `config.json` 的 `server.port`。响应里的对话状态在 `data.conversation`，不包含密钥。
+就绪后可访问 `http://127.0.0.1:8790/healthz`。端口来自 `config.yaml` 的 `server.port`。响应里的对话状态在 `data.conversation`，不包含密钥。
 
 ## 可选输入目录
 

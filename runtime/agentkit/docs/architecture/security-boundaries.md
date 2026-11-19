@@ -24,7 +24,7 @@ Trace 会遮盖已知凭据、常见的 API key、Bearer/Basic 和 URL 凭据。
 
 系统提示要求模型把输入目录当作只读，并把新文件写到 `outputs/`。提示不改变操作系统权限。HTTP 列举产物时拒绝符号链接、`..`，并跳过 `artifacts/large_tool_results` 与 `artifacts/conversation_history`。这项检查只作用于预览接口。
 
-新建的 Home 目录模式为 `0700`，生成的 `config.json` 和 `.env` 为 `0600`。已有文件保持原来的权限。
+新建的 Home 目录模式为 `0700`，生成的 `config.yaml` 和 `.env` 为 `0600`。已有文件保持原来的权限。
 
 控制数据保留在 `runtime/`，默认产物放在 Home 的 `outputs/`。产物目录不得与 Home 重叠，只有 `<home>/outputs` 区域例外，防止产物落入扩展目录后被自动加载。`runtime/` 下的目录、Home 的 `outputs/` 及其第一层目录固定为 `0700`；会话产物目录及 `artifacts/` 保留已有权限，新建时遵循 umask。Home 默认产物区之外的自定义输出目录及其上级权限不修改。
 
@@ -32,7 +32,7 @@ Trace 会遮盖已知凭据、常见的 API key、Bearer/Basic 和 URL 凭据。
 
 ## 扩展
 
-插件、Hook 和 MCP 的 stdio 命令在后端进程中执行。启用插件就会加载并运行其中的 Python。stdio 的 `command` 来自本机 `.mcp.json`。
+插件、Hook 和 MCP 的 stdio 命令在后端进程中执行。启用插件就会加载并运行其中的 Python。stdio 的 `command` 来自本机 `.mcp.yaml`。
 
 Hook 可以读取状态，并用异常中止本次调用。工具 Hook 的返回值必须是 `None`，不能替换工具结果。
 

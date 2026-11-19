@@ -87,7 +87,7 @@ Home defaults to `~/.dataagent`; set `DATAAGENT_HOME` in the process environment
 
 | File or setting | Purpose |
 | --- | --- |
-| `<Home>/config.json` | Product configuration with `schema_version: 4`, including `models`, `dataagent`, `plugins`, and `server` |
+| `<Home>/config.yaml` | Product configuration with `schema_version: 4`, including `models`, `dataagent`, `plugins`, and `server` |
 | `<Home>/.env` | Values for `$env{NAME}` references; nonempty process variables override the file |
 | `--config` | Replaces Home configuration; does not select a neighboring `.env` |
 | `--env-file` | Explicitly replaces Home `.env`, including for direct Python CLI launches |
@@ -153,3 +153,5 @@ npm run test:product
 ```
 
 Apache-2.0; see [LICENSE](LICENSE).
+
+Configuration files use YAML 1.2 (`config.yaml`, `.plugin.yaml`, `.mcp.yaml`). Preview legacy JSON migration with `uv run --project runtime/agentkit dataagent config migrate`; add `--apply` after reviewing the plan. Sources are retained; restart after migration.

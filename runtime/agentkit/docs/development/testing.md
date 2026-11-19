@@ -12,7 +12,7 @@ uv run --project runtime/agentkit pytest runtime/agentkit/tests -q -m 'not live'
 
 | 区域 | 测试文件 |
 | --- | --- |
-| 配置合并、JSON、Home 启动 | `test_config.py`、`test_json_config.py`、`test_home_startup.py` |
+| 配置合并、YAML、Home 启动 | `test_config.py`、`test_json_config.py`、`test_home_startup.py` |
 | 声明和编译 | `test_declarations.py`、`test_compiler.py`、`test_compiler_contract.py` |
 | Hook | `test_hooks.py`、`test_native_hooks.py` |
 | MCP | `test_mcp.py` |

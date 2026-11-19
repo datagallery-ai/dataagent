@@ -8,7 +8,7 @@
 
 ```bash
 uv run --no-sync --project runtime/agentkit dataagent serve \
-  --config path/to/config.json \
+  --config path/to/config.yaml \
   --user default \
   --workspace /existing/data \
   --workspace /other/data \
@@ -18,15 +18,15 @@ uv run --no-sync --project runtime/agentkit dataagent serve \
 
 | 参数 | 默认 | 作用 |
 | --- | --- | --- |
-| `--config` | 无 | 用这份文件代替 Home `config.json`。文件必须存在 |
+| `--config` | 无 | 用这份文件代替 Home `config.yaml`。文件必须存在 |
 | `--user` | `default` | 本地用户 ID。决定 `runtime/users/<user>/` |
 | `--workspace` | 无 | 可重复。已存在的只读输入。传了就不用 `DATAAGENT_WORKSPACE` 和配置里的 `workspaces` |
 | `--session` | 无 | 采用该会话创建时记录的输入绑定，作为进程默认值。它不恢复对话；客户端用同一 `threadId` 续接对话 |
 | `--env-file` | 无 | 只用这份环境文件，代替 Home `.env`。文件必须存在 |
 
-没有 `--host`。`npm run start`、网页转发和无参数 TUI 在启动时读所选配置的 `server.host` 与 `server.port`：传了 `--config` 用那份文件，否则用 Home `config.json`。默认 `127.0.0.1:8790`。TUI 无参数时，这个地址上没有控制面就拉起，已经在跑就连上。`npm run start -- --config <path>` 和 `./deploy.sh start --config <path>` 把同一路径交给 `dataagent serve`。`npm run start` 只接受 `--config`、`--web-host`、`--web-port`、`--api`、`--web`，其他参数（例如 `--env-file`、`--user`）报错退出。需要这些选项时直接运行 `uv run dataagent serve`。`./deploy.sh` 把当时解析出的 API 主机名和端口写入部署状态。之后的 `tui`、`status`、`doctor` 使用这份地址。
+没有 `--host`。`npm run start`、网页转发和无参数 TUI 在启动时读所选配置的 `server.host` 与 `server.port`：传了 `--config` 用那份文件，否则用 Home `config.yaml`。默认 `127.0.0.1:8790`。TUI 无参数时，这个地址上没有控制面就拉起，已经在跑就连上。`npm run start -- --config <path>` 和 `./deploy.sh start --config <path>` 把同一路径交给 `dataagent serve`。`npm run start` 只接受 `--config`、`--web-host`、`--web-port`、`--api`、`--web`，其他参数（例如 `--env-file`、`--user`）报错退出。需要这些选项时直接运行 `uv run dataagent serve`。`./deploy.sh` 把当时解析出的 API 主机名和端口写入部署状态。之后的 `tui`、`status`、`doctor` 使用这份地址。
 
-选中的配置文件不存在、不是普通文件，或内容不是合法 JSON 时，`dataagent serve` 与 `dataagent serve-a2a` 以退出码 1 结束，进程不监听端口。错误写入 `backend.log` 并输出到标准错误，启动记录使用 JSON，包含 `component=dataagent.startup`、`stage` 和诊断堆栈。配置文件已读入但启动准备失败时，`serve` 可以继续以未就绪状态监听：`/healthz` 为 200，`data.conversation.ready` 为 false，`/ready` 为 503。独立 `serve-a2a` 不提供这两个健康接口。缺少环境变量时，先补上当前需要的变量再重启；非默认模型的环境引用按首次使用时解析。
+选中的配置文件不存在、不是普通文件，或内容不是合法 YAML 时，`dataagent serve` 与 `dataagent serve-a2a` 以退出码 1 结束，进程不监听端口。错误写入 `backend.log` 并输出到标准错误，启动记录使用 JSON，包含 `component=dataagent.startup`、`stage` 和诊断堆栈。配置文件已读入但启动准备失败时，`serve` 可以继续以未就绪状态监听：`/healthz` 为 200，`data.conversation.ready` 为 false，`/ready` 为 503。独立 `serve-a2a` 不提供这两个健康接口。缺少环境变量时，先补上当前需要的变量再重启；非默认模型的环境引用按首次使用时解析。
 
 开发和内部参数不属于对外接口，可能改变：
 
@@ -41,7 +41,7 @@ uv run --no-sync --project runtime/agentkit dataagent serve \
 
 ```bash
 uv run --no-sync --project runtime/agentkit dataagent serve-a2a \
-  --config path/to/config.json \
+  --config path/to/config.yaml \
   --user default \
   --workspace /existing/data \
   --env-file /path/.env \
@@ -66,7 +66,7 @@ SDK 的 `LaunchOptions` 另有 `cwd` 和 `init_home`。可重复的 `--workspace
 从语义服务下载历史 SQL，生成 de-agent `history_sql` 使用的语料快照。需要配置 `semantic`。
 
 ```bash
-uv run --no-sync --project runtime/agentkit dataagent history-sql --config path/to/config.json
+uv run --no-sync --project runtime/agentkit dataagent history-sql --config path/to/config.yaml
 ```
 
 | 参数 | 默认 | 作用 |
@@ -89,7 +89,7 @@ uv run --no-sync --project runtime/agentkit dataagent history-sql --config path/
 
 | 参数 | 作用 |
 | --- | --- |
-| （无参数） | 读 `config.json` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。该地址上已有控制面就连上，否则拉起后端 |
+| （无参数） | 读 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。该地址上已有控制面就连上，否则拉起后端 |
 | `--config`、`--env-file`、`--workspace`、`--user`、`--session` | 传给拉起的后端。即使该地址上已有控制面，也会再启动一个 |
 | `--resume [threadId]` | 启动时恢复会话 |
 | `--runtime-url` | 连接这个地址，不启动后端。不能和上一行的启动参数一起用 |
@@ -119,3 +119,16 @@ uv run --no-sync --project runtime/agentkit dataagent history-sql --config path/
 仓库根 `.env` 由 npm/部署启动器预先载入进程，因此其中的值进入的是进程环境阶段，与后端选择 Home `.env` / `--env-file` 不同。`DATAAGENT_HOME` 建议启动前显式 export。后端加载环境文件不会修改 `os.environ`，也不会为另一个终端中的 curl 设置认证变量。
 
 日志目录随 `DATAAGENT_HOME` 固定为 `runtime/logs/`，不另设日志目录变量。后端默认级别为 INFO，当前没有统一的 `LOG_LEVEL` 或 `DATAAGENT_LOG_LEVEL` 配置。`DATAAGENT_LOG_CAPTURE` 是启动器管理的内部输出收集标记，使用者不要手动设置；它用于避免子进程与启动器重复落盘。详见 [可观测性](../architecture/observability.md)。
+
+## JSON 到 YAML 的一次性迁移
+
+```sh
+uv run --project runtime/agentkit dataagent config migrate
+uv run --project runtime/agentkit dataagent config migrate --home /path/to/home --apply
+uv run --project runtime/agentkit dataagent config migrate --plugin /path/to/plugin --apply
+uv run --project runtime/agentkit dataagent config migrate --file /path/to/team.json --apply
+```
+
+默认只预览选中的 Home。`--home`、`--plugin`、`--file` 可重复并组合；显式文件或插件不隐式加入 Home。
+迁移只追踪声明的配置，不展开环境变量，不加载插件代码。全部预检通过后才创建 YAML，原 JSON 保留。
+已有等价 YAML 跳过；冲突停止。中途失败会撤回本次新建文件。迁移后重启应用。

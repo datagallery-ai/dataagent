@@ -13,13 +13,13 @@ from dataagent.bootstrap.config_files import (
     merge,
 )
 from dataagent.bootstrap.paths import RuntimePaths, WorkspaceInput
-from dataagent.strict_json import read_json
+from dataagent.strict_yaml import read_yaml as read_json
 
-NL2SQL_ENTRY = Path(__file__).resolve().parents[1] / "examples/nl2sql-entry.json"
+NL2SQL_ENTRY = Path(__file__).resolve().parents[1] / "examples/nl2sql-entry.yaml"
 
 
 def test_old_config_file_reports_version_upgrade_steps(tmp_path):
-    path = tmp_path / "config.json"
+    path = tmp_path / "config.yaml"
     path.write_text(json.dumps({
         "schema_version": 3,
         "dataagent": {"model": {"name": "primary"}},
@@ -42,7 +42,7 @@ def test_old_config_file_reports_version_upgrade_steps(tmp_path):
 
 @pytest.mark.parametrize("version", [None, 4])
 def test_current_or_omitted_config_version_loads(tmp_path, version):
-    path = tmp_path / "config.json"
+    path = tmp_path / "config.yaml"
     data = {"models": {"primary": {
         "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "test-secret",
     }}}
@@ -71,7 +71,7 @@ def test_nl2sql_entry_example_loads(tmp_path, monkeypatch):
 
 
 def test_config_environment_precedence_and_path_anchor(tmp_path, monkeypatch):
-    config = tmp_path / "config.json"
+    config = tmp_path / "config.yaml"
     config.write_text(json.dumps({
         "schema_version": 4,
         "models": {"primary": {
@@ -103,15 +103,15 @@ def test_config_environment_precedence_and_path_anchor(tmp_path, monkeypatch):
 
 def test_default_does_not_read_cwd_config(tmp_path, monkeypatch):
     monkeypatch.chdir(tmp_path)
-    (tmp_path / "config.json").write_text("not valid JSON")
+    (tmp_path / "config.yaml").write_text("not valid JSON")
     with pytest.raises(ValueError, match="models: Field required"):
         prepare_runtime(LaunchOptions())
 
 
 def test_duplicate_json_and_unknown_settings(tmp_path, settings):
-    path = tmp_path / "duplicate.json"
+    path = tmp_path / "duplicate.yaml"
     path.write_text('{"x": 1, "x": 2}')
-    with pytest.raises(ValueError, match="Duplicate"):
+    with pytest.raises(ValueError, match="duplicate"):
         read_json(path)
     with pytest.raises(ValidationError, match="Extra inputs"):
         type(settings).model_validate({**settings.model_dump(), "shell": True})
@@ -129,7 +129,7 @@ def test_import_comes_from_agentkit():
       for event in ["model_error", "tool_error", "agent_error"]),
 ])
 def test_removed_hook_protocol_is_rejected_without_version_guessing(tmp_path, hook):
-    path = tmp_path / "removed-hooks.json"
+    path = tmp_path / "removed-hooks.yaml"
     path.write_text(json.dumps({"schema_version": 4, "dataagent": {"hooks": [hook]}}))
     with pytest.raises(ValueError) as error:
         prepare_runtime(LaunchOptions(cwd=tmp_path, config=path))
@@ -143,7 +143,7 @@ def layer_paths(tmp_path):
 
 def test_load_layers_skips_missing_automatic_files_but_requires_cli(layer_paths):
     assert load_layers(layer_paths.home, {}, None) == ()
-    missing = layer_paths.home.parent / "missing.json"
+    missing = layer_paths.home.parent / "missing.yaml"
     with pytest.raises(ConfigurationLoadError, match="Configuration file does not exist") as error:
         load_layers(layer_paths.home, {}, missing)
     assert str(missing) in str(error.value)
@@ -152,23 +152,23 @@ def test_load_layers_skips_missing_automatic_files_but_requires_cli(layer_paths)
 @pytest.mark.parametrize("scope", ["user", "cli"])
 @pytest.mark.parametrize("shape", ["directory", "dangling-symlink"])
 def test_load_layers_does_not_skip_invalid_file_shapes(layer_paths, scope, shape):
-    path = {"user": layer_paths.home / "config.json",
-            "cli": layer_paths.home.parent / "explicit.json"}[scope]
+    path = {"user": layer_paths.home / "config.yaml",
+            "cli": layer_paths.home.parent / "explicit.yaml"}[scope]
     path.parent.mkdir(parents=True, exist_ok=True)
     if shape == "directory":
         path.mkdir()
     else:
-        path.symlink_to(layer_paths.home.parent / "missing-target.json")
+        path.symlink_to(layer_paths.home.parent / "missing-target.yaml")
     with pytest.raises(ConfigurationLoadError, match="Expected a configuration file") as error:
         load_layers(layer_paths.home, {}, path if scope == "cli" else None)
     assert str(path) in str(error.value)
 
 
 def test_load_layers_cli_symlink_deduplicates_real_file_but_retains_path_anchor(layer_paths):
-    source = layer_paths.home / "config.json"
+    source = layer_paths.home / "config.yaml"
     source.parent.mkdir(parents=True)
     source.write_text(json.dumps({"plugins": {"paths": ["./local-plugin"]}}))
-    alias = layer_paths.home.parent / "override/config.json"
+    alias = layer_paths.home.parent / "override/config.yaml"
     alias.parent.mkdir()
     alias.symlink_to(source)
     layers = load_layers(layer_paths.home, {}, alias)
@@ -179,7 +179,7 @@ def test_load_layers_cli_symlink_deduplicates_real_file_but_retains_path_anchor(
 
 def test_load_layers_preserves_partial_fields_and_deferred_models_in_frozen_data(layer_paths):
     layer_paths.home.mkdir()
-    path = layer_paths.home / "config.json"
+    path = layer_paths.home / "config.yaml"
     path.write_text(json.dumps({
         "models": {"primary": {"name": "$env{MISSING_MODEL}"}},
         "dataagent": {"limits": {"model_calls_per_agent": "$env{CALLS}"}},
@@ -200,7 +200,7 @@ def test_load_layers_preserves_partial_fields_and_deferred_models_in_frozen_data
 
 
 def merge_layer(tmp_path, scope, data, env=None):
-    return Layer(scope, tmp_path / f"{scope}.json", freeze(data), env or {}, tmp_path / f"{scope}-home")
+    return Layer(scope, tmp_path / f"{scope}.yaml", freeze(data), env or {}, tmp_path / f"{scope}-home")
 
 
 @pytest.fixture
@@ -293,7 +293,7 @@ def test_entry_higher_layer_overrides_lower(tmp_path, merge_data):
 def test_entry_config_file_is_accepted_and_overridden(tmp_path):
     home = tmp_path / "home"
     home.mkdir()
-    (home / "config.json").write_text(json.dumps({
+    (home / "config.yaml").write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "k",
         }},
@@ -301,7 +301,7 @@ def test_entry_config_file_is_accepted_and_overridden(tmp_path):
         "server": {"port": 8802},
     }))
     assert prepare_runtime(LaunchOptions(cwd=tmp_path)).settings.dataagent.entry == "lower"
-    override = tmp_path / "override.json"
+    override = tmp_path / "override.yaml"
     override.write_text(json.dumps({
         "models": {"primary": {
             "name": "test-model", "base_url": "https://example.invalid/v1", "api_key": "k",
@@ -311,7 +311,7 @@ def test_entry_config_file_is_accepted_and_overridden(tmp_path):
     selected = prepare_runtime(LaunchOptions(cwd=tmp_path, config=override))
     assert selected.settings.dataagent.entry == "higher"
     assert selected.settings.server.port == 8790
-    bad = tmp_path / "bad.json"
+    bad = tmp_path / "bad.yaml"
     bad.write_text(json.dumps({"dataagent": {"entry": "Not-valid"}}))
     with pytest.raises(ValueError, match="dataagent.entry"):
         prepare_runtime(LaunchOptions(cwd=tmp_path, config=bad))
