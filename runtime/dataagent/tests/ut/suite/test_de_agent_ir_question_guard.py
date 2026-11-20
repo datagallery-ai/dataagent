@@ -31,7 +31,7 @@ class _RuntimeStub:
         self._cache: dict[str, Any] = {
             "ir_hitl_queue": queue if queue is not None else [{
                 "field_id": "identity",
-                "title": "特征主键",
+                "title": "统计主键",
                 "question": "主键用 device_id 还是 user_id？",
                 "unresolved": ["主键未定"],
             }],

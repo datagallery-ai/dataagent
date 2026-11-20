@@ -33,6 +33,16 @@ FIELD_TITLES = {
     "pipeline": "执行管道",
     "sequence": "最终序列后处理",
 }
+# User-facing HITL titles: business language, not IR field_id / schema jargon.
+# Keep in sync with hitl_resolver_assets._IR_HITL_*_TITLES for auto-resolver routing.
+IR_HITL_USER_TITLES = {
+    "identity": "统计主键",
+    "sources": "数据来源与关联",
+    "time_context": "时间范围",
+    "output_features": "输出指标",
+    "pipeline": "计算步骤",
+    "sequence": "排序与截断",
+}
 
 # Only these fields may block IR consumers via HITL; other unresolved stay warn-only.
 IR_HITL_BLOCKING_FIELDS = frozenset({
@@ -48,7 +58,69 @@ IR_HITL_FIELD_PRIORITY = (
     "time_context",
     "output_features",
 )
+# Routing marker for auto-resolver (kept in tool reason); user-facing pending uses
+# IR_HITL_USER_PENDING_MARKER instead so interactive users do not see "DataTaskIR".
 IR_HITL_PENDING_MARKER = "DataTaskIR 未确认口径"
+IR_HITL_USER_PENDING_MARKER = "待确认业务口径"
+# Pre-SQL final review (distinct from unresolved追问); keep in sync with hitl_resolver_assets.
+IR_CALIBER_REVIEW_MARKER = "DataTaskIR 口径最终检视"
+IR_CALIBER_REVIEW_USER_MARKER = "口径最终检视"
+
+# Replace IR schema paths / keys in user-visible HITL text (order: longer paths first).
+# Use ASCII/identifier lookarounds instead of \b: Python \b treats CJK as \w, so
+# "identity.components缺失" would not match with word boundaries.
+_IR_TOKEN_EDGE = r"A-Za-z0-9_."
+_IR_HITL_JARGON_REPLACEMENTS: tuple[tuple[re.Pattern[str], str], ...] = tuple(
+    (re.compile(rf"(?<![{_IR_TOKEN_EDGE}])(?:{pattern})(?![{_IR_TOKEN_EDGE}])"), replacement)
+    for pattern, replacement in (
+        (r"identity\.components(?:\[\])?(?:\.field_ref)?", "统计主键字段"),
+        (r"components(?:\[\])?\.field_ref", "主键字段"),
+        (r"components(?:\[\])?", "主键字段"),
+        (r"output_features(?:\.features)?(?:\[\])?", "输出指标"),
+        (r"time_context(?:\.input_windows)?(?:\[\])?", "时间范围"),
+        (r"sources\.facts(?:\[\])?", "事实表"),
+        (r"sources\.dimensions(?:\[\])?", "维表"),
+        (r"aggregation\.grain", "聚合粒度"),
+        (r"aggregation\.kind", "聚合方式"),
+        (r"join\.conditions", "关联条件"),
+        (r"operator\s*=\s*not_like", "排除匹配模式"),
+        (r"null_semantics", "空值处理"),
+        (r"field_ref", "字段"),
+        (r"field_id", "口径项"),
+        (r"measure_id", "指标"),
+        (r"window_ref", "时间窗口"),
+        (r"unresolved", "未决点"),
+    )
+)
+
+_OPERATOR_RENDER = {
+    "eq": "等于",
+    "ne": "不等于",
+    "in": "属于",
+    "not_in": "不属于",
+    "like": "匹配",
+    "not_like": "排除匹配",
+    "contains": "包含",
+    "not_contains": "不包含",
+    "gt": "大于",
+    "gte": "大于等于",
+    "lt": "小于",
+    "lte": "小于等于",
+    "between": "介于",
+    "is_null": "为空",
+    "is_not_null": "非空",
+    "not": "非",
+}
+
+_AGG_KIND_RENDER = {
+    "passthrough": "透传（不拼接多行）",
+    "count": "计数",
+    "sum": "求和",
+    "avg": "均值",
+    "distinct_count": "去重计数",
+    "list_agg": "多行拼接为序列",
+    "expression": "表达式聚合",
+}
 
 _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
 1. **已确认值是强制约束**：IR中明确记录的源字段名、操作符、常量值、过滤条件等是已确认口径，必须在SQL中完整实现，不得自行更改或忽略；**输出列别名（expand 后的 field_name）除外**，见规则 10
@@ -56,7 +128,7 @@ _SQL_CONSTRAINT_RULES = """【约束遵循规则 - 必须遵守】
 3. **禁止操作是强制约束**：以下通用操作默认被禁止，除非IR明确记录允许——在聚合前使用窗口函数去重（如ROW_NUMBER()）、过滤LEFT JOIN的NULL侧使其退化为INNER JOIN、用户未明确要求时使用DISTINCT或COUNT(DISTINCT)
 4. **必须保留的内容**：LEFT JOIN的左表所有记录不得因去重或过滤而丢失；用户未明确要求去重时，所有满足过滤条件的原始记录都必须参与计算
 5. **事实记录身份不等于去重**：sources.facts[].dedup 中的同一事实字段仅定义记录身份；IR未定义选择函数时不产生去重，不得仅因该字段存在而执行去重
-6. **聚合指标约束**：计数类指标必须按展开后各列 aggregation.count_type / expression_template 执行；每列 aggregation.grain 是该列自己的聚合粒度，禁止把全部指标默认按同一分组键聚合
+6. **聚合指标约束**：计数类指标必须按展开后各列 aggregation.count_type / expression_template 执行；每列 aggregation.grain 是该列自己的聚合粒度，禁止把全部指标默认按同一分组键聚合。aggregation.kind=passthrough 时透传已有列、禁止 invent collect_list；仅 kind=list_agg 且有拼接证据时才允许多行拼接
 7. **比例指标约束**：ratio 中的分子分母必须严格按定义执行，注意分子不应包含分母的所有记录
 8. **序列/窗口分区键约束**：sequence.window_partition 与 sequence.partition_fields 分别用于窗口函数与最终序列分区，二者可能不同；rank.partition_by 为空数组表示全局
 9. **最终序列分区键约束**：sequence.partition_fields 定义最终输出分组，与聚合 grain、rank.partition_by 可能是不同概念
@@ -375,7 +447,9 @@ def collect_ir_hitl_questions(
             continue
         items.append({
             "field_id": field_id,
-            "title": FIELD_TITLES.get(field_id, field_id or "未命名字段"),
+            "title": IR_HITL_USER_TITLES.get(
+                field_id, FIELD_TITLES.get(field_id, field_id or "未命名字段")
+            ),
             "question": question.strip(),
             "unresolved": unresolved,
         })
@@ -384,6 +458,16 @@ def collect_ir_hitl_questions(
     if max_items is not None and max_items > 0:
         items = items[:max_items]
     return items
+
+
+def humanize_ir_hitl_text(text: str) -> str:
+    """Rewrite IR schema jargon in user-visible HITL copy (paths/keys → business phrasing)."""
+    result = str(text or "")
+    if not result:
+        return ""
+    for pattern, replacement in _IR_HITL_JARGON_REPLACEMENTS:
+        result = pattern.sub(replacement, result)
+    return result
 
 
 def _extract_choice_hints(question: str) -> list[str]:
@@ -403,31 +487,365 @@ def _extract_choice_hints(question: str) -> list[str]:
 def format_ir_hitl_pending_action(questions: list[dict[str, Any]], *, max_chars: int = 2000) -> str:
     """Build request_human_feedback pending_action text from IR clarification queue.
 
-    Prefix keeps IR markers for hitl_auto_resolver routing; body asks for a concrete
-    choice (and surfaces options parsed from the fill question when present).
+    User-facing copy is decoupled from IR schema: business titles, humanized
+    questions, and no raw unresolved schema notes. Auto-resolver routing markers
+    stay in the tool ``reason`` (see ir_question_guard), not in this body.
     """
     if not questions:
         return ""
     lines = [
-        f"{IR_HITL_PENDING_MARKER}（请给出倾向方案，并附 1-2 个具体候选供确认）：",
+        f"{IR_HITL_USER_PENDING_MARKER}：",
     ]
     for item in questions:
-        title = item.get("title") or item.get("field_id") or "未命名字段"
-        question = str(item.get("question") or "").strip()
-        unresolved = item.get("unresolved") or []
+        field_id = str(item.get("field_id") or "").strip()
+        title = (
+            item.get("title")
+            or IR_HITL_USER_TITLES.get(field_id)
+            or FIELD_TITLES.get(field_id)
+            or "未命名项"
+        )
+        question = humanize_ir_hitl_text(str(item.get("question") or "").strip())
         lines.append(f"【{title}】{question}")
-        if isinstance(unresolved, list) and unresolved:
-            notes = [str(note).strip() for note in unresolved if str(note).strip()]
-            if notes:
-                lines.append("未决点：" + "；".join(notes[:3]))
         choices = _extract_choice_hints(question)
         if choices:
-            lines.append("候选：" + " / ".join(choices))
+            lines.append("可选：" + " / ".join(humanize_ir_hitl_text(c) for c in choices))
+    text = "\n".join(lines)
+    if len(text) > max_chars:
+        return text[: max_chars - 1] + "…"
+    return text
+
+
+def render_review_summary(
+    field_results: list[dict] | None,
+    *,
+    max_chars: int = 2500,
+) -> str:
+    """Human-readable confirmed-IR digest for pre-SQL caliber review (no policy rules)."""
+    body = render_context(field_results or [])
+    if not body.strip():
+        return ""
+    # Drop the machine-oriented header; review pending supplies its own framing.
+    lines = [line for line in body.splitlines() if line.strip()]
+    if lines and lines[0].startswith("【DataTaskIR"):
+        lines = lines[1:]
+    if lines and "未出现的内容不构成约束" in lines[0]:
+        lines = lines[1:]
+    # Swap internal field titles for user-facing HITL titles.
+    remapped: list[str] = []
+    for line in lines:
+        updated = line
+        for field_id, internal_title in FIELD_TITLES.items():
+            user_title = IR_HITL_USER_TITLES.get(field_id)
+            if user_title and internal_title in updated:
+                updated = updated.replace(internal_title, user_title)
+        remapped.append(humanize_ir_hitl_text(updated))
+    text = "\n".join(remapped).strip()
+    if len(text) > max_chars:
+        return text[: max_chars - 1] + "…"
+    return text
+
+
+def _field_map(field_results: list[dict] | None) -> dict[str, dict[str, Any]]:
+    out: dict[str, dict[str, Any]] = {}
+    for item in field_results or []:
+        if not isinstance(item, dict):
+            continue
+        field_id = str(item.get("field_id") or "").strip()
+        if field_id:
+            out[field_id] = item
+    return out
+
+
+def _field_value_dict(field: dict[str, Any] | None) -> dict[str, Any]:
+    if not isinstance(field, dict):
+        return {}
+    value = field.get("value")
+    return value if isinstance(value, dict) else {}
+
+
+def render_caliber_review_structured_summary(
+    field_results: list[dict] | None,
+) -> tuple[str, list[str]]:
+    """Business-facing 5-line digest + optional risk tips for caliber review.
+
+    Returns ``(structured_text, risk_tips)``. Empty structured_text means nothing
+    confirmed enough to ask.
+    """
+    by_id = _field_map(field_results)
+    if not by_id:
+        return "", []
+
+    identity = _field_value_dict(by_id.get("identity"))
+    components = [
+        c for c in (identity.get("components") or []) if isinstance(c, dict) and c.get("field_ref")
+    ]
+    pk_bits: list[str] = []
+    for comp in components:
+        ref = str(comp.get("field_ref")).strip()
+        role = str(comp.get("semantic_role") or "").strip()
+        pk_bits.append(f"{role}（{ref}）" if role else ref)
+    if pk_bits:
+        grain_line = (
+            f"- 主键/粒度：{' × '.join(pk_bits)}"
+            f"（一行对应一个这样的组合，共 {len(pk_bits)} 维）"
+        )
+    else:
+        grain_line = "- 主键/粒度：摘要里尚未写清一行代表什么"
+
+    of = _field_value_dict(by_id.get("output_features"))
+    layout = of.get("layout")
+    columns = expand_output_features(of) if of else []
+    measure_n = len(
+        [m for m in (of.get("measures") or []) if isinstance(m, dict)]
+        if of
+        else []
+    )
+    feature_n = len(
+        [f for f in (of.get("features") or []) if isinstance(f, dict)]
+        if of
+        else []
+    )
+    axis_n = 0
+    axis_bits: list[str] = []
+    for axis in of.get("axes") or [] if of else []:
+        if not isinstance(axis, dict):
+            continue
+        vals = [v for v in (axis.get("values") or []) if v is not None and str(v).strip()]
+        if not vals:
+            continue
+        axis_n += 1
+        axis_id = str(axis.get("axis_id") or "轴")
+        axis_bits.append(f"{axis_id}×{len(vals)}")
+    biz_cols = len(columns)
+    total_with_pk = biz_cols + len(pk_bits)
+    if layout == "cartesian" and (axis_bits or measure_n):
+        shape = (
+            f"多轴交叉展开（{', '.join(axis_bits) or '轴未写清'}）"
+            f"×约 {measure_n or '若干'} 类指标，约 {biz_cols} 个业务列"
+        )
+    elif layout == "flat":
+        shape = f"平铺输出约 {biz_cols or feature_n} 个业务列"
+    elif biz_cols:
+        shape = f"约 {biz_cols} 个业务列"
+    else:
+        shape = "输出形态尚未写清"
+    output_line = (
+        f"- 输出形态：{shape}；不含分区时合计约 {total_with_pk} 列"
+        f"（主键 {len(pk_bits)} + 业务 {biz_cols}）"
+    )
+
+    sources = _field_value_dict(by_id.get("sources"))
+    filter_bits: list[str] = []
+    for bucket_name, entries in (
+        ("事实", sources.get("facts") or []),
+        ("维度", sources.get("dimensions") or []),
+    ):
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            for pred in entry.get("filters") or []:
+                if not isinstance(pred, dict) or not pred.get("field_ref"):
+                    continue
+                op = pred.get("operator") or ""
+                ops = pred.get("operands") or []
+                op_txt = _OPERATOR_RENDER.get(str(op), op) if op else ""
+                operand_txt = ",".join(str(x) for x in ops[:3]) if isinstance(ops, list) else ""
+                bit = f"{pred.get('field_ref')} {op_txt} {operand_txt}".strip()
+                filter_bits.append(bit)
+                if len(filter_bits) >= 4:
+                    break
+            if len(filter_bits) >= 4:
+                break
+        if len(filter_bits) >= 4:
+            break
+    if filter_bits:
+        more = "…" if len(filter_bits) >= 4 else ""
+        filter_line = f"- 过滤：已写 {len(filter_bits)}{'+' if more else ''} 条（如 {'；'.join(filter_bits[:3])}{more}）"
+    else:
+        filter_line = "- 过滤：摘要中未见已确认过滤（未写出的条件默认不会进 SQL）"
+
+    time_val = _field_value_dict(by_id.get("time_context"))
+    time_txt = _render_time_context(time_val).strip("。") if time_val else ""
+    filter_refs = {b.split(" ", 1)[0].lower() for b in filter_bits if b}
+    # Also collect raw filter field_refs for hour/day partition detection.
+    for bucket_name, entries in (
+        ("facts", sources.get("facts") or []),
+        ("dimensions", sources.get("dimensions") or []),
+    ):
+        for entry in entries or []:
+            if not isinstance(entry, dict):
+                continue
+            for pred in entry.get("filters") or []:
+                if isinstance(pred, dict) and pred.get("field_ref"):
+                    filter_refs.add(str(pred["field_ref"]).strip().lower())
+    source_refs = []
+    for entry in list(sources.get("facts") or []) + list(sources.get("dimensions") or []):
+        if isinstance(entry, dict) and entry.get("source_ref"):
+            source_refs.append(str(entry["source_ref"]))
+    hourish_source = any(
+        str(ref).rsplit(".", 1)[-1].lower().endswith(("_hm", "_hh")) or "pt_h" in str(ref).lower()
+        for ref in source_refs
+    ) or ("pt_h" in filter_refs)
+    bucket = time_val.get("output_bucket") if isinstance(time_val.get("output_bucket"), dict) else {}
+    grain = str(bucket.get("grain") or "").lower()
+    if time_txt:
+        time_line = f"- 时间：{humanize_ir_hitl_text(time_txt)}"
+    else:
+        time_line = "- 时间：摘要中未见已确认时间边界"
+    custom_def = str(bucket.get("custom_definition") or "")
+    rationale_bits = " ".join(
+        str(part)
+        for part in (
+            custom_def,
+            (by_id.get("time_context") or {}).get("rationale"),
+            (by_id.get("sources") or {}).get("rationale"),
+        )
+        if part
+    )
+    all_day_hours = any(
+        m in rationale_bits
+        for m in ("当天全部小时", "全部小时聚合", "全天小时", "当天所有小时", "不按 pt_h")
+    )
+    if hourish_source or grain == "hour" or "pt_h" in filter_refs or all_day_hours:
+        if all_day_hours and "pt_h" not in filter_refs:
+            time_line += "；小时口径：已确认当天全部小时聚合（只按天分区，不按 pt_h 切片）"
+        elif "pt_h" in filter_refs and grain == "hour":
+            time_line += "；小时口径：已写 pt_h 单小时切片"
+        elif "pt_h" in filter_refs:
+            time_line += "；已见 pt_h 过滤（请确认是单小时而非当天全部小时）"
+        elif grain == "hour":
+            time_line += "；output 分桶为小时，请确认 sources 是否同时有 pt_d+pt_h"
         else:
-            lines.append(
-                "请在答复中选定一个具体方案（表名/字段名/时间窗口等具体值），"
-                "不要只回答“请你自主判断”。"
-            )
+            time_line += "；源表像小时分区，但摘要未见 pt_h/单小时或「当天全部小时」确认"
+
+    seq = _field_value_dict(by_id.get("sequence"))
+    seq_bits: list[str] = []
+    if seq:
+        ordering = seq.get("ordering") or seq.get("order")
+        if ordering:
+            seq_bits.append(f"排序={humanize_ir_hitl_text(str(ordering)[:80])}")
+        dedup = seq.get("dedup")
+        if dedup:
+            seq_bits.append("含序列去重")
+        top_n = seq.get("top_n") or seq.get("limit")
+        if top_n is not None:
+            seq_bits.append(f"截断={top_n}")
+    # Also peek measure intents for dedup/order cues when sequence empty.
+    if not seq_bits and of:
+        for item in list(of.get("measures") or [])[:2] + list(of.get("features") or [])[:2]:
+            if not isinstance(item, dict):
+                continue
+            calc = item.get("calc") if isinstance(item.get("calc"), dict) else {}
+            intent = str(calc.get("intent") or "")
+            if any(k in intent for k in ("去重", "最近", "排序", "拼接", "序列")):
+                seq_bits.append(humanize_ir_hitl_text(intent[:60]))
+                break
+    if seq_bits:
+        dedup_line = f"- 去重与排序：{'；'.join(seq_bits)}"
+    else:
+        dedup_line = "- 去重与排序：摘要中未写清（同对象是否只留最近一次、由近到远等）"
+
+    structured = "\n".join(
+        [grain_line, output_line, filter_line, time_line, dedup_line]
+    )
+    risks: list[str] = []
+    if biz_cols >= 12:
+        risks.append(
+            f"当前摘要业务列较多（约 {biz_cols} 列），请优先核对是否把本该合并的属性拆得过细，"
+            "或把时段/窗口做成了过多交叉列。"
+        )
+    if layout == "cartesian" and axis_n >= 1 and measure_n >= 3 and biz_cols >= 12:
+        risks.append(
+            "交叉展开后列数与「主键 + 少量序列列」的常见形态差较多，请对照原话确认输出怎么摆。"
+        )
+    if hourish_source and "pt_h" not in filter_refs and grain != "hour" and not all_day_hours:
+        risks.append(
+            "源表像小时分区表，但摘要未见小时过滤/单小时确认，也未写明「当天全部小时聚合」；"
+            "请确认是「只取指定小时」还是「当天全部小时合在一起」，避免无说明地只写天分区。"
+        )
+    return structured, risks
+
+
+def format_ir_caliber_review_pending(
+    field_results: list[dict] | None,
+    *,
+    max_chars: int = 3200,
+    best_effort: bool = False,
+) -> str:
+    """Build HITL pending_action for the one-shot pre-SQL IR caliber review.
+
+    Framing prioritizes scannable checklist + structured business summary so
+    humans (and auto-resolve) spot grain/output-shape gaps before confirming.
+    """
+    structured, risks = render_caliber_review_structured_summary(field_results)
+    detail = render_review_summary(field_results, max_chars=min(900, max(400, max_chars // 3)))
+    if not structured and not detail:
+        return ""
+
+    lines = [
+        f"{IR_CALIBER_REVIEW_USER_MARKER}（生成 SQL 前）",
+        "请先按下面几点看【已确认口径】是否和你的需求一致；有不符先指出要改成什么，不要先确认。",
+        "请留意：",
+        "1) 一行代表什么？（仅用户 / 用户×时段桶 / 其它）",
+        "2) 输出怎么摆？（时段或窗口做行维还是多列宽表；多属性是多列序列还是合成一条）",
+        "3) 大概几列业务输出？（不含分区）",
+        "4) 必留的过滤与时间边界有没有写进摘要？（含天分区；若源表是小时表，还要有小时分区/单小时还是全天小时）",
+        "5) 去重与排序（同对象是否只留最近一次、由近到远）有没有写清？",
+        "未在摘要中出现的过滤/去重/窗口等，默认不会写入 SQL。",
+    ]
+    if best_effort:
+        lines.append(
+            "说明：尚有未确认项已从约束中省略；下列只含已确认部分，已确认内容也可能和原话不一致，请对照核对点。"
+        )
+    if risks:
+        lines.append("")
+        lines.append("【请优先留意】")
+        for tip in risks[:2]:
+            lines.append(f"- {tip}")
+
+    lines.append("")
+    lines.append("【已确认口径 · 结构化摘要】")
+    if structured:
+        lines.append(structured)
+    else:
+        lines.append("- （结构化摘要不足，见下方细节）")
+
+    if detail:
+        lines.append("")
+        lines.append("【补充细节】")
+        lines.append(detail)
+
+    omitted_notes: list[str] = []
+    for output in field_results or []:
+        if not isinstance(output, dict):
+            continue
+        field_id = str(output.get("field_id") or "").strip()
+        unresolved = _normalize_unresolved(output.get("unresolved"))
+        if not unresolved:
+            continue
+        title = IR_HITL_USER_TITLES.get(
+            field_id, FIELD_TITLES.get(field_id, field_id or "未命名项")
+        )
+        # Prefer a short unresolved phrase over a generic "尚有未确认点".
+        hint = humanize_ir_hitl_text(str(unresolved[0]))[:48] if unresolved else ""
+        if hint:
+            omitted_notes.append(f"- {title}：{hint}（未写入约束，定不了就不会进 SQL）")
+        else:
+            omitted_notes.append(f"- {title}：尚有未确认点（已省略，定不了就不会进 SQL）")
+        if len(omitted_notes) >= 3:
+            break
+    if omitted_notes:
+        lines.append("")
+        lines.append("【未纳入约束】")
+        lines.extend(omitted_notes)
+
+    lines.append("")
+    lines.append("回答方式：")
+    lines.append(
+        "- 有遗漏或错误：先用自然语言写清要补/要改的点（优先说一行代表什么、输出怎么摆、过滤与去重）"
+    )
+    lines.append("- 以上核对点全部无问题：再回复「确认，按此生成」")
+
     text = "\n".join(lines)
     if len(text) > max_chars:
         return text[: max_chars - 1] + "…"
@@ -631,11 +1049,13 @@ def _render_filter_scope(item: dict[str, Any]) -> str | None:
 
 def _render_predicate(item: dict[str, Any], source_ref: Any) -> str:
     source = f"{source_ref}." if source_ref is not None else ""
+    operator = item.get("operator")
+    operator_text = _OPERATOR_RENDER.get(str(operator), operator) if operator is not None else None
     base = " ".join(
         str(value)
         for value in [
             f"{source}{item.get('field_ref')}" if item.get("field_ref") is not None else None,
-            item.get("operator"),
+            operator_text,
         ]
         if value is not None
     )
@@ -924,12 +1344,17 @@ def _render_output_features(value: dict[str, Any]) -> str:
             origin_text = f"来源={source or '未确认'}"
         aggregation = item.get("aggregation")
         grain_text = ""
-        if isinstance(aggregation, dict) and "grain" in aggregation:
-            grain = aggregation.get("grain")
-            if isinstance(grain, list):
-                grain_text = f"，聚合粒度=[{', '.join(str(g) for g in grain)}]"
-            elif grain is not None:
-                grain_text = f"，聚合粒度={grain}"
+        if isinstance(aggregation, dict):
+            kind = aggregation.get("kind")
+            if kind and kind not in (None, "null"):
+                kind_label = _AGG_KIND_RENDER.get(str(kind), str(kind))
+                grain_text += f"，聚合方式={kind_label}"
+            if "grain" in aggregation:
+                grain = aggregation.get("grain")
+                if isinstance(grain, list):
+                    grain_text += f"，聚合粒度=[{', '.join(str(g) for g in grain)}]"
+                elif grain is not None:
+                    grain_text += f"，聚合粒度={grain}"
         window_ref = item.get("window_ref")
         window_text = f"，窗口={window_ref}" if window_ref else ""
         rank = item.get("rank")

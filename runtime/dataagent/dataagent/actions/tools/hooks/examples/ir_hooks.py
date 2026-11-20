@@ -36,10 +36,14 @@ from dataagent.actions.tools.hooks.examples.data_task_ir_spike.fill import (
     write_field_attempt,
     write_field_meta,
 )
+from dataagent.actions.tools.hooks.examples.data_task_ir_spike.semantic_checks import (
+    collect_ir_semantic_warnings,
+)
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike.json_llm import ainvoke_json_object
 from dataagent.actions.tools.hooks.examples.data_task_ir_spike.render import (
     IR_HITL_BLOCKING_FIELDS,
     collect_ir_hitl_questions,
+    format_ir_caliber_review_pending,
     format_ir_hitl_pending_action,
     render_constraint_context,
     render_context,
@@ -70,6 +74,12 @@ IR_HITL_MAX_SAME_FIELD_ASKS = 2
 # Keep in sync with de_agent.hooks.ir_question_guard fire-count gate.
 IR_QUESTION_GUARD_FIRE_COUNT_KEY = "ir_question_guard.fire_count"
 IR_QUESTION_GUARD_MAX_FIRES = 2
+# One-shot pre-SQL caliber review (keep in sync with ir_caliber_review_guard).
+IR_CALIBER_REVIEW_DONE_KEY = "ir_caliber_review.done"
+IR_CALIBER_REVIEW_ASKED_KEY = "ir_caliber_review.asked"
+IR_CALIBER_REVIEW_FIRE_COUNT_KEY = "ir_caliber_review.fire_count"
+IR_CALIBER_REVIEW_ASK_DIGEST_KEY = "ir_caliber_review.ask_feedback_digest"
+IR_CALIBER_REVIEW_MAX_FIRES = 1
 IR_HITL_BEST_EFFORT_NOTE = (
     "【DataTaskIR 降级消费说明】存在未确认口径已从约束中省略；"
     "以下仅为已确认口径，请基于这些约束 best-effort 生成 SQL，"
@@ -98,11 +108,20 @@ def ir_consistency_policy(runtime: Runtime) -> str:
     return policy
 
 
+def ir_semantic_check_policy(runtime: Runtime) -> str:
+    """Deterministic IR semantic checks: warn (log only) or enforce (join consistency path)."""
+    policy = _ir_option(runtime, "semantic_check_policy", "warn")
+    if policy not in {"warn", "enforce"}:
+        raise ValueError("DataTaskIR 配置错误：semantic_check_policy 必须为 warn 或 enforce")
+    return policy
+
+
 async def _refresh_with_policy(inv: ToolHookInvocation) -> None:
     """Run under the update lock; downgrade only typed IR inference failures."""
     runtime = inv.runtime
     policy = ir_failure_policy(runtime)
     ir_consistency_policy(runtime)
+    ir_semantic_check_policy(runtime)
     try:
         await _update_ir_locked(inv)
     except IRRefreshError as exc:
@@ -486,6 +505,8 @@ async def ensure_ir_ready(inv: ToolHookInvocation) -> ToolPreHookOutcome:
         # update_ir, so a same-todo consumer after HITL would otherwise see stale items.
         await _refresh_with_policy(inv)
         _raise_if_ir_hitl_blocking(runtime, inv.state)
+        _maybe_complete_caliber_review(runtime, inv.state)
+        _raise_if_caliber_review_pending(runtime, inv.state)
         if runtime.get_cache("ir_input_signature") is None and not runtime.get_cache("ir_fallback"):
             runtime.set_cache("ir_dirty", True)
             raise RuntimeError("DataTaskIR consistency check incomplete; retry consumer before using IR")
@@ -871,6 +892,106 @@ def _raise_if_ir_hitl_blocking(runtime: Runtime, state: dict | None) -> None:
     )
 
 
+def _ir_caliber_review_enabled(runtime: Runtime | None) -> bool:
+    """DATA_TASK_IR.enable_ir_caliber_review; default false. Requires enable_ir_hitl."""
+    if runtime is None or not _ir_hitl_enabled(runtime):
+        return False
+    raw = _ir_option(runtime, "enable_ir_caliber_review", False)
+    if isinstance(raw, str):
+        return raw.strip().lower() not in {"0", "false", "no", "off", ""}
+    return bool(raw)
+
+
+def _hitl_caliber_review_max_fires(runtime: Runtime) -> int:
+    raw = _ir_option(runtime, "hitl_caliber_review_max_fires", IR_CALIBER_REVIEW_MAX_FIRES)
+    try:
+        value = int(raw)
+    except (TypeError, ValueError):
+        return IR_CALIBER_REVIEW_MAX_FIRES
+    return max(1, value)
+
+
+def _caliber_review_done(runtime: Runtime) -> bool:
+    return bool(runtime.get_cache(IR_CALIBER_REVIEW_DONE_KEY))
+
+
+def _mark_caliber_review_done(runtime: Runtime, reason: str) -> None:
+    if runtime.get_cache(IR_CALIBER_REVIEW_DONE_KEY):
+        return
+    runtime.set_cache(IR_CALIBER_REVIEW_DONE_KEY, True)
+    logger.info("[DataTaskIR] caliber review done ({})", reason)
+
+
+def _maybe_complete_caliber_review(runtime: Runtime, state: dict | None) -> None:
+    """Mark the one-shot review complete after any post-ask HITL reply (confirm or supplement)."""
+    if not _ir_caliber_review_enabled(runtime):
+        return
+    if _caliber_review_done(runtime):
+        return
+    if not runtime.get_cache(IR_CALIBER_REVIEW_ASKED_KEY):
+        return
+    ask_digest = runtime.get_cache(IR_CALIBER_REVIEW_ASK_DIGEST_KEY)
+    current = _current_hitl_feedback_digest(state, runtime)
+    if ask_digest is None:
+        return
+    if current != ask_digest:
+        _mark_caliber_review_done(runtime, "user replied after caliber review ask")
+
+
+def _caliber_review_should_block(runtime: Runtime, state: dict | None) -> bool:
+    """True when pre-SQL review is enabled, not done, and still actionable."""
+    if not _ir_caliber_review_enabled(runtime):
+        return False
+    if not _is_human_feedback_enabled(state, runtime):
+        return False
+    if _caliber_review_done(runtime):
+        return False
+    if not _hitl_budget_remaining(state):
+        _mark_caliber_review_done(runtime, "hitl budget exhausted")
+        return False
+    try:
+        fires = int(runtime.get_cache(IR_CALIBER_REVIEW_FIRE_COUNT_KEY, 0) or 0)
+    except (TypeError, ValueError):
+        fires = 0
+    if fires >= _hitl_caliber_review_max_fires(runtime):
+        _mark_caliber_review_done(runtime, "caliber review fire cap reached")
+        return False
+    # Blocking unresolved clarifications take priority; review waits until queue is clear.
+    if runtime.get_cache(IR_HITL_QUEUE_KEY):
+        return False
+    fields = runtime.get_cache("ir_field_values") or []
+    if not fields:
+        return False
+    pending = format_ir_caliber_review_pending(
+        fields,
+        best_effort=bool(runtime.get_cache(IR_HITL_BEST_EFFORT_KEY)),
+    )
+    return bool(pending)
+
+
+def _raise_if_caliber_review_pending(runtime: Runtime, state: dict | None) -> None:
+    """Block IR consumers until the one-shot pre-SQL caliber review completes."""
+    if not _caliber_review_should_block(runtime, state):
+        return
+    # Reply already absorbed this turn (asked + digest advanced) → complete, do not block.
+    if runtime.get_cache(IR_CALIBER_REVIEW_ASKED_KEY):
+        ask_digest = runtime.get_cache(IR_CALIBER_REVIEW_ASK_DIGEST_KEY)
+        current = _current_hitl_feedback_digest(state, runtime)
+        if ask_digest is not None and current != ask_digest:
+            _mark_caliber_review_done(runtime, "user replied after caliber review ask")
+            return
+    fields = runtime.get_cache("ir_field_values") or []
+    pending = format_ir_caliber_review_pending(
+        fields,
+        best_effort=bool(runtime.get_cache(IR_HITL_BEST_EFFORT_KEY)),
+    )
+    raise RuntimeError(
+        "DataTaskIR 口径最终检视尚未完成，禁止生成 SQL。"
+        "请先调用 request_human_feedback 让用户确认或补充下列已确认口径：\n"
+        f"{pending}"
+    )
+
+
 def _input_digest(value: object) -> str:
     serialized = json.dumps(value, ensure_ascii=False, sort_keys=True, default=str)
     return hashlib.sha256(serialized.encode("utf-8")).hexdigest()
@@ -923,14 +1044,42 @@ async def _check_and_repair_ir(inv, fields, *, user_query, tool_evidence, confir
     runtime = inv.runtime
     if issues := _structural_issues(field_templates, fields):
         _block_ir_refresh(runtime, input_signature, issues)
+    semantic_warnings = collect_ir_semantic_warnings(fields, user_query=user_query or "")
+    semantic_policy = ir_semantic_check_policy(runtime)
+    if semantic_warnings:
+        logger.warning(
+            "[DataTaskIR semantic_warning] 确定性语义检查发现问题；"
+            "policy={} signature={} trace={}\n{}",
+            semantic_policy,
+            input_signature,
+            trace_dir,
+            "\n".join(semantic_warnings),
+        )
     warnings, completed = await _ir_consistency_gate(
         runtime, user_query=user_query, tool_evidence=tool_evidence,
         field_results=fields, confirmed_context=confirmed_context, trace_dir=trace_dir,
     )
-    if completed and warnings and ir_consistency_policy(runtime) == "warn":
-        logger.warning("[DataTaskIR consistency_warning] IR 存在一致性问题，按 warn 策略继续注入；"
-                       "不触发定向修复或降级。signature={} trace={}\n{}",
-                       input_signature, trace_dir, "\n".join(warnings))
+    merged_warnings = list(warnings or [])
+    if semantic_warnings:
+        if semantic_policy == "enforce":
+            merged_warnings = list(semantic_warnings) + merged_warnings
+        else:
+            merged_warnings = list(dict.fromkeys([*merged_warnings, *semantic_warnings]))
+    warnings = merged_warnings
+    enforce_semantic = bool(semantic_warnings) and semantic_policy == "enforce"
+    if (
+        completed
+        and warnings
+        and ir_consistency_policy(runtime) == "warn"
+        and not enforce_semantic
+    ):
+        logger.warning(
+            "[DataTaskIR consistency_warning] IR 存在一致性问题，按 warn 策略继续注入；"
+            "不触发定向修复或降级。signature={} trace={}\n{}",
+            input_signature,
+            trace_dir,
+            "\n".join(warnings),
+        )
         return fields, warnings, completed
     if completed and warnings:
         # An issue can reference multiple fields. Diagnostics are suggestions,

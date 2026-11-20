@@ -249,6 +249,9 @@ question 是一个字符串，必须说明用户和证据中是否存在相关�
 没有时说明需要补充什么；有时指出哪里没说清楚。
 若输出 question，优先写成带具体候选的二选一/多选一（如「用 device_id 还是 user_id」
 「近7天还是含当天」），给出可执行取值，避免只写抽象缺口。
+question 面向最终用户，必须用业务自然语言；禁止出现 IR 内部路径或字段名
+（如 identity.components、field_ref、output_features、time_context、null_semantics、
+grain、field_id），改用「统计主键」「输出指标」「时间范围」「空值处理」等说法。
 unresolved 只能记录当前 Field Unit 的直接问题；其他字段的缺失或冲突必须完全忽略。
 冲突涉及的 value 槽位必须保持 null 或空数组；不得填写某个候选值后再备注冲突。
 禁止把“通常、一般、默认、建议、prefer、preference、latest、earliest”写成确定口径。

@@ -80,6 +80,7 @@ from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_resolver_assets imp
     _CONFIRM_DIRECTIVE_RE,
     _CONFIRMED_REFERENCE_MARKERS,
     _FIELD_CONCEPT_MAP,
+    _IR_CALIBER_REVIEW_MARKERS,
     _IR_HITL_AMBIGUITY_TITLES,
     _IR_HITL_MARKERS,
     _IR_HITL_SOURCE_TITLES,
@@ -185,6 +186,7 @@ def _ir_hitl_override(hil_question: str, base_action: str) -> str | None:
     """DataTaskIR 队列提问改判：避免 IR pending 落 UNA 拒答或答非所问。
 
     format_ir_hitl_pending_action 固定带 DataTaskIR/未确认口径 与字段标题。
+    - 口径最终检视 → AMBIGUITY_CLARIFY（对照 golden 确认或补充，见 IR_CALIBER_REVIEW prompt）
     - 特征主键 / 时间 / 输出特征 → AMBIGUITY_CLARIFY（口径选择）
     - 数据源标题且 base=UNA → TABLE_CONFIRM
     - 其它 IR 标记且 base 为 UNA / OUTPUT_SCHEMA_PREVIEW → AMBIGUITY_CLARIFY
@@ -192,6 +194,8 @@ def _ir_hitl_override(hil_question: str, base_action: str) -> str | None:
     已正确分类的 TABLE_CONFIRM/AMBIGUITY 不改，避免回放回归。
     """
     q = hil_question or ""
+    if any(marker in q for marker in _IR_CALIBER_REVIEW_MARKERS):
+        return "AMBIGUITY_CLARIFY"
     if not any(marker in q for marker in _IR_HITL_MARKERS):
         return None
     if any(title in q for title in _IR_HITL_AMBIGUITY_TITLES):
@@ -570,9 +574,12 @@ def _describe_golden_time_window(golden_sql: str, time_field: str) -> str:
             phrases.append("仅取任务指定日期的单日快照，不做跨天滚动")
     if not phrases:
         return ""
-    # 小时级分区补充
+    # 小时级分区补充（读写都要带小时；禁止理解成「当天全部小时」）
     if re.search(r"\bpt_h\s*=\s*['\"]?\$hour", sql, re.IGNORECASE):
-        phrases.append("同一天内仅取任务指定的那个小时分区")
+        phrases.append(
+            "同一天内只取任务指定的那一个小时"
+            "（读和写都要落到该小时；不是把当天全部小时合在一起）"
+        )
     if len(phrases) == 1:
         return phrases[0] + "。"
     listed = "；".join(f"{ordinal}，{p}" for ordinal, p in zip(("其一", "其二", "其三", "其四"), phrases, strict=False))
@@ -650,52 +657,154 @@ def _count_golden_output_columns(golden_sql: str) -> int | None:
 
 
 def _extract_golden_schema_summary(golden_sql: str) -> str:
-    """从 golden SQL 提取输出 schema 概要（输出 SELECT 列 + 目标表）。
+    """输出形态的业务概要（供 LLM 内部判断；不含原始 SELECT / 目标表名）。
 
-    列清单改用 _extract_output_select_block（输出 SELECT 而非首 CTE），
-    防止 LLM 兜底 prompt 里的"SELECT 列"预览展示 CTE 列误导 persona。
+    列数与粒度用自然语言描述，避免把英文列名清单塞进 prompt 诱发照搬。
     """
     if not golden_sql:
         return ""
-    columns = _extract_output_select_block(golden_sql).strip()
-    # 提取目标表（INSERT OVERWRITE TABLE x）
-    target_match = re.search(r"insert\s+overwrite\s+table\s+([a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)", golden_sql, re.IGNORECASE)
-    target = target_match.group(1) if target_match else ""
-    parts = []
-    if target:
-        parts.append(f"目标表: {target}")
-    if columns:
-        # 简化列展示，只取前 200 字符
-        parts.append(f"SELECT 列: {columns[:200]}")
-    return "\n".join(parts) if parts else ""
+    parts: list[str] = []
+    golden_cols = _count_golden_output_columns(golden_sql)
+    if golden_cols is not None:
+        parts.append(f"期望业务列数（含主键、不含分区估计）≈ {golden_cols}")
+    traits = _infer_golden_calliber_traits(golden_sql)
+    gb_keys = traits.get("group_by_keys") or []
+    if len(gb_keys) >= 2:
+        parts.append("粒度：多维组合一行（例如主体×分桶），不是单一主体一行再摊成宽表")
+    elif len(gb_keys) == 1:
+        key = str(gb_keys[0]).strip().strip("`\"' ").lower()
+        key = re.sub(r"^[a-z_][a-z0-9_]*\.", "", key)
+        concept = _FIELD_CONCEPT_MAP.get(key, "")
+        parts.append(f"粒度：按{concept}一行" if concept else "粒度：单一主体一行")
+    if traits.get("has_row_number_or_concat"):
+        parts.append("含序列类输出：通常需同对象去重并由近到远排序后再拼接")
+    return "\n".join(parts)
 
 
 def _extract_relevant_sql_snippet(golden_sql: str, hil_question: str) -> str:
-    """从 golden SQL 提取与提问相关的片段（简化版 AST 定位）。
+    """兼容旧调用：改为返回概念化口径参考，不再回传 golden SQL 原文行。"""
+    return _build_caliber_review_reference(golden_sql)
 
-    按 hil_question 关键词在 golden SQL 中定位相关行，返回该行 + 上下文 2 行。
-    避免把整个 golden SQL 塞进 prompt（防止 leak）。
-    """
-    if not golden_sql or not hil_question:
+
+def _build_caliber_review_reference(golden_sql: str) -> str:
+    """口径/最终检视参考块：结构/粒度/时间的业务描述，不含 SQL 原文与英文字段。"""
+    if not golden_sql:
         return ""
-    lines = golden_sql.split("\n")
-    # 提取 hil_question 中的关键词
-    keywords = re.findall(r"[一-鿿]{2,}|[a-z_][a-z0-9_]{2,}", hil_question.lower())
-    relevant_lines = []
-    for i, line in enumerate(lines):
-        line_lower = line.lower()
-        if any(kw in line_lower for kw in keywords):
-            # 加入该行 + 前后 2 行上下文
-            start = max(0, i - 2)
-            end = min(len(lines), i + 3)
-            for j in range(start, end):
-                if j not in relevant_lines:
-                    relevant_lines.append(j)
-    if not relevant_lines:
-        # 没命中关键词，返回前 20 行作为 fallback
-        return "\n".join(lines[:20])
-    relevant_lines.sort()
-    return "\n".join(lines[j] for j in relevant_lines)
+    parts: list[str] = []
+    schema = _extract_golden_schema_summary(golden_sql)
+    if schema:
+        parts.append(schema)
+    traits = _infer_golden_calliber_traits(golden_sql)
+    gb_keys = traits.get("group_by_keys") or []
+    if len(gb_keys) >= 2:
+        parts.append(
+            f"聚合维数={len(gb_keys)}（一行对应多维组合，例如主体×分桶；不是单一主体一行）"
+        )
+    elif len(gb_keys) == 1:
+        parts.append("聚合维数=1（一行对应一个主体）")
+    time_field = traits.get("time_field") or ""
+    if time_field:
+        window = _describe_golden_time_window(golden_sql, time_field)
+        if window:
+            parts.append(f"时间口径：{window}")
+        else:
+            parts.append("时间口径：按任务约定的天分区读取，不做额外滚动窗口偏移")
+    if traits.get("has_row_number_or_concat") and "序列类输出" not in schema:
+        parts.append("含序列拼接/排序号信号：同对象去重与由近到远排序通常需要保留")
+    if re.search(r"\bpt_h\s*=\s*['\"]?\$hour", golden_sql, re.IGNORECASE):
+        parts.append(
+            "小时口径：同一天内只取任务指定的那一个小时"
+            "（读和写都要落到该小时；不是当天全部小时聚合）"
+        )
+    return "\n".join(parts)
+
+
+def _extract_ir_review_column_count(hil_question: str) -> int | None:
+    """从最终检视摘要提取 IR 宣称的业务列规模。"""
+    text = hil_question or ""
+    patterns = (
+        r"不含分区时合计约\s*(\d{1,3})\s*列",
+        r"合计约\s*(\d{1,3})\s*列",
+        r"约\s*(\d{1,3})\s*个业务列",
+        r"已展开\s*(\d{1,3})\s*个",
+    )
+    for pat in patterns:
+        m = re.search(pat, text)
+        if m:
+            try:
+                return int(m.group(1))
+            except ValueError:
+                continue
+    return None
+
+
+def _looks_like_bare_caliber_confirm(answer: str) -> bool:
+    """是否为几乎无纠正信息的确认句（最终检视确认门槛用）。"""
+    text = (answer or "").strip()
+    if not text:
+        return False
+    if re.search(r"需改|应改|还要|补充|不对|不是|应是|请按|改成|遗漏", text):
+        return False
+    return bool(
+        re.search(r"确认|按此生成|可以生成|按此推进|没问题|无遗漏", text)
+    )
+
+
+def _vet_caliber_review_confirmation(
+    answer: str,
+    golden_sql: str,
+    hil_question: str,
+) -> str:
+    """最终检视确认闸：列数/粒度与 golden 冲突时改写空确认为纠偏补充。"""
+    if not answer or not golden_sql:
+        return answer
+    if not _looks_like_bare_caliber_confirm(answer):
+        return answer
+
+    conflicts: list[str] = []
+    golden_cols = _count_golden_output_columns(golden_sql)
+    ir_cols = _extract_ir_review_column_count(hil_question)
+    # Prefer "合计约 N 列" (pk+biz) when both present; fall back to 已展开.
+    if ir_cols is not None and golden_cols is not None and abs(ir_cols - golden_cols) >= 2:
+        conflicts.append(
+            f"输出列数需对齐任务要求（约 {golden_cols} 列），当前摘要约 {ir_cols} 列，"
+            "请先改输出形态再生成"
+        )
+
+    traits = _infer_golden_calliber_traits(golden_sql)
+    gb_keys = traits.get("group_by_keys") or []
+    q = hil_question or ""
+    if len(gb_keys) >= 2:
+        # IR/摘要宣称单维或「单 key」，与多维 golden 冲突
+        single_key_claim = bool(
+            re.search(r"共\s*1\s*维|单\s*key|单key|单一主体|一行对应一个账号(?!.*时段)", q)
+        )
+        wide_period_claim = bool(
+            re.search(r"period\s*\d|时间段\d|宽表|交叉展开", q, re.IGNORECASE)
+        )
+        if single_key_claim or (wide_period_claim and "分桶" not in answer):
+            conflicts.append(
+                "粒度应是主体与分桶维的组合（一行一个组合），"
+                "不要做成单一主体一行再把时段摊成多列宽表"
+            )
+
+    if re.search(r"\bpt_h\s*=\s*['\"]?\$hour", golden_sql, re.IGNORECASE):
+        hour_ok = bool(re.search(r"指定小时|单小时|pt_h|那个小时|任务指定的那一个小时", q + answer))
+        all_hours_claim = bool(re.search(r"全部小时|所有小时|当天小时", q + answer))
+        if all_hours_claim or not hour_ok:
+            conflicts.append(
+                "时间需为指定小时切片：同一天内只取任务指定的那一个小时，"
+                "读和写都要落到该小时，不要聚合成当天全部小时"
+            )
+
+    if not conflicts:
+        return answer
+
+    rewritten = "；".join(conflicts) + "。请按上述业务口径调整后再生成，不要按当前摘要直接确认。"
+    logger.info(
+        f"[hitl_auto_resolver] IR_CALIBER_REVIEW 确认闸改写空确认: {rewritten[:120]!r}"
+    )
+    return rewritten
 
 
 def hitl_auto_resolver(
@@ -746,12 +855,21 @@ def hitl_auto_resolver(
 
     logger.debug(f"[hitl_auto_resolver] 原始 query: {original_query[:80]!r}...")
 
-    # 3. Budget 机制检查
+    # 3. 提取 HIL 问题（须在 budget 硬收敛前完成：口径最终检视可占用预留一轮）
+    hil_question = extract_hil_question(feedback_call)
+    if not hil_question:
+        logger.debug("[hitl_auto_resolver] 无法提取 HIL 问题内容，跳过")
+        return inject_fallback_reply(state, messages, feedback_call, reason="no_hil_question")
+
+    # 4. Budget 机制检查（口径最终检视免强制收敛，避免选表等中途问把预算烧光后无法代答）
     budget = get_hitl_budget(state, original_state)
     turn_count = get_hitl_turn_count(state, original_state)
     logger.info(f"[hitl_auto_resolver] budget={budget}, turn_count={turn_count}")
+    is_caliber_review_ask = any(
+        marker in hil_question for marker in _IR_CALIBER_REVIEW_MARKERS
+    )
 
-    if turn_count >= budget:
+    if turn_count >= budget and not is_caliber_review_ask:
         # 超预算，强制收敛
         logger.warning(
             f"[hitl_auto_resolver] 已达交互预算上限（turn_count={turn_count} >= budget={budget}），强制收敛"
@@ -762,12 +880,11 @@ def hitl_auto_resolver(
             action="BUDGET_EXHAUSTED",
             reason=f"turn_count={turn_count}>=budget={budget}",
         )
-
-    # 4. 提取 HIL 问题
-    hil_question = extract_hil_question(feedback_call)
-    if not hil_question:
-        logger.debug("[hitl_auto_resolver] 无法提取 HIL 问题内容，跳过")
-        return inject_fallback_reply(state, messages, feedback_call, reason="no_hil_question")
+    if turn_count >= budget and is_caliber_review_ask:
+        logger.warning(
+            f"[hitl_auto_resolver] budget exhausted (turn_count={turn_count} >= budget={budget}) "
+            "but answering reserved IR_CALIBER_REVIEW ask"
+        )
 
     # 5. 同题内去重检查
     history = get_hitl_question_history(state, original_state, messages)
@@ -1431,12 +1548,21 @@ def _answer_table_confirm_programmatic(
     )
 
 
-def _sanitize_llm_reply_leak(answer: str, golden_sql: str, hil_question: str, action: str) -> str:
-    """防泄漏护栏：LLM 回复中出现 agent 未提到的 golden 表名即视为答案泄漏。
+def _sanitize_llm_reply_leak(
+    answer: str,
+    golden_sql: str,
+    hil_question: str,
+    action: str,
+    *,
+    programmatic: bool = False,
+) -> str:
+    """防泄漏护栏：回复中出现 agent 未提到的 golden 表名即视为答案泄漏。
 
     客户角色不知道数仓表名；golden 表名被 LLM 报出 = 替 agent 做了 schema linking。
-    - TABLE_CONFIRM：整体替换为客户口吻固定模板（要求给候选选项）；
-    - 其他 action：将泄漏表名剥除为"符合我需求的数据表"占位。
+    - LLM + TABLE_CONFIRM：整体替换为客户口吻固定模板（要求给候选选项）；
+    - 程序化 TABLE_CONFIRM：保留拒绝/升级原文（``_pool_token_hint`` 可能指名道姓
+      点出池内与 golden 重合的表；整段替换会丢掉扩池/台账一致的话术）；
+    - 其他情况：将泄漏表名剥除为"符合我需求的数据表"占位。
     agent 自己在提问里提到的表名不构成泄漏（客户复述 agent 的选项是允许的）。
     裸名/全名双向匹配：agent 裸提（省 db 前缀）时 LLM 全名复述不算泄漏；
     LLM 裸名报出 golden 表（agent 未提过）同样构成泄漏（见 _tables_match/_table_mentioned_in）。
@@ -1456,7 +1582,14 @@ def _sanitize_llm_reply_leak(answer: str, golden_sql: str, hil_question: str, ac
     ]
     if not leaked:
         return answer
-    logger.warning(f"[hitl_auto_resolver] LLM 回复泄漏 golden 表名（action={action}），已拦截: {leaked}")
+    logger.warning(
+        f"[hitl_auto_resolver] 回复含未在提问出现的 golden 表名"
+        f"（action={action}, programmatic={programmatic}）: {leaked}"
+    )
+    if action == "TABLE_CONFIRM" and programmatic:
+        # Keep rejection/escalation + pool-token hints; do not peel names that the
+        # programmatic path intentionally cited from the agent's own retrieve pool.
+        return answer
     if action == "TABLE_CONFIRM":
         return (
             "数据源选择我需要你先做功课：请基于元数据检索后，"
@@ -1476,6 +1609,85 @@ def _sanitize_llm_reply_leak(answer: str, golden_sql: str, hil_question: str, ac
                 flags=re.IGNORECASE,
             )
     return sanitized
+
+
+_SQL_JARGON_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
+    (re.compile(r"\bINSERT\s+OVERWRITE\b", re.IGNORECASE), "写入结果"),
+    (re.compile(r"\bPARTITION\s*\([^)]*\)", re.IGNORECASE), "对应分区"),
+    (re.compile(r"\bGROUP\s+BY\b", re.IGNORECASE), "按维度聚合"),
+    (re.compile(r"\bSELECT\b", re.IGNORECASE), "取出"),
+    (re.compile(r"\bWHERE\b", re.IGNORECASE), "过滤条件"),
+    (re.compile(r"\bcollect_list\b", re.IGNORECASE), "按列表拼接"),
+    (re.compile(r"\bcollect_set\b", re.IGNORECASE), "去重后拼接"),
+    (re.compile(r"\brow_number\s*\(\s*\)\s*over\b", re.IGNORECASE), "按序编号"),
+)
+
+
+def _sanitize_unmentioned_golden_tokens(answer: str, golden_sql: str, hil_question: str) -> str:
+    """剥除回复中提问未出现的 golden 英文字段 / SQL 黑话，改成业务话。
+
+    允许复述 Agent 提问已写出的表名/字段；禁止把参考 SQL 原文挪进客户口吻答复。
+    """
+    if not answer:
+        return answer
+    text = answer
+    q = hil_question or ""
+    q_low = q.lower()
+
+    # SQL 黑话：提问未出现该关键字时改写
+    for pat, repl in _SQL_JARGON_PATTERNS:
+        if pat.search(text) and not pat.search(q):
+            text = pat.sub(repl, text)
+
+    # 已知字段/标识：提问未提则换成概念名
+    tokens: set[str] = set()
+    tokens.update(str(f).lower() for f in _IDENTIFIER_FIELD_CANDIDATES)
+    tokens.update(str(k).lower() for k in _FIELD_CONCEPT_MAP.keys())
+    tokens.update(("pt_d", "pt_h", "pt_i", "pt_w", "pt_m"))
+    # golden 中显式出现的 snake_case 标识（限已知概念或分区字段，避免误伤普通词）
+    for m in re.findall(r"\b[a-z][a-z0-9_]{2,}\b", (golden_sql or "").lower()):
+        if m in _FIELD_CONCEPT_MAP or m in tokens:
+            tokens.add(m)
+
+    for tok in sorted(tokens, key=len, reverse=True):
+        if len(tok) < 3:
+            continue
+        if re.search(rf"(?<![a-z0-9_]){re.escape(tok)}(?![a-z0-9_])", q_low):
+            continue
+        if not re.search(rf"(?<![a-z0-9_]){re.escape(tok)}(?![a-z0-9_])", text, re.IGNORECASE):
+            continue
+        concept = _FIELD_CONCEPT_MAP.get(tok)
+        if not concept:
+            if tok.startswith("pt_"):
+                concept = {"pt_d": "天分区", "pt_h": "小时", "pt_i": "分钟"}.get(tok, "时间分区")
+            else:
+                concept = "对应业务字段"
+        text = re.sub(
+            rf"(?<![a-z0-9_]){re.escape(tok)}(?![a-z0-9_])",
+            concept,
+            text,
+            flags=re.IGNORECASE,
+        )
+    return text
+
+
+def _finalize_hitl_reply(
+    answer: str,
+    golden_sql: str,
+    hil_question: str,
+    action: str,
+    *,
+    programmatic: bool = False,
+) -> str:
+    """统一出口：表名防泄漏 + 未提及英文字段/SQL 原文自然语言化。
+
+    ``programmatic=True`` 时 TABLE_CONFIRM 不做整段模板替换（保留程序化拒绝/
+    升级与池内表名核对建议），其余 action 仍可做泄漏表名占位剥除。
+    """
+    out = _sanitize_llm_reply_leak(
+        answer, golden_sql, hil_question, action, programmatic=programmatic
+    )
+    return _sanitize_unmentioned_golden_tokens(out, golden_sql, hil_question)
 
 
 # ── LLM 兜底假确认防线 ──────────────────────────────────────────────────────
@@ -1652,10 +1864,15 @@ def _answer_output_schema_programmatic(
     elif grain_id:
         grain_parts.append(f"按 {_grain_concept_phrase([grain_id], hil_question)} 粒度聚合")
     if grain_parts:
+        gb_keys = traits.get("group_by_keys") or []
+        if len(gb_keys) >= 2:
+            grain_shape = "一行对应一个组合（例如主体×分桶），不是单一主体一行再摊成多列宽表"
+        else:
+            grain_shape = "单 key 单行"
         hint = (
-            f"输出应为{'，'.join(grain_parts)}后的汇总结果（单 key 单行）"
-            if traits.get("group_by_keys")
-            else f"输出应为{'，'.join(grain_parts)}的汇总结果（单 key 单行）"
+            f"输出应为{'，'.join(grain_parts)}后的汇总结果（{grain_shape}）"
+            if gb_keys
+            else f"输出应为{'，'.join(grain_parts)}的汇总结果（{grain_shape}）"
         )
         if traits.get("has_distinct") or traits.get("has_row_number_or_concat"):
             hint += "，序列字段需先去重再拼接"
@@ -1894,9 +2111,13 @@ def _generate_and_inject_reply_v2(
 
     # 程序化优先（严格 diff / 精确口径），命中则不走 LLM
     programmatic_answer: str | None = None
+    is_caliber_review = any(
+        marker in (hil_question or "") for marker in _IR_CALIBER_REVIEW_MARKERS
+    )
     # 列枚举死局提问（"期望的 5 列具体包含哪些列"）优先转向——
     # 客户不替 agent 列清单，引导其回到任务原文推导，不再按 action 给答非所问的回复。
-    if _is_column_enumeration_ask(hil_question):
+    # IR 最终检视不走固定「确认」：必须对照 golden（LLM / 口径程序化）决定确认或补充。
+    if (not is_caliber_review) and _is_column_enumeration_ask(hil_question):
         programmatic_answer = (
             "列的具体构成我不能替你枚举——请以任务需求原文为准，逐列推导输出的列数、列名与含义"
             "（每列标注原文出处）。若对聚合粒度、键值对字段格式或排序口径有疑问，"
@@ -1912,11 +2133,17 @@ def _generate_and_inject_reply_v2(
         )
     elif action == "OUTPUT_SCHEMA_PREVIEW":
         programmatic_answer = _answer_output_schema_programmatic(golden_sql, hil_question)
-    elif action == "AMBIGUITY_CLARIFY":
+    elif action == "AMBIGUITY_CLARIFY" and not is_caliber_review:
         programmatic_answer = _answer_ambiguity_clarify_programmatic(golden_sql, hil_question)
 
     if programmatic_answer:
-        answer = programmatic_answer
+        answer = _finalize_hitl_reply(
+            programmatic_answer,
+            golden_sql,
+            hil_question,
+            action,
+            programmatic=True,
+        )
         logger.info(
             f"[hitl_auto_resolver] action={action} 程序化回答命中（不走 LLM）: {answer[:120]!r}"
         )
@@ -1934,33 +2161,41 @@ def _generate_and_inject_reply_v2(
         }
         return updated_messages, resolved_info
 
-    # 按 action 选择 prompt 和提取内容（LLM 兜底）
-    if action == "TABLE_CONFIRM":
+    # 按 action 选择 prompt 和提取内容（LLM 兜底）；最终检视用专用 prompt 对照 golden。
+    # 参考材料一律用业务化口径摘要，避免把 golden SQL 原文塞进 prompt 诱发照搬。
+    if is_caliber_review:
+        sql_snippet = _build_caliber_review_reference(golden_sql)
+        prompt = _ACTION_PROMPTS["IR_CALIBER_REVIEW"].format(
+            original_query=original_query[:500],
+            sql_snippet=(sql_snippet or "(无可用参考口径)")[:2000],
+            agent_hil_question=hil_question[:2800],
+        )
+    elif action == "TABLE_CONFIRM":
         golden_tables = _extract_golden_tables_from_sql(golden_sql)
         prompt = _ACTION_PROMPTS["TABLE_CONFIRM"].format(
             original_query=original_query[:500],
-            golden_tables=golden_tables or "(无法从 golden SQL 提取源表)",
+            golden_tables=golden_tables or "(无法从参考材料提取源表)",
             agent_hil_question=hil_question[:500],
         )
     elif action == "OUTPUT_SCHEMA_PREVIEW":
         schema_summary = _extract_golden_schema_summary(golden_sql)
         prompt = _ACTION_PROMPTS["OUTPUT_SCHEMA_PREVIEW"].format(
             original_query=original_query[:500],
-            golden_schema_summary=schema_summary or "(无法从 golden SQL 提取输出结构)",
+            golden_schema_summary=schema_summary or "(无法从参考材料提取输出结构)",
             agent_hil_question=hil_question[:500],
         )
     elif action == "AMBIGUITY_CLARIFY":
-        sql_snippet = _extract_relevant_sql_snippet(golden_sql, hil_question)
+        sql_snippet = _build_caliber_review_reference(golden_sql)
         prompt = _ACTION_PROMPTS["AMBIGUITY_CLARIFY"].format(
             original_query=original_query[:500],
-            sql_snippet=sql_snippet or "(无法定位相关片段)",
+            sql_snippet=sql_snippet or "(无可用参考口径)",
             agent_hil_question=hil_question[:500],
         )
     else:
-        # 兜底用原 prompt
+        # 兜底：仍可带参考 SQL，但 prompt 已要求禁止原文照搬；出口再做自然语言化。
         prompt = _HITL_AUTO_RESOLVER_PROMPT.format(
             original_query=original_query,
-            golden_sql=golden_sql,
+            golden_sql=_build_caliber_review_reference(golden_sql) or "(无可用参考口径)",
             agent_hil_question=hil_question,
         )
 
@@ -1970,11 +2205,12 @@ def _generate_and_inject_reply_v2(
         logger.warning(f"[hitl_auto_resolver] LLM 生成回复失败（action={action}），转兜底回复")
         return None
 
-    # 防泄漏护栏：LLM 回复中出现 agent 未提到的 golden 表名 → 视为答案泄漏，
-    # TABLE_CONFIRM 整体替换为客户口吻固定模板；其他 action 剥除泄漏表名。
-    answer = _sanitize_llm_reply_leak(answer, golden_sql, hil_question, action)
     # 假确认防线：LLM 顺着 agent 确认了与 golden 实质冲突的选项时改写
     answer = _vet_llm_confirmation(answer, golden_sql, hil_question, action, original_query)
+    if is_caliber_review:
+        answer = _vet_caliber_review_confirmation(answer, golden_sql, hil_question)
+    # 防泄漏 + 未提及英文字段/SQL 原文 → 自然语言化（放在 vet 之后，避免纠正句再泄漏）
+    answer = _finalize_hitl_reply(answer, golden_sql, hil_question, action)
 
     # 注入 ToolMessage
     tool_call_id = feedback_call.get("id", "")
@@ -2243,7 +2479,7 @@ def _generate_answer(
 
     prompt = _HITL_AUTO_RESOLVER_PROMPT.format(
         original_query=original_query,
-        golden_sql=golden_sql,
+        golden_sql=_build_caliber_review_reference(golden_sql) or "(无可用参考口径)",
         agent_hil_question=hil_question,
     )
 
@@ -2252,7 +2488,9 @@ def _generate_answer(
         response = llm.invoke([SystemMessage(content=prompt), HumanMessage(content="请回答。")])
         content = getattr(response, "content", None)
         if content:
-            answer_str = str(content).strip()
+            answer_str = _finalize_hitl_reply(
+                str(content).strip(), golden_sql, hil_question, "UNA"
+            )
             logger.debug(f"[hitl_auto_resolver] LLM 生成回复成功，长度={len(answer_str)}")
             logger.debug(f"[hitl_auto_resolver] LLM 回复内容: {answer_str!r}")
             return answer_str

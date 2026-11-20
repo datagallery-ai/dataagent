@@ -33,6 +33,13 @@ HOOKS:
         # 为 true 时；关掉后与加 IR→HITL 前一致）。同指纹/同字段熔断、答后仍未决、
         # 预算/fire 上限后降级放行。
         - hooks.ir_question_guard.ir_question_guard
+        # blocking 清空后、或 ir_question_guard fire 上限已耗尽（queue 可能仍挂着但即将
+        # best-effort 放行）时，首次 nl2sql 前的一口径最终检视
+        # （DATA_TASK_IR.enable_ir_caliber_review，默认 false）。选表等中途 HITL 若已
+        # 用尽 hitl_budget，仍预留一次最终检视提问；hitl_auto_resolver 对该问豁免
+        # BUDGET_EXHAUSTED 强制收敛。用户确认或补充后标 done，不再二次通读；补充经
+        # update_ir 回写。
+        - hooks.ir_caliber_review_guard.ir_caliber_review_guard
         # **数据质量校验不再自动跑** —— 交付后自动试算会把每一轮交付拖住几分钟
         # （试算要连 DataOps 跑一遍）。现在改成**用户显式触发**：agent 在交付
         # 说明的最后一句提示「输入『执行数据校验』执行数据校验」，用户输入后

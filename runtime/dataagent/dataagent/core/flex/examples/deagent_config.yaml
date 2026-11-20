@@ -19,6 +19,9 @@ DATA_TASK_IR:
   failure_policy: fallback_without_ir
   # warn：一致性问题写入诊断仍可消费；enforce：一致性未过则阻断
   consistency_policy: warn
+  # warn：join≠identity / 无证据 list_agg 等确定性语义问题仅打日志；
+  # enforce：并入一致性修复/阻断路径（即使 consistency_policy=warn 也会 enforce 这些项）
+  semantic_check_policy: warn
 
   # ----- IR→HITL（未确认口径自动澄清）-----
   # 总开关。true：关键字段 unresolved+question 入队，可拦 wrapped_nl2sql / validate，
@@ -43,6 +46,12 @@ DATA_TASK_IR:
   # ir_question_guard 将 planner 回合改写为 request_human_feedback 的最多次数；
   # 达到后不再改写，ensure_ir_ready 同步放行消费者（best-effort）。
   hitl_question_guard_max_fires: 2
+  # 生成 SQL 前让用户通读已确认 IR 并允许补充遗漏过滤等（默认关闭；需 enable_ir_hitl
+  # 与 enable_human_feedback 同时为 true 才生效）。每 task 至多一轮；答复（确认或补充）
+  # 后标 done，不再二次通读。
+  enable_ir_caliber_review: false
+  # 最终检视最多改写为 request_human_feedback 的次数；达到后放行并标 done。
+  hitl_caliber_review_max_fires: 1
 
 SUITE:
   include:
