@@ -29,10 +29,15 @@ def validate_data_task_ir_config(state: FlexState, runtime: Runtime) -> FlexStat
     runtime.set_cache("ir_enabled", enabled)
     if enabled:
         from dataagent.actions.tools.hooks.examples.data_task_ir_spike.session import prepare_turn
-        from dataagent.actions.tools.hooks.examples.ir_hooks import ir_consistency_policy, ir_failure_policy
+        from dataagent.actions.tools.hooks.examples.ir_hooks import (
+            ir_consistency_policy,
+            ir_failure_policy,
+            ir_semantic_check_policy,
+        )
 
         ir_failure_policy(runtime)
         ir_consistency_policy(runtime)
+        ir_semantic_check_policy(runtime)
         if runtime.get_config("DATA_TASK_IR.refresh_policy", "eager") not in {"eager", "on_consume"}:
             raise ValueError("DataTaskIR 配置错误：refresh_policy 必须为 eager 或 on_consume")
         return prepare_turn(state, runtime)

@@ -799,12 +799,50 @@ class RenderTests(unittest.TestCase):
         self.assertEqual([item["field_id"] for item in items], ["identity"])
         self.assertIn("device_id", items[0]["question"])
         text = render.format_ir_hitl_pending_action(items)
-        self.assertIn("DataTaskIR 未确认口径", text)
-        self.assertIn("特征主键", text)
+        self.assertIn("待确认业务口径", text)
+        self.assertIn("统计主键", text)
         self.assertIn("device_id", text)
-        self.assertIn("候选：", text)
+        self.assertIn("可选：", text)
+        self.assertNotIn("identity.components", text)
         self.assertNotIn("输出特征目录", text)
+        self.assertNotIn("DataTaskIR", text)
 
+    def test_format_ir_hitl_pending_action_humanizes_schema_jargon(self):
+        items = [{
+            "field_id": "identity",
+            "title": "统计主键",
+            "question": "identity.components 的 field_ref 尚未确定，用 device_id 还是 user_id？",
+            "unresolved": ["identity.components 缺失"],
+        }]
+        text = render.format_ir_hitl_pending_action(items)
+        self.assertIn("统计主键字段", text)
+        self.assertNotIn("identity.components", text)
+        self.assertNotIn("field_ref", text)
+        # unresolved schema notes stay out of user-facing pending.
+        self.assertNotIn("未决点", text)
+
+    def test_humanize_ir_hitl_text_glued_to_cjk(self):
+        """CJK is \\w in Python; lookarounds must still match path紧贴中文."""
+        cases = (
+            ("见identity.components缺失", "见统计主键字段缺失"),
+            ("identity.components尚未确定", "统计主键字段尚未确定"),
+            ("field_ref未填", "字段未填"),
+            ("time_context缺失", "时间范围缺失"),
+            ("output_features尚未写清", "输出指标尚未写清"),
+            ("null_semantics未确认", "空值处理未确认"),
+        )
+        for raw, expected in cases:
+            self.assertEqual(render.humanize_ir_hitl_text(raw), expected, raw)
+        # Spaced forms still work.
+        self.assertEqual(
+            render.humanize_ir_hitl_text("identity.components 缺失"),
+            "统计主键字段 缺失",
+        )
+        # Do not chew into longer identifiers.
+        self.assertEqual(
+            render.humanize_ir_hitl_text("my_identity.components_x"),
+            "my_identity.components_x",
+        )
     def test_collect_ir_hitl_questions_max_items_can_include_more(self):
         fields = [
             {"field_id": "identity", "value": {}, "unresolved": ["主键未定"], "question": "主键用 device_id 还是 user_id？"},
@@ -845,6 +883,19 @@ class RenderTests(unittest.TestCase):
         items = render.collect_ir_hitl_questions(fields)
         self.assertEqual(len(items), 1)
         self.assertEqual(items[0]["field_id"], "output_features")
+
+    def test_format_ir_caliber_review_pending_includes_summary(self):
+        text = render.format_ir_caliber_review_pending([FIELD])
+        self.assertIn(render.IR_CALIBER_REVIEW_USER_MARKER, text)
+        self.assertIn("结构化摘要", text)
+        self.assertIn("请留意", text)
+        self.assertIn("一行代表什么", text)
+        self.assertIn("确认，按此生成", text)
+        # Confirmation guidance must come after the checklist / summary.
+        self.assertLess(text.find("请留意"), text.find("回答方式"))
+        self.assertLess(text.find("结构化摘要"), text.find("回答方式"))
+        self.assertNotIn("DataTaskIR", text)
+        self.assertIn("时间", text)
 
 
 class IrHitlLoopTests(unittest.IsolatedAsyncioTestCase):
@@ -1056,6 +1107,46 @@ class IrHitlLoopTests(unittest.IsolatedAsyncioTestCase):
         self.assertIsNotNone(outcome)
         context = ir_hooks.get_ir_context(self.runtime)
         self.assertNotIn("降级消费说明", context)
+
+    async def test_caliber_review_default_off_does_not_block(self):
+        """Confirmed IR with empty queue: ensure passes when review switch is default-off."""
+        self.fill_mock.return_value = [deepcopy(FIELD)]
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+
+    async def test_caliber_review_blocks_then_completes_after_reply(self):
+        """When enabled, first consume blocks until user replies; then done forever."""
+        from langchain_core.messages import ToolMessage
+
+        self.runtime.get_config = lambda key, default=None: (
+            True if key == "DATA_TASK_IR.enable_ir_caliber_review" else default
+        )
+        self.fill_mock.return_value = [deepcopy(FIELD)]
+        await ir_hooks.update_ir(self.inv)
+        self.assertEqual(self.runtime.get_cache(ir_hooks.IR_HITL_QUEUE_KEY), [])
+        with self.assertRaisesRegex(RuntimeError, "口径最终检视"):
+            await ir_hooks.ensure_ir_ready(self.inv)
+
+        # Simulate guard having asked, then user confirming.
+        self.runtime.set_cache(ir_hooks.IR_CALIBER_REVIEW_ASKED_KEY, True)
+        empty_digest = ir_hooks._input_digest([])
+        self.runtime.set_cache(ir_hooks.IR_CALIBER_REVIEW_ASK_DIGEST_KEY, empty_digest)
+        self.inv.state["messages"] = [
+            ToolMessage(
+                content="确认，按此生成",
+                tool_call_id="review1",
+                name="request_human_feedback",
+            ),
+        ]
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
+        self.assertTrue(self.runtime.get_cache(ir_hooks.IR_CALIBER_REVIEW_DONE_KEY))
+
+        # Second consume must not re-block (no second review).
+        outcome = await ir_hooks.ensure_ir_ready(self.inv)
+        self.assertIsNotNone(outcome)
 
     async def test_hitl_feedback_enters_confirmed_context(self):
         from langchain_core.messages import ToolMessage

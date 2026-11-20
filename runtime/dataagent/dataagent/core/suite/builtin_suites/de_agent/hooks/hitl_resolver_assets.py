@@ -26,6 +26,20 @@ import re
 
 from dataagent.core.flex.hooks.hitl_classifier import HitlActionSpec
 
+# 代答口头约束：可补充提问未写明但正确交付必需的业务信息；除非 Agent 提问已出现，
+# 否则不主动抛表名/英文字段/SQL 原文（贴近真人客户口吻）。
+_HITL_NL_REPLY_RULES = """
+【回答口吻 · 必须遵守】
+1. 用自然语言业务话回答，像真人客户：说「按账号维度」「只要指定那一个小时」「还要排除无效应用」。
+2. 除非 Agent 提问里已经写出，否则回复中禁止主动出现：表名（含 db.table）、英文字段名
+   （如 user_id/pt_d/app_id）、SQL 关键字或片段（SELECT/WHERE/GROUP BY/PARTITION/INSERT/
+   collect_list 等）、以及参考材料中的原文照搬。
+3. 参考口径里有、但提问未覆盖、又对结果正确必要的信息——可以补充，必须先译成业务自然语言，
+   禁止把参考材料里的英文标识或 SQL 原文直接挪进回复。
+4. 仅当 Agent 提问已给出候选表名/字段名时，才可从中点名选用（复述提问用词）；不要替 Agent
+   发明它没提过的英文名。
+""".strip()
+
 # ── 4 个 action 的差异化 prompt ─────────────────────────────────────────
 # TABLE_CONFIRM: 数据源表选择确认（拦数据源错）
 # OUTPUT_SCHEMA_PREVIEW: 输出 schema 预览（拦输出结构错）
@@ -42,6 +56,8 @@ _ACTION_PROMPTS = {
 
 ## 参考判定（仅供你内部判断，禁止在回复中出现）
 {golden_tables}
+
+""" + _HITL_NL_REPLY_RULES + """
 
 你的角色约束（必须遵守）：
 1. 你只知道自己的业务需求，不知道数仓里有哪些表、表名、字段名。
@@ -60,6 +76,8 @@ _ACTION_PROMPTS = {
 ## Agent 描述的输出
 {agent_hil_question}
 
+""" + _HITL_NL_REPLY_RULES + """
+
 角色约束：输出形态（列数、聚合粒度、一行代表什么）是你的需求，可以直接要求；
 但禁止逐条报出具体列名清单让 Agent 照抄。回答聚焦：列数是否一致、
 按什么粒度聚合（一行代表什么）、是否明细宽表/汇总表等结构层面差异。""",
@@ -68,15 +86,33 @@ _ACTION_PROMPTS = {
 ## 你的业务需求
 {original_query}
 
-## 参考口径（仅供你内部判断，禁止在回复中复述）
+## 参考口径（仅供你内部判断，禁止在回复中复述原文/英文字段/SQL）
 {sql_snippet}
 
 ## Agent 的提问
 {agent_hil_question}
 
-角色约束：你只知道自己的业务口径，不知道数仓字段名。回答只能基于业务口径
-（如"按设备维度统计""时间窗口含当天"）；Agent 给出了候选字段时可以从中选定，
-但禁止主动引入 Agent 未提到的字段名/表名。简洁回答。""",
+""" + _HITL_NL_REPLY_RULES + """
+
+角色约束：你只知道自己的业务口径。回答用业务话（如「按设备维度统计」「时间窗口含当天」）；
+Agent 给出了候选字段时可以从中选定（复述提问用词即可）。简洁回答。""",
+    # Pre-SQL DataTaskIR 最终检视：对照 golden 决定确认或补充遗漏口径（与 AMBIGUITY 同属口径类）。
+    "IR_CALIBER_REVIEW": """你是任务提出方（客户）。Agent 在生成 SQL 前请你核对【已确认口径摘要】是否完整、正确。
+默认偏保守纠错：有冲突先补充/纠正，不要图省事直接确认。
+
+## 你的业务需求
+{original_query}
+
+## 参考口径（仅供你内部判断，禁止逐条复述 SQL / 表名 / 英文字段原文）
+{sql_snippet}
+
+## Agent 的提问（含已确认口径摘要与核对点）
+{agent_hil_question}
+
+""" + _HITL_NL_REPLY_RULES + """
+
+对照参考口径与摘要（粒度、输出形态、列数、时间/过滤边界、去重排序）。
+有冲突先用自然语言指出要改成什么；确认没有时才回复「确认，按此生成」。简洁作答。""",
     "UNA": (
         "这个问题我无法直接确认。若你已有倾向方案，请把具体方案和 1-2 个候选"
         "（含表名/字段名/时间窗口/列数等具体值）列出来再问我，我来帮你确认；"
@@ -125,20 +161,30 @@ _CALIBER_GAP_ASK_MARKERS: tuple[str, ...] = (
     "二次加工",     # 引用已有聚合表二次加工
 )
 
-# IR→HITL 提问标记（format_ir_hitl_pending_action 固定前缀/字段标题）：
+# IR→HITL 提问标记：reason 仍带 DataTaskIR/未确认口径；pending 用业务标题。
 # 用于 hitl_auto_resolver 把 DataTaskIR 队列提问路由到可代答 action，避免落 UNA 拒答。
 _IR_HITL_MARKERS: tuple[str, ...] = (
     "DataTaskIR",
     "未确认口径",
+    "待确认业务口径",
 )
 _IR_HITL_AMBIGUITY_TITLES: tuple[str, ...] = (
+    "【统计主键】",
+    "【时间范围】",
+    "【输出指标】",
+    # legacy titles (older pending / logs)
     "【特征主键】",
     "【时间上下文】",
     "【输出特征目录】",
 )
 _IR_HITL_SOURCE_TITLES: tuple[str, ...] = (
+    "【数据来源与关联】",
     "【数据源与关联预处理】",
     "【数据源",
+)
+# Pre-SQL caliber review（format_ir_caliber_review_pending 固定前缀）。
+_IR_CALIBER_REVIEW_MARKERS: tuple[str, ...] = (
+    "口径最终检视",
 )
 
 # 追问式改判信号（_mixed_question_override 的口径信号扩展专用）：裸"去重"在
@@ -177,21 +223,21 @@ _TABLE_CONVERGENCE_MARKERS: tuple[str, ...] = (
 
 
 
-_HITL_AUTO_RESOLVER_PROMPT = """你是 SQL 领域的专家。用户正在等待对以下问题的回复。
+_HITL_AUTO_RESOLVER_PROMPT = """你是任务提出方（客户）。用户正在等待对以下问题的回复。
 
 ## 用户的原始需求
 {original_query}
 
-## 该场景的参考 golden SQL
+## 内部参考材料（仅供判断；禁止在回复中原文照搬表名/英文字段/SQL）
 {golden_sql}
 
 ## Agent 向你请教的问题
 {agent_hil_question}
 
-请结合用户的原始需求和参考 golden SQL，用简洁、自然的语言回答 Agent 的问题。你要根据golden SQL的逻辑和细节回复 Agent 的问题，但回答中一定
-不要直接出现golden SQL的内容，也不要向 Agent 透露你拥有 golden SQL。
-回复应该帮助 Agent 理解用户意图和实现思路，从而顺利完成这个任务。
-直接简单直接给出回答即可，不需要额外的格式。"""
+""" + _HITL_NL_REPLY_RULES + """
+
+请结合原始需求与内部参考的业务含义，用简洁自然语言回答。不要透露你拥有参考 SQL。
+直接给出回答即可，不需要额外格式。"""
 
 
 # 已确认引用标记：Mid/Final 阶段追问常礼貌引用先前已确认的源表（"源表已确认为 X，

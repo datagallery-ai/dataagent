@@ -1,7 +1,7 @@
-# DataTaskIR template catalog v1.0.0
+# DataTaskIR template catalog v1.2.0
 # Six field units: identity, sources, time_context, output_features, pipeline, sequence.
 template_id: data_task_ir
-template_version: 1.0.0
+template_version: 1.2.0
 language: zh-CN
 consistency_contract:
 - 最终输出由 identity.components 主键前缀与 output_features 业务列共同组成；不得因为主键未在 output_features 重复出现而报告漏列或要求双写。
@@ -12,6 +12,9 @@ consistency_contract:
 - 按实体分组统计事件行数不要求源表在分组键上唯一；只有用户要求去重实体数时才核对 DISTINCT/去重证据，不为普通 COUNT 强加唯一性或去重。
 - 相等过滤已排除所有其它值，例如 flag=0 已排除 flag=2，不要求再重复添加 flag!=2。元数据已明确的枚举映射不因名称简称再次要求澄清。
 - 复合分类替换可由 calc.intent/description 表达条件与分支来源，不强制额外增加模板没有的可执行表达式槽位；仍须检查语义是否完整。
+- JOIN 关联键（sources.dimensions[].join.conditions）默认不是输出主键；identity / aggregation.grain 应以用户统计主体为准（如应用 ID），不得仅因「用中文名当搜索词」就把 query/app_cn_name 升成主键。
+- aggregation.kind=passthrough 表示透传已有标量/字符串列；不得无证据 invent collect_list/collect_set。仅当用户或工具证据明确要求多行拼序列时才用 list_agg。
+- 源表含小时分区（字段 pt_h，或表名/证据标明小时表如 _hm）时：单小时切片与「当天全部小时聚合」是不同口径，未确认不得默认。已确认单小时 → 过滤与写入须同时带 pt_d+pt_h；已确认全天小时聚合 → 只按 pt_d 过滤/写入天分区，且须在 time_context/rationale 明示「当天全部小时」，禁止无说明地漏写 pt_h。
 contract:
 - 每个 field unit 独立调用模型；只能修改当前 writable_template 中出现的字段。
 - 输出必须是单个 JSON 对象；field_id、value、rationale 必填；unresolved/question 按需。
@@ -111,6 +114,8 @@ fields:
   field_instructions:
     global_rules:
     - 只填最终逻辑主键，不得把源表物理主键、去重键、join 键自动当成特征主键。
+    - '【关联键 ≠ 统计主体】sources.dimensions[].join.conditions 中的 fact_field/dim_field 默认只是关联键。除非用户明确要求以该字段作为最终统计主体/输出主键，否则不得写入 identity.components，也不得单独把它当作唯一 aggregation.grain。'
+    - '【匹配方式 ≠ 主键】「用中文名作为搜索词 / query=app_cn_name」只描述 JOIN 匹配方式；当用户说「为各应用 / 每个应用」时，输出主键应是应用实体键（通常 app_id），不是 query 或 app_cn_name。'
     - 已确认 components 必须作为 INSERT SELECT 前缀列输出；这是主键列在 IR 中的唯一权威位置。
     - '【禁止双写】identity.components[].field_ref 不得再出现在 output_features 的 measures/extras/features 的 measure_id、field_name，或作为“单独一列指标/维度特征”重复描述（包括把分组键再写成 role=metric/derived）。唯一例外：用户明确要求输出主键别名列时可用 role=key_alias，且 field_name 必须与 field_ref 不同。'
     - 聚合维度与主键的关系：若某列既是最终记录主键又是聚合分组键，只在 identity 声明；
@@ -129,6 +134,7 @@ fields:
     - 把明细行 id 当作用户/设备特征主键
     - 把主键/分组键同时写进 identity 与 output_features（列重复）
     - 误以为 grain 引用主键不够、还必须在 features 再出一列同名键
+    - 因 JOIN 用 query=app_cn_name 就把 query/app_cn_name 写成 identity，丢掉应用 ID 主体
   few_shots:
   - input: 每个设备一条特征；device_id 不允许为空
     output:
@@ -141,6 +147,17 @@ fields:
         uniqueness_scope: final_dataset
       unresolved: []
       rationale: 用户要求设备级特征，证据说明 device_id 非空，故为主键。
+  - input: 为各应用开发「用中文名当搜索词时的召回」；维表与召回表按 app_cn_name=query 关联
+    output:
+      field_id: identity
+      value:
+        components:
+        - field_ref: app_id
+          semantic_role: 应用
+          null_semantics: reject_record
+        uniqueness_scope: final_dataset
+      unresolved: []
+      rationale: 统计主体是应用；中文名=query 只是关联方式，不进入 identity。
   writable_template:
     field_id: identity
     value:
@@ -194,6 +211,8 @@ fields:
     - 只填写对多列共享的预处理与关联；某一输出列私有的过滤/窗口写到 output_features.filters。
     - filters[] 使用共用 predicate_protocol：保留 0.8.0 谓词键集合，仅 field_ref、operator 必填，其余可选；缺省规则见文件顶部 predicate_protocol.defaults。
     - 在 facts[i]/dimensions[i] 内写过滤时，谓词可省略 source_ref（默认外层 source_ref）。
+    - '【JOIN 条件不是 identity】join.conditions 只描述关联；关联键不得自动复制到 identity。示例：召回事实表 query JOIN 应用维表 app_cn_name 时，identity 仍应是 app_id（若用户要应用级输出）。'
+    - '【小时分区表】元数据/表名表明源表含 pt_h（或 _hm 小时表）时：须先确认切片口径。① 单小时切片：facts[].filters 写 pt_d eq [\"$date\"] 且 pt_h eq [\"$hour\"]，写入 PARTITION 同时带 pt_d+pt_h。② 当天全部小时再聚合（已确认）：filters 只写 pt_d eq [\"$date\"]、不要写 pt_h，写入 PARTITION 仅 pt_d；须在 rationale 或 time_context.custom_definition 写明「当天全部小时聚合」。未确认前不得静默选①或②。'
     - 维表关联键不唯一时 cardinality 必须标 one_to_many / many_to_many，不得掩盖扇出。
     - 事实层 dedup 作用于 JOIN 前事实行；是否先去重再 JOIN 由 pipeline.deduplication_before_join 决定。
     - 仅当用户明确要求不要去重时：facts/dimensions 的 dedup 必须为 null，禁止 invent 去重键或 record_selection。
@@ -210,6 +229,8 @@ fields:
     - 有扇出却标 many_to_one
     - 为填满可选字段而编造 operand_type / null_semantics
     - 用户要求不要去重却仍填写 facts/dimensions.dedup
+    - 把 join 的 query/app_cn_name 当成输出主键线索写进其它字段的权威主键
+    - 小时表未确认却只写 pt_d；或已确认全天小时却仍写 pt_h；或把「指定小时」默当成当天全部小时
   few_shots:
   - input: 事实表 evt 需 event_type=download；维表 dim_cat 按 category_id LEFT JOIN，一类目多行
     output:
@@ -239,6 +260,74 @@ fields:
             unmatched_fact: keep
       unresolved: []
       rationale: 共享下载事件过滤放 facts；谓词只填有证据的键；维表一对多如实记录。
+  - input: 召回表 recall 与应用维表 app_dim 按 query=app_cn_name 关联；维表需非元服务、双框架
+    output:
+      field_id: sources
+      value:
+        facts:
+        - source_ref: recall
+          filters: []
+          derived: []
+          dedup: null
+        dimensions:
+        - source_ref: app_dim
+          filters:
+          - field_ref: is_fa
+            operator: eq
+            operands:
+            - "0"
+          - field_ref: frame_type
+            operator: eq
+            operands:
+            - "0"
+          derived: []
+          dedup: null
+          join:
+            fact_source_ref: recall
+            join_type: inner
+            conditions:
+            - fact_field: query
+              dim_field: app_cn_name
+            cardinality: many_to_one
+            unmatched_fact: drop
+      unresolved: []
+      rationale: JOIN 仅用中文名=搜索词；主键仍由 identity 表达为 app_id，不在此把 query 升成主体。
+  - input: 小时分区事实表 calib_hm（含 pt_d/pt_h）；取任务基准日与指定小时的单小时切片，无维表
+    output:
+      field_id: sources
+      value:
+        facts:
+        - source_ref: calib_hm
+          filters:
+          - field_ref: pt_d
+            operator: eq
+            operands:
+            - "$date"
+          - field_ref: pt_h
+            operator: eq
+            operands:
+            - "$hour"
+          derived: []
+          dedup: null
+        dimensions: []
+      unresolved: []
+      rationale: 源表为小时分区；单小时切片须同时过滤 pt_d 与 pt_h，不能只留天分区。
+  - input: 小时分区事实表 calib_hm；用户已确认把当天全部小时合在一起按日聚合（不要指定小时）
+    output:
+      field_id: sources
+      value:
+        facts:
+        - source_ref: calib_hm
+          filters:
+          - field_ref: pt_d
+            operator: eq
+            operands:
+            - "$date"
+          derived: []
+          dedup: null
+        dimensions: []
+      unresolved: []
+      rationale: 已确认当天全部小时聚合；只过滤 pt_d，不写 pt_h；写入 PARTITION 仅天分区。
   writable_template:
     field_id: sources
     value:
@@ -410,14 +499,18 @@ fields:
     - “近 N 天”属于 input_windows，禁止写入 output_bucket.grain。
     - 多窗口任务在 input_windows 中命名各窗口（如 w7d/w30d），供 output_features.window_ref 引用。
     - 无统计分桶时 output_bucket.grain=none；无回看窗口时 input_windows=[]。
+    - '【小时分区】源表证据含 pt_h / 小时表（如 _hm）时必须处理小时口径：① 单小时切片 → output_bucket.grain=hour、time_field=pt_h，与 sources 中 pt_d+pt_h 一致，写入带双分区；② 当天全部小时再聚合（须已确认）→ output_bucket.grain=day、time_field=pt_d，custom_definition 写明「当天全部小时聚合」，sources 只留 pt_d、不写 pt_h，写入仅天分区；③ 未确认 → unresolved/question 二选一澄清，禁止静默选①或②。'
+    - 小时澄清 question 示例：「源表是小时分区。统计范围是 A) 只取任务指定的那一个小时，还是 B) 把当天全部小时合在一起聚合？」
     subfields:
       output_bucket: time_field/grain/timezone/calendar/week_start/custom_definition
       input_windows: 命名窗口列表（window_id/time_field/anchor/range/boundary）
     completion_conditions:
     - 涉及时间时 output_bucket 或 input_windows 至少一侧有证据且二者不混用
+    - 小时源表时：已确认单小时或已确认全天小时聚合；二者未定时必须有 unresolved/question
     common_errors:
     - 把近30天写成 grain=day
     - 多窗口不命名导致 features 无法引用
+    - 小时表未确认却写成 grain=day 且只留 pt_d；或已确认全天小时却仍要求 pt_h
   few_shots:
   - input: 按天输出；计算近7天与近30天下载
     output:
@@ -453,6 +546,50 @@ fields:
           boundary: half_open_right
       unresolved: []
       rationale: 输出按 pt_d 日桶；两个回看窗口分别命名供特征引用。
+  - input: 小时分区源表；取任务基准日指定小时的单小时快照聚合（非近 N 天回看）
+    output:
+      field_id: time_context
+      value:
+        output_bucket:
+          time_field: pt_h
+          grain: hour
+          timezone: null
+          calendar: null
+          week_start: null
+          custom_definition: 与 sources 中 pt_d='$date' 且 pt_h='$hour' 单小时切片一致
+        input_windows: []
+      unresolved: []
+      rationale: 小时表单小时切片；grain=hour，无回看窗；天+小时过滤落在 sources。
+  - input: 源表含 pt_h，用户未说明取单小时还是当天全部小时
+    output:
+      field_id: time_context
+      value:
+        output_bucket:
+          time_field: null
+          grain: null
+          timezone: null
+          calendar: null
+          week_start: null
+          custom_definition: null
+        input_windows: []
+      unresolved:
+      - 小时分区切片未确认（单小时 vs 当天全部小时）
+      question: 源表是小时分区。统计范围是 A) 只取任务指定的那一个小时，还是 B) 把当天全部小时合在一起聚合？
+      rationale: 证据表明小时表，但原话未给小时切片口径，故留空并澄清，禁止默认全天或默认单小时而不提问。
+  - input: 小时分区源表；用户已确认把当天全部小时合在一起按日输出（不要指定小时）
+    output:
+      field_id: time_context
+      value:
+        output_bucket:
+          time_field: pt_d
+          grain: day
+          timezone: null
+          calendar: null
+          week_start: null
+          custom_definition: 当天全部小时聚合（源为小时表，不按 pt_h 切片；写入仅天分区）
+        input_windows: []
+      unresolved: []
+      rationale: 已确认全天小时口径；grain=day 表示按日桶输出，custom_definition 标明汇入当天全部小时，与 sources 仅 pt_d 过滤一致。
   writable_template:
     field_id: time_context
     value:
@@ -489,6 +626,7 @@ fields:
           grain:
             enum:
             - none
+            - hour
             - day
             - week
             - month
@@ -564,7 +702,9 @@ fields:
     - extras[]：不参与笛卡尔积的独立列，包括 (1) 多阶段 Top1/全局比率/key_alias；(2) **只需轴上部分取值的指标**（如 A/B 要 7/14/21，C/D 只要 21 → C/D 进 extras 且 window_ref=w21d，禁止因 w21d∈axes 而把 C/D 放进 measures）。
     - layout=flat 时：使用 features[] 逐列描述（同旧 features 语义）；axes/measures 必须为空。
     - calc.intent 语义级，禁止可执行 SQL；aggregation.grain 为该 measure/列的粒度权威（[]=已确认全局聚合；null/未填写本身不确认粒度或是否聚合）。
-    - '【grain 是聚合元数据，不是输出列】aggregation.grain 中的 field_ref 表示 GROUP BY / 聚合维度，可与 identity.components 相同或为其超集；这不意味着要在 measures/extras/features 再生成同名输出列。最终输出列清单仍是 identity 前缀 + expand(本字段业务列)。'
+    - '【aggregation.kind】可选枚举：passthrough | count | sum | avg | distinct_count | list_agg | expression | null。含义：passthrough=透传源上已有标量/字符串列（可与 GROUP BY 去重共存，禁止 collect_*）；count/sum/avg/distinct_count=常规度量；list_agg=多行拼成序列/列表（collect_list/collect_set/concat 类）；expression=其它表达式。缺省 null 时仍须用 intent 说清语义，但不得默默写成 collect。'
+    - '【透传 vs 拼接】输出「召回结果 / 已有列表字符串列 / 源表已是完整串」且用户未要求拼接/序列/collect 时 → kind=passthrough，calc.intent 写「透传已有召回串，不做多行拼接」。GROUP BY 仅去重保留已有列 ≠ list_agg。仅当用户或工具证据明确要求把多行拼成一条序列时才填 kind=list_agg。'
+    - '【grain 是聚合元数据，不是输出列】aggregation.grain 中的 field_ref 表示 GROUP BY / 聚合维度，可与 identity.components 相同或为其超集；这不意味着要在 measures/extras/features 再生成同名输出列。最终输出列清单仍是 identity 前缀 + expand(本字段业务列)。grain 不得单独写成仅含 JOIN 搜索词键（query/app_cn_name）而丢掉已确认的应用/设备等主体键。'
     - '【仅当用户明确要求不要去重时，禁止填写 aggregation.grain】（适用范围很窄）用户原话出现“不要去重 / 不去重 / 保留重复行 / 不去重后再算”等时，grain 必须保持 null，且不得因 identity 或“每个应用/设备”而 invent 分组键。此时已确认 grain 易被 nl2sql/质检当成按键折叠（等价去重），与“保留同键多行参与计算”冲突。【默认情况（用户未禁止去重）】多数聚合任务不会显式说“要聚合”；只要有求和/计数/均值/按主体汇总等聚合语义，仍应照常填写 grain，不要因为用户没写“GROUP BY/聚合”就留空 grain。'
     - '【与 identity 防重复（硬规则）】(1) measures[].measure_id、展开后的 field_name、extras[].field_name、features[].field_name 均不得等于任何已确认的 identity.components[].field_ref；(2) 不得把“分组键/实体键/主键”再写成一条 metric/derived 特征；(3) 仅当用户明确要求主键别名输出列时，可用 role=key_alias，且 field_name ≠ 原 field_ref；(4) 用户输出列表里若同时写了主键与指标，主键归 identity，指标归本字段——不要两侧各写一遍主键；(5) 仅在用户明确禁止去重时：不得把 identity 键抄进 grain；常规聚合不受此条限制。'
     - 不同 measure 允许不同 grain；禁止用单一全局粒度覆盖。
@@ -584,6 +724,7 @@ fields:
     - flat：features 覆盖全部独立业务输出列（不含 identity 前缀）
     - 有聚合语义时填写 grain（用户通常不显式说“聚合”）；仅当用户明确要求不要去重时 grain 必须为 null
     - 展开后的业务列名与 identity.components.field_ref 无交集（key_alias 除外）
+    - 透传类输出已标明 kind=passthrough（或等价 intent）；list_agg 仅在有拼接证据时出现
     common_errors:
     - 5×3 交叉却逐列写 15 行 features（重复口径）
     - 把近 N 天写进 grain
@@ -596,6 +737,7 @@ fields:
     - 把 aggregation.grain 中的分组维误当成还要再出一列同名输出特征
     - 用户明确要求不要去重，却仍填写 grain（因 identity/“每个应用”）误导下游折叠多行；或反过来：常规聚合任务因用户未显式说“聚合”而漏填 grain
     - 把“仅禁止去重时不填 grain”误用成默认永远不填 grain
+    - 无拼接证据却在 intent/expression 中写 collect_list，或把透传召回串做成 list_agg
   expansion_spec:
     description: render/verify 使用的确定性展开（非 LLM）
     algorithm: "if layout == flat:\n  columns = features\nelse:  # cartesian\n  columns = []\n  for each\
@@ -906,6 +1048,39 @@ fields:
           depends_on: []
       unresolved: []
       rationale: 单列全局聚合，flat + grain=[]。
+  - input: 按应用输出已有召回串字段，不做多行拼接；主键已是 app_id
+    output:
+      field_id: output_features
+      value:
+        layout: flat
+        axes: []
+        measures: []
+        overrides: []
+        extras: []
+        features:
+        - field_name: recalled_apps
+          role: metric
+          output_type: string
+          description: AI Search 召回应用串
+          source: recall.agent_recall_apps
+          calc:
+            intent: 透传已有召回串，不做多行拼接
+            "on": agent_recall_apps
+          aggregation:
+            kind: passthrough
+            grain:
+            - app_id
+            count_type: null
+            count_entity: null
+            distinct_field: null
+            expression_template: null
+          filters: []
+          window_ref: null
+          ratio: null
+          rank: null
+          depends_on: []
+      unresolved: []
+      rationale: 源列已是完整字符串；kind=passthrough，grain 引用应用主体，禁止 collect_list。
   writable_template:
     field_id: output_features
     value:
@@ -923,6 +1098,7 @@ fields:
           intent: null
           "on": null
         aggregation:
+          kind: null
           grain: null
           count_type: null
           count_entity: null
@@ -1028,6 +1204,16 @@ fields:
               - object
               - 'null'
               properties:
+                kind:
+                  enum:
+                  - passthrough
+                  - count
+                  - sum
+                  - avg
+                  - distinct_count
+                  - list_agg
+                  - expression
+                  - null
                 grain:
                   type:
                   - array
@@ -1249,6 +1435,16 @@ fields:
               - object
               - 'null'
               properties:
+                kind:
+                  enum:
+                  - passthrough
+                  - count
+                  - sum
+                  - avg
+                  - distinct_count
+                  - list_agg
+                  - expression
+                  - null
                 grain:
                   type:
                   - array

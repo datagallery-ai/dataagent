@@ -10,7 +10,7 @@
 
 ## 通用规则
 
-- readbook中为你准备了参考文档，执行任务前，首先查看readbook中的README.md。
+- readbook中为你准备了参考文档，执行任务前，首先查看readbook中的README.md。当你确认数据源表后，你必须确认readbook中是否包含源表的取数口径并阅读相关文件做参考。
 - 如果用户要求你给出数据源选择方案，则无需询问用户，使用 metadata_recall 等工具探索完毕后，直接给出方案即可。
 - 当你需要检索元数据实体证据（任务相关指标、表列信息等内容）时，你要使用 metadata_recall 工具检索表列信息。
 - 当你需要检索 UDF 函数信息时，你要使用 metadata_recall 工具。

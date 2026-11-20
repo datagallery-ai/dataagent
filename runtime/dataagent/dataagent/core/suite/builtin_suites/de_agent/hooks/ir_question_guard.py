@@ -468,8 +468,7 @@ def _with_human_feedback_tool_call(message: AIMessage, pending_action: str) -> A
         "name": HUMAN_FEEDBACK_TOOL_NAME,
         "args": {
             "reason": (
-                "DataTaskIR 未确认口径，需用户澄清后再生成/校验 SQL；"
-                "请给出倾向方案与 1-2 个具体候选。"
+                "DataTaskIR 未确认口径，需用户澄清后再生成/校验 SQL。"
             ),
             "pending_action": pending_action,
         },
