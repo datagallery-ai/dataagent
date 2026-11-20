@@ -2112,18 +2112,114 @@ def _find_collect_list_in_concat_ws(content: str, concat_ws_paren_pos: int) -> i
 
 
 def _locate_sql(workspace: Path) -> tuple[Path | None, Path | None]:
-    """定位sql文件"""
-    DDL, DML = None, None
+    """定位sql文件（DDL + DML），**按目标表配对**。
+
+    **必须成对取，不能各取各的。** 早先这里用 ``os.listdir`` 遍历，取**第一个**
+    ``create_*.sql`` 和**第一个** ``insert_*.sql`` —— 于是：
+
+    1. **多表交付时配错表**：workspace 里同时有 A 表和 B 表的 DDL/DML 时，
+       可能拿到 A 表的建表语句 + B 表的插入语句 → DataOps 里建出 ``tmp_A``
+       却往 ``tmp_B`` 写 → 报「表不存在」，而真正的 SQL 一点问题都没有。
+    2. **结果不确定**：``os.listdir`` 的返回顺序由文件系统决定，不同机器 /
+       不同运行顺序会拿到**不同的文件** → 同样的交付物，校验结果时对时错。
+
+    现在的做法：
+
+    - 文件名**排序**（确定性）；
+    - 先按目标表名把 DDL 与 DML **配对**（``biads.ads_x`` ↔ ``biads.ads_x``，
+      裸表名按最后一段比对）；
+    - 配对不上时退回「最新的 DDL + 最新的 DML」，并记日志说明是降级结果。
+
+    Returns:
+        ``(ddl_path, dml_path)``；找不到对应文件时那一项为 ``None``。
+    """
     if not os.path.exists(workspace):
-        return DDL, DML
+        return None, None
 
-    for f in os.listdir(workspace):
-        if f.startswith("create_") and f.endswith(".sql") and DDL is None:
-            DDL = workspace / f
-        if f.startswith("insert_") and f.endswith(".sql") and DML is None:
-            DML = workspace / f
+    ddl_candidates = sorted(
+        f for f in os.listdir(workspace) if f.startswith("create_") and f.endswith(".sql")
+    )
+    dml_candidates = sorted(
+        f for f in os.listdir(workspace) if f.startswith("insert_") and f.endswith(".sql")
+    )
 
-    return DDL, DML
+    if not ddl_candidates or not dml_candidates:
+        return (
+            (workspace / ddl_candidates[0]) if ddl_candidates else None,
+            (workspace / dml_candidates[0]) if dml_candidates else None,
+        )
+
+    # --- 1) 按目标表配对 -------------------------------------------------
+    for dml_name in dml_candidates:
+        dml_path = workspace / dml_name
+        dml_table = _extract_target_table(_read_sql_text(dml_path))
+        if not dml_table:
+            continue
+        for ddl_name in ddl_candidates:
+            ddl_path = workspace / ddl_name
+            ddl_table = _extract_target_table(_read_sql_text(ddl_path))
+            if ddl_table and _table_refs_match(ddl_table, dml_table):
+                return ddl_path, dml_path
+
+    # --- 2) 配不上 → 降级：取「最新修改」的一对 --------------------------
+    # 多表交付时配不上很常见（比如 DDL 缺失）。降级必须**取最新**而不是
+    # 排序后的第一个 —— 最新修改的那份才是 agent 刚改的。
+    ddl_path = max((workspace / f for f in ddl_candidates), key=_file_mtime)
+    dml_path = max((workspace / f for f in dml_candidates), key=_file_mtime)
+    logger.info(
+        "[verify] _locate_sql: DDL/DML target table not paired "
+        f"(ddl={ddl_path.name}, dml={dml_path.name}); falling back to newest files"
+    )
+    return ddl_path, dml_path
+
+
+def _read_sql_text(path: Path) -> str:
+    """读 SQL 文件内容；读不到返回空串（**绝不抛异常**）。"""
+    try:
+        return path.read_text(encoding="utf-8")
+    except OSError:
+        return ""
+
+
+def _file_mtime(path: Path) -> float:
+    """文件的修改时间（读不到时返回 0.0）。"""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
+
+
+def _extract_target_table(sql: str) -> str:
+    """从 SQL 里抽出目标表名（``db.table`` 或裸表名），抽不出返回空串。
+
+    DDL 看 ``CREATE TABLE``，DML 看 ``INSERT OVERWRITE|INTO``。
+    """
+    for pattern in (
+        r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([`\w.-]+(?:\.[`\w.-]+)*)",
+        r"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?([`\w.-]+(?:\.[`\w.-]+)*)",
+    ):
+        match = re.search(pattern, sql or "", re.IGNORECASE)
+        if match:
+            ref = match.group(1).strip()
+            if ref:
+                return ".".join(part.strip("`").strip('"') for part in ref.split("."))
+    return ""
+
+
+def _table_refs_match(left: str, right: str) -> bool:
+    """两个表引用是否指同一张表。
+
+    **裸表名视为匹配任何同名表** —— 交付物里的 DDL 可能不带库名
+    （``CREATE TABLE ads_x``），而 DML 里是 ``biads.ads_x``；这时按最后
+    一段（表名）比对。
+    """
+    left_norm = ".".join(p for p in (left or "").lower().split(".") if p).strip("`")
+    right_norm = ".".join(p for p in (right or "").lower().split(".") if p).strip("`")
+    if not left_norm or not right_norm:
+        return False
+    if left_norm == right_norm:
+        return True
+    return left_norm.split(".")[-1] == right_norm.split(".")[-1]
 
 
 def _is_alter_scenario(workspace: Path) -> bool:

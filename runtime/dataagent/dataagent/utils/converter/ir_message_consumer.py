@@ -22,6 +22,7 @@ IRMessageConsumer — 在 planner 端消费 IR 节点，用 IR 摘要替换较�
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, cast
 
@@ -47,6 +48,52 @@ class DataNodeRenderSnapshot:
     desc: str
 
 
+@dataclass
+class ReadContinuation:
+    """一次 ``read_file`` 分页读取的续读状态。
+
+    ``read_file`` 把状态提示追加在返回文本的**末尾**，而 IR 摘要只保留开头
+    预览 —— 末尾的提示会被整段切掉，模型既看不到内容也看不到"下一段从哪读"。
+    这里把状态从原文里解析出来，提到摘要顶部单独展示。
+    """
+
+    start_line: int
+    end_line: int
+    next_offset: int
+
+
+# 匹配 read_file 追加在末尾的状态提示：
+#   [Read lines 1641-3269. More content is available; continue with offset=3270.]
+_READ_CONTINUATION_RE = re.compile(
+    r"\[Read lines (?P<start>\d+)-(?P<end>\d+)\.\s*"
+    r"More content is available;\s*continue with offset=(?P<next>\d+)\.\]"
+)
+
+
+def parse_read_continuation(content: str) -> ReadContinuation | None:
+    """从工具输出文本中解析 ``read_file`` 的续读状态。
+
+    Args:
+        content: 工具返回给模型的原始文本。
+
+    Returns:
+        解析到的续读状态；文本不含状态提示时返回 ``None``。
+    """
+    if not content:
+        return None
+    match = _READ_CONTINUATION_RE.search(content)
+    if match is None:
+        return None
+    try:
+        return ReadContinuation(
+            start_line=int(match.group("start")),
+            end_line=int(match.group("end")),
+            next_offset=int(match.group("next")),
+        )
+    except (TypeError, ValueError):
+        return None
+
+
 def render_ir_summary(
     data_nodes: list[DataNode],
     tool_name: str,
@@ -66,6 +113,21 @@ def render_ir_summary(
         可读的 IR 摘要文本
     """
     lines: list[str] = [f"[IR Summary] tool={tool_name}"]
+
+    # 分页读取的状态提示位于原文末尾，而预览只保留开头 —— 必须提前到预览之前，
+    # 否则模型看不到"还有更多内容、下一段从哪读"，会反复重读同一段而永远读不完。
+    continuation = parse_read_continuation(original_content)
+    if continuation is not None:
+        lines.extend(
+            [
+                f"Read continuation: this read covered lines "
+                f"{continuation.start_line}-{continuation.end_line}; "
+                f"more content is available — continue with "
+                f"read_file(offset={continuation.next_offset}).",
+                "",
+            ]
+        )
+
     if original_content:
         output_limit = DEFAULT_MAX_TOOL_RESULT_LENGTH if max_tool_result_length is None else max_tool_result_length
         preview = original_content[: max(1, output_limit // 8)]
@@ -78,7 +140,7 @@ def render_ir_summary(
     artifact_start = len(lines)
 
     for node in data_nodes:
-        line = _render_single_node(node)
+        line = _render_single_node(node, continuation=continuation)
         if line:
             lines.append(f"- {line}")
 
@@ -96,8 +158,24 @@ def render_data_node_snapshot(snapshot: DataNodeRenderSnapshot) -> str:
     return " ".join(parts)
 
 
-def _build_original_content_hint(node: DataNode) -> str | None:
+def _read_hint_range(continuation: ReadContinuation | None) -> str:
+    """生成 ``read_file`` 的 offset/limit 引导语。
+
+    有续读状态时指向真实的下一段起始行 —— 写死 ``offset=1`` 会把模型反复引回
+    文件开头，形成"每次都读到同一处"的死循环。
+    """
+    if continuation is None:
+        return "(for example, offset=1, limit=20)"
+    return f"(continue from offset={continuation.next_offset}; the example offset=1, limit=20 only applies to a fresh read)"
+
+
+def _build_original_content_hint(node: DataNode, continuation: ReadContinuation | None = None) -> str | None:
     """根据节点类型生成原始内容的存储位置和恢复方式说明。
+
+    Args:
+        node: 待渲染的 IR 数据节点。
+        continuation: 本次读取的续读状态；提供时引导语指向真实的下一段起始行，
+            而非写死的第 1 行。
 
     Returns:
         恢复指引字符串，若无可用内容则返回 None
@@ -111,7 +189,7 @@ def _build_original_content_hint(node: DataNode) -> str | None:
             return (
                 f"Original content: table data stored at `{path}` | "
                 f'To inspect if needed: use `read_file` with path="{path}" and appropriate offset/limit '
-                "(for example, offset=1, limit=20); "
+                f"{_read_hint_range(continuation)}; "
                 "reduce limit if truncated and continue from the needed line"
             )
         return "Original content: in-memory table (not persisted)"
@@ -131,7 +209,7 @@ def _build_original_content_hint(node: DataNode) -> str | None:
             return (
                 f"Original content: script stored at `{path}` | "
                 f'To inspect if needed: use `read_file` with path="{path}" and appropriate offset/limit '
-                "(for example, offset=1, limit=20); "
+                f"{_read_hint_range(continuation)}; "
                 "reduce limit if truncated and continue from the needed line"
             )
         if script_content:
@@ -147,7 +225,7 @@ def _build_original_content_hint(node: DataNode) -> str | None:
             return (
                 f"Original content: file stored at `{path}` | "
                 f'To inspect if needed: use `read_file` with path="{path}" and appropriate offset/limit '
-                "(for example, offset=1, limit=20); "
+                f"{_read_hint_range(continuation)}; "
                 "reduce limit if truncated and continue from the needed line, "
                 f"or use `grep` with pattern matching to search for relevant content"
             )
@@ -183,7 +261,7 @@ def _build_original_content_hint(node: DataNode) -> str | None:
     return None
 
 
-def _render_single_node(node: DataNode) -> str:
+def _render_single_node(node: DataNode, continuation: ReadContinuation | None = None) -> str:
     """
     将单个 DataNode 渲染为一行摘要文本，并附带原始内容恢复指引。
     """
@@ -199,7 +277,7 @@ def _render_single_node(node: DataNode) -> str:
             desc=desc,
         )
     )
-    content_hint = _build_original_content_hint(node)
+    content_hint = _build_original_content_hint(node, continuation=continuation)
     if content_hint:
         return f"{snapshot}\n  {content_hint}"
     return snapshot
@@ -409,8 +487,10 @@ def build_past_action(context: Context) -> str:
         header = f"[IR Summary {idx:02d}] tool={ir.action}, input={ir.params}, success={ir.success}, output={ir.output}"
         lines = [header, "Artifacts produced:"]
         if data_nodes:
+            # Action 的 output 是工具原始返回文本，末尾的续读提示同样会被丢掉。
+            continuation = parse_read_continuation(str(ir.output or ""))
             for node in data_nodes:
-                line = _render_single_node(node)
+                line = _render_single_node(node, continuation=continuation)
                 if line:
                     lines.append(f"- {line}")
         else:

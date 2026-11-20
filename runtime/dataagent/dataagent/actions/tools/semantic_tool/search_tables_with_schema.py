@@ -550,7 +550,9 @@ def inject_enum_values_config(temp_config: dict[str, Any], tool_config: dict[str
     if not enum_values_config:
         return
     for entry in temp_config.get("TOOLS", {}).get("local_functions", []):
-        if isinstance(entry, dict) and entry.get("function") == "get_table_schema":
+        # 按**注册名**匹配（``name`` 覆盖 ``function``）—— 与 ToolManager 的
+        # 注册规则一致。
+        if isinstance(entry, dict) and (entry.get("name") or entry.get("function")) == "get_table_schema":
             merged_config = dict(entry.get("config") or {})
             merged_config.update(enum_values_config)
             entry["config"] = merged_config
@@ -569,7 +571,9 @@ def _metadata_recall_enum_values_config(_tool_context: ToolExecutionContext) -> 
         local_functions = (manager.get("TOOLS", {}) or {}).get("local_functions", [])
         config: dict[str, Any] = {}
         for entry in local_functions:
-            if isinstance(entry, dict) and entry.get("function") == "metadata_recall":
+            # 按**注册名**匹配（``name`` 覆盖 ``function``）—— 与 ToolManager
+            # 的注册规则一致。
+            if isinstance(entry, dict) and (entry.get("name") or entry.get("function")) == "metadata_recall":
                 entry_config = entry.get("config")
                 if isinstance(entry_config, dict):
                     config = entry_config

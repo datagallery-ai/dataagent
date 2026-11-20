@@ -151,9 +151,9 @@ TOOLS:
       function: "dataops_probe_table"
       config:
         default_sample_size: 5
-    # 独立数据验证：给一条现成的 INSERT 语句，直接对它写入的**真实目标表**做
-    # 数据正确性校验（空值覆盖率 / 单一值比率 / 异常值占比）。
-    # 与 trial_compute_table 的区别：不建表、不插入、不用临时表替换 —— 只读。
+    # 数据校验：用户输入「执行数据校验」时由 agent 调用。走**试算链路**
+    # （建临时表 → 试算 INSERT → 全部校验项 → 流程型校验 → 自修正闭环 → 落盘）。
+    # 与 trial_compute_table 的区别：多做**自修正闭环**与**结论落盘**。
     - name: "dataops_validate_data"
       module: "dataagent.core.suite.builtin_suites.de_agent.tools.dataops_validate_data_tool"
       function: "validate_data"
@@ -177,6 +177,42 @@ TOOLS:
             outlier_ratio_threshold: 0.0
             # 数据行数下限：低于此值产出 warning（表级指标，全量 COUNT，不采样）
             row_count_threshold: 1
+            # 主键重复率阈值：必须为 0 —— 出现任何重复即违规（表级，全表算）
+            pk_duplicate_rate_threshold: 0.0
+            # 计数型字段负值占比阈值：必须为 0 —— 出现任何负值即违规
+            negative_count_threshold: 0.0
+          # ---- 新增的数据正确性校验项（默认全部启用）----
+          # 显式声明的主键列（可选）。不写时从 DataTaskIR 的 identity.components
+          # 取；两者都拿不到就跳过主键重复率校验（不猜）。
+          # primary_key_columns:
+          #   - "udid"
+          # 显式声明的计数型字段（可选）。以清单为准，清单外字段一律不算计数型。
+          # count_fields:
+          #   - "play_cnt_7d"
+          # 计数型字段名模式（小写子串匹配）+ DDL 类型必须是数值型。
+          count_field_patterns:
+            - "cnt"
+            - "count"
+            - "_num"
+            - "times"
+            - "_times"
+          # 差值型字段名模式 —— 匹配到的字段**不参与**负值校验
+          # （差值天然可正可负，判负会产生大量误报）。
+          negative_exclude_patterns:
+            - "diff"
+            - "delta"
+            - "change"
+            - "chg"
+          # 常识违规检测的抽样行数（模型判定跨字段的常识错误）。
+          common_sense_sample_size: 20
+          # 抽样回源比对的抽样行数（需求：抽样三行）。
+          reconcile_sample_size: 3
+          # 回源比对的数值容差：|差| <= max(绝对容差, 相对容差 × |源表值|)
+          relative_tolerance: 0.000001
+          absolute_tolerance: 0.000000001
+          # 自修正开关与轮次上限（独立于 DataOps 提交次数上限）。
+          self_correct_enabled: true
+          self_correct_max_rounds: 3
           # 比率类字段识别：字段名（小写）包含任一模式即视为比率类。
           # 配置了 ratio_fields 时以显式清单为准，不再走模式匹配。
           ratio_field_patterns:
@@ -230,6 +266,42 @@ TOOLS:
             # 数据行数下限：低于此值产出 warning（表级指标，全量 COUNT，不采样）。
             # 注意：试算写入被截断到 sample_size 行，所以这里的行数只是**下界**。
             row_count_threshold: 1
+            # 主键重复率阈值：必须为 0 —— 出现任何重复即违规（表级，全表算）
+            pk_duplicate_rate_threshold: 0.0
+            # 计数型字段负值占比阈值：必须为 0 —— 出现任何负值即违规
+            negative_count_threshold: 0.0
+          # ---- 新增的数据正确性校验项（默认全部启用）----
+          # 显式声明的主键列（可选）。不写时从 DataTaskIR 的 identity.components
+          # 取；两者都拿不到就跳过主键重复率校验（不猜）。
+          # primary_key_columns:
+          #   - "udid"
+          # 显式声明的计数型字段（可选）。以清单为准，清单外字段一律不算计数型。
+          # count_fields:
+          #   - "play_cnt_7d"
+          # 计数型字段名模式（小写子串匹配）+ DDL 类型必须是数值型。
+          count_field_patterns:
+            - "cnt"
+            - "count"
+            - "_num"
+            - "times"
+            - "_times"
+          # 差值型字段名模式 —— 匹配到的字段**不参与**负值校验
+          # （差值天然可正可负，判负会产生大量误报）。
+          negative_exclude_patterns:
+            - "diff"
+            - "delta"
+            - "change"
+            - "chg"
+          # 常识违规检测的抽样行数（模型判定跨字段的常识错误）。
+          common_sense_sample_size: 20
+          # 抽样回源比对的抽样行数（需求：抽样三行）。
+          reconcile_sample_size: 3
+          # 回源比对的数值容差：|差| <= max(绝对容差, 相对容差 × |源表值|)
+          relative_tolerance: 0.000001
+          absolute_tolerance: 0.000000001
+          # 自修正开关与轮次上限（独立于 DataOps 提交次数上限）。
+          self_correct_enabled: true
+          self_correct_max_rounds: 3
           # 比率类字段识别：字段名（小写）包含任一模式即视为比率类。
           # 配置了 ratio_fields 时以显式清单为准，不再走模式匹配。
           ratio_field_patterns:

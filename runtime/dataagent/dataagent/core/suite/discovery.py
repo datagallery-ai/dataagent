@@ -185,7 +185,8 @@ def _validate_suite_directory(root: Path, *, suite_name: str) -> None:
                 if isinstance(local_functions, Sequence) and not isinstance(local_functions, (str, bytes)):
                     for item in local_functions:
                         if isinstance(item, Mapping):
-                            fn = item.get("function") or item.get("name")
+                            # 按**注册名**判定（``name`` 覆盖 ``function``）。
+                            fn = item.get("name") or item.get("function")
                             if str(fn or "").strip() == "sub_agent_tool":
                                 raise ValueError("Suite tools/tools.yaml must not declare sub_agent_tool")
 

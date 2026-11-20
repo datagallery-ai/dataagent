@@ -920,8 +920,11 @@ class TestRunQualityCheckWiring:
         assert result["sampled"] is True
         assert result["ok"] is False
         assert result["warnings"], "a null_rate of 0.10 must raise a warning"
-        # 四条 SQL 逐条执行（异常值占比没有比率字段时不生成）。
-        assert len(executed) == 3
+        # 历史 checker 各执行一次（异常值占比没有比率字段时不生成）。
+        # 注意：新增的流程型校验（常识 / 回源）会额外发一条抽样 SELECT，
+        # 那条 SQL 的表名是反引号包裹的（`adhoctemp`.`tmp_*`），据此区分。
+        legacy_sqls = [s for s in executed if "`adhoctemp`" not in s]
+        assert len(legacy_sqls) == 3
         assert "UNION ALL" not in "".join(executed)
 
     @pytest.mark.asyncio
@@ -943,7 +946,9 @@ class TestRunQualityCheckWiring:
             )
 
         assert result is not None
-        assert len(executed) == 4
+        # 历史 checker 四条各执行一次；流程型校验另外发抽样 SELECT，不计入。
+        legacy_sqls = [s for s in executed if "`adhoctemp`" not in s]
+        assert len(legacy_sqls) == 4
         assert result["details"]["x_ratio"]["null_rate"] == 1.0
         assert result["details"]["x_ratio"]["single_value_ratio"] == 1.0
         assert result["details"]["x_ratio"]["outlier_ratio"] == 1.0
@@ -967,14 +972,26 @@ class TestRunQualityCheckWiring:
 
         in_flight = 0
         max_in_flight = 0
+        # **只数「校验 SQL」** —— 「数据示例」的抽样 SELECT 也并发跑，
+        # 但它不是校验项，不该混进并发计数。
+        in_flight_checks = 0
+        max_in_flight_checks = 0
 
         async def fake_exec(check_sql, coordinator, timeout_sec, poll_interval):
-            nonlocal in_flight, max_in_flight
+            nonlocal in_flight, max_in_flight, in_flight_checks, max_in_flight_checks
             in_flight += 1
             max_in_flight = max(max_in_flight, in_flight)
+            # 校验 SQL 的形状是 ``SELECT\n  <指标>\nFROM ...``；
+            # 抽样 SELECT 是单行 ``SELECT <列> FROM ...``。
+            is_check = check_sql.startswith("SELECT\n")
+            if is_check:
+                in_flight_checks += 1
+                max_in_flight_checks = max(max_in_flight_checks, in_flight_checks)
             # 让出控制权，确保所有任务都能同时在飞。
             await asyncio.sleep(0.05)
             in_flight -= 1
+            if is_check:
+                in_flight_checks -= 1
             return "completed", "job-x", {"data": [{"x_ratio": 1.0}]}
 
         with patch.object(qc, "_execute_check_sql_integration", side_effect=fake_exec):
@@ -985,8 +1002,8 @@ class TestRunQualityCheckWiring:
 
         assert result is not None
         assert result["sampled"] is True
-        assert max_in_flight == 4, (
-            f"校验 SQL 应并发提交，实际最大并发数 {max_in_flight}"
+        assert max_in_flight_checks == 4, (
+            f"校验 SQL 应并发提交，实际最大并发数 {max_in_flight_checks}"
         )
 
     @pytest.mark.asyncio
@@ -1111,6 +1128,79 @@ class TestRunQualityCheckWiring:
         assert result["sampled"] is False
         assert result["warnings"] == []
         assert "dataops exploded" in result["error"]
+
+    @pytest.mark.asyncio
+    async def test_failed_check_carries_the_real_dataops_error(self, monkeypatch):
+        """回归防护：失败原因不能只剩一句 ``status='error'``。
+
+        早先两条执行路径都把 DataOps 的真实报错整个丢掉了，报告里只有
+        ``status='error'`` —— 排查的人无从知道是「表不存在」「语法被拒」
+        还是「引擎报错」。错误文本 MUST 一路透传到 ``failed_checks``。
+        """
+        monkeypatch.setenv("DATAOPS_ENV", "integration")
+        runtime = self._fake_runtime()
+        # 给一个主键 —— 否则主键重复率那条 SQL 压根不会生成（被记为 skipped）。
+        runtime.get_cache.side_effect = lambda key: (
+            [
+                {
+                    "field_id": "identity",
+                    "value": {"components": [{"field_ref": "db.tbl.col1"}]},
+                }
+            ]
+            if key == "ir_field_values"
+            else None
+        )
+        ctx = ToolExecutionContext(runtime=runtime, tool_config={})
+
+        async def fake_exec(check_sql, coordinator, timeout_sec, poll_interval):
+            if "pk_duplicate_rate" in check_sql:
+                # 4 元组：执行层现在会把 error 文本带出来。
+                return (
+                    "error",
+                    None,
+                    None,
+                    "table(s) adhoctemp.tmp_x do not exist in production environment",
+                )
+            # 3 元组：老形状也要能跑（向后兼容）。
+            return "completed", "job-1", {"data": [{"col1": 1.0}]}
+
+        with patch.object(qc, "_execute_check_sql_integration", side_effect=fake_exec):
+            result = await qc.run_quality_check(
+                "INSERT OVERWRITE TABLE biads.tmp SELECT col1 FROM src",
+                _tool_context=ctx,
+            )
+
+        assert result is not None
+        failed = {item["name"]: item for item in result.get("failed_checks") or []}
+        assert "pk_duplicate_rate" in failed
+        assert "do not exist in production environment" in failed["pk_duplicate_rate"]["reason"]
+
+    @pytest.mark.asyncio
+    async def test_flow_check_notes_are_collected(self, monkeypatch):
+        """回归防护：``flow_notes`` 早先恒为空 —— 流程型校验的结果从不上报。
+
+        notes 的 key 是 ``<checker_name>__<suffix>``，早先取的是裸名
+        ``ctx.notes.get(checker.name)``，永远取不到，于是「常识检测」
+        「回源比对」在报告里完全看不见 —— 用户会以为这两条规则根本没跑。
+        """
+        monkeypatch.setenv("DATAOPS_ENV", "integration")
+        ctx = ToolExecutionContext(runtime=self._fake_runtime(), tool_config={})
+
+        async def fake_exec(check_sql, coordinator, timeout_sec, poll_interval):
+            return "completed", "job-1", {"data": [{"col1": 1.0}]}
+
+        with patch.object(qc, "_execute_check_sql_integration", side_effect=fake_exec):
+            result = await qc.run_quality_check(
+                "INSERT OVERWRITE TABLE biads.tmp SELECT col1 FROM src",
+                _tool_context=ctx,
+            )
+
+        assert result is not None
+        flow_notes = result.get("flow_notes") or {}
+        assert "common_sense" in flow_notes, flow_notes
+        # 状态字段 MUST 存在 —— 否则用户读不出「跑没跑」。
+        assert "status" in flow_notes["common_sense"]
+        assert "status" in flow_notes["source_reconciliation"]
 
 
 # ============================================================================
@@ -1318,6 +1408,171 @@ class TestRenderTableMetrics:
         table = qc.render_table_metrics({"row_count": 10000.0}, truncated=True)
         assert "试算写入被截断" in table
         assert "| 10000 |" in table
+
+
+# ============================================================================
+# 临时表分区过滤 —— 从 INSERT 的 PARTITION 子句推导
+# ============================================================================
+#
+# 临时表是**分区表**（DDL 的 ``PARTITIONED BY`` 被原样保留），
+# Spark / Hive 的分析器会拒绝扫描分区表却没有分区条件的语句
+# （``partition condition not found in where or on node``）。
+#
+# 但也不能用拼出来的基准日去过滤 —— 临时表里只有这一次 INSERT 写进去的
+# 数据，它落在哪个分区取决于**交付物自己的分区声明**。用基准日过滤 →
+# COUNT(1) 恒为 0 → 报「空表」→ 一次成功的试算被误判成「一行数据都没校验过」。
+#
+# 所以：解析交付物 INSERT 里**静态写死**的分区字面量，用它当过滤条件。
+class TestDeriveInsertPartitionLiterals:
+    def test_static_literal(self):
+        sql = "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d = '20261020') SELECT a FROM s"
+        assert qc.derive_insert_partition_literals(sql, "20261111") == {"pt_d": "20261020"}
+
+    def test_multiple_partition_columns(self):
+        sql = (
+            "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d='20261020', pt_h='13') "
+            "SELECT a FROM s"
+        )
+        assert qc.derive_insert_partition_literals(sql, "20261111") == {
+            "pt_d": "20261020",
+            "pt_h": "13",
+        }
+
+    def test_dynamic_partition_yields_nothing(self):
+        """动态分区（``PARTITION (pt_d)``）解析不出字面量 → 退回不过滤。"""
+        sql = "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d) SELECT a, '20261020' FROM s"
+        assert qc.derive_insert_partition_literals(sql, "20261111") == {}
+
+    def test_date_placeholder_resolves_to_partition_date(self):
+        sql = "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d = '$date') SELECT a FROM s"
+        assert qc.derive_insert_partition_literals(sql, "20261111") == {"pt_d": "20261111"}
+
+    def test_braced_date_placeholder_resolves(self):
+        sql = "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d = '${date}') SELECT a FROM s"
+        assert qc.derive_insert_partition_literals(sql, "20261111") == {"pt_d": "20261111"}
+
+    def test_other_scheduler_placeholder_is_skipped(self):
+        """调度宏（``${start_time,...}``）无法静态求值 → 放弃解析。"""
+        sql = (
+            "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d = '${start_time,-30,yyyyMMdd}') "
+            "SELECT a FROM s"
+        )
+        assert qc.derive_insert_partition_literals(sql, "20261111") == {}
+
+    def test_no_partition_clause(self):
+        sql = "INSERT OVERWRITE TABLE biads.t SELECT a FROM s"
+        assert qc.derive_insert_partition_literals(sql, "20261111") == {}
+
+    def test_comment_is_stripped(self):
+        """注释里的 PARTITION 不能被当成真的分区声明。"""
+        sql = (
+            "-- INSERT OVERWRITE TABLE biads.t PARTITION (pt_d = '20260101')\n"
+            "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d = '20261020') SELECT a FROM s"
+        )
+        assert qc.derive_insert_partition_literals(sql, "20261111") == {"pt_d": "20261020"}
+
+
+class TestBuildTempTablePartitionFilter:
+    def test_single_column(self):
+        assert (
+            qc.build_temp_table_partition_filter({"pt_d": "20261020"}, "pt_d")
+            == "pt_d = '20261020'"
+        )
+
+    def test_multiple_columns_joined_with_and(self):
+        assert (
+            qc.build_temp_table_partition_filter(
+                {"pt_d": "20261020", "pt_h": "13"}, "pt_d"
+            )
+            == "pt_d = '20261020' AND pt_h = '13'"
+        )
+
+    def test_empty_yields_no_filter(self):
+        """解析不出来 → 空串 → 调用方退回「不过滤」。"""
+        assert qc.build_temp_table_partition_filter({}, "pt_d") == ""
+
+
+class TestTempTablePartitionFilterWiring:
+    """临时表模式必须用**推导出来的**分区条件，而不是「不过滤」也不是基准日。"""
+
+    @staticmethod
+    def _fake_runtime():
+        runtime = MagicMock()
+        coordinator = MagicMock()
+        coordinator.catalog = {"dataops": MagicMock(metadata={"exec_user": "u", "table_suffix": ""})}
+        runtime.ensure_resource_coordinator.return_value = coordinator
+        runtime.workspace_dir = None
+        return runtime
+
+    @staticmethod
+    def _ctx():
+        from dataagent.actions.tools.context import ToolExecutionContext
+
+        return ToolExecutionContext(
+            runtime=TestTempTablePartitionFilterWiring._fake_runtime(),
+            tool_config={},
+        )
+
+    def test_temp_table_uses_derived_partition_filter(self, monkeypatch):
+        """临时表模式 → 用 INSERT 里写死的分区值过滤（而不是不过滤）。"""
+        monkeypatch.setenv("DATAOPS_ENV", "integration")
+        captured: dict[str, str] = {}
+        real_build = qc.build_check_context
+
+        def _spy_build(**kwargs):
+            captured["filter"] = kwargs.get("partition_filter")
+            return real_build(**kwargs)
+
+        monkeypatch.setattr(qc, "build_check_context", _spy_build)
+        monkeypatch.setattr(qc, "build_statements_from_context", lambda ctx: [])
+
+        sql = (
+            "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d = '20261020') "
+            "SELECT a, count(1) AS c FROM biads.src GROUP BY a"
+        )
+
+        asyncio.run(
+            qc._run_quality_check_impl(
+                sql,
+                _tool_context=self._ctx(),
+                config=qc.resolve_config(self._ctx()),
+                temp_table="adhoctemp.tmp_x",
+                partition_date="20261111",
+            )
+        )
+
+        assert captured.get("filter") == "pt_d = '20261020'"
+
+    def test_temp_table_falls_back_to_no_filter_for_dynamic_partition(self, monkeypatch):
+        """动态分区 → 解析不出字面量 → 退回「不过滤」（而不是用基准日）。"""
+        monkeypatch.setenv("DATAOPS_ENV", "integration")
+        captured: dict[str, str] = {}
+        real_build = qc.build_check_context
+
+        def _spy_build(**kwargs):
+            captured["filter"] = kwargs.get("partition_filter")
+            return real_build(**kwargs)
+
+        monkeypatch.setattr(qc, "build_check_context", _spy_build)
+        monkeypatch.setattr(qc, "build_statements_from_context", lambda ctx: [])
+
+        sql = (
+            "INSERT OVERWRITE TABLE biads.t PARTITION (pt_d) "
+            "SELECT a, '20261020', count(1) AS c FROM biads.src GROUP BY a"
+        )
+
+        asyncio.run(
+            qc._run_quality_check_impl(
+                sql,
+                _tool_context=self._ctx(),
+                config=qc.resolve_config(self._ctx()),
+                temp_table="adhoctemp.tmp_x",
+                partition_date="20261111",
+            )
+        )
+
+        # 空串 = 明确不过滤（**不是** None —— None 会变回默认基准日 → 假空表）
+        assert captured.get("filter") == ""
 
 
 # ============================================================================

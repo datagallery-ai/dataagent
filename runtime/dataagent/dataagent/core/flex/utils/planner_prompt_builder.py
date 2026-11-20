@@ -975,7 +975,12 @@ def _build_database_context_prompt(config: dict[str, Any]) -> str:
     """Build a natural-language database context for planner user prompt when NL2SQL tool is absent."""
     tools_config = config.get("TOOLS") or {}
     local_functions = tools_config.get("local_functions") or []
-    if any((item or {}).get("function") == "nl2sql_sub_agent_tool" for item in local_functions):
+    # 按**注册名**匹配（``name`` 覆盖 ``function``）—— 与 ToolManager 的注册
+    # 规则一致。
+    if any(
+        ((item or {}).get("name") or (item or {}).get("function")) == "nl2sql_sub_agent_tool"
+        for item in local_functions
+    ):
         return ""
 
     database = config.get("DATABASE") or {}

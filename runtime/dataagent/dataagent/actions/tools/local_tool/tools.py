@@ -2932,7 +2932,12 @@ def _build_nl2sql_sub_agent_config(
             temp_config["MODEL"] = {
                 bound_llm_model_name: runtime_model_copy,
             }
-    agent_tools = [i.get("function", "") for i in config_manager.get("TOOLS", {}).get("local_functions", {})]
+    # 用**注册名**判定工具是否可用（``name`` 覆盖 ``function``）—— 与
+    # ToolManager 的注册规则一致，否则「声明了但注册成别的名字」会被漏判。
+    agent_tools = [
+        i.get("name") or i.get("function", "")
+        for i in config_manager.get("TOOLS", {}).get("local_functions", {})
+    ]
     if "search_metric_instance" in agent_tools or "search_tables_with_typename" in agent_tools:
         temp_config.setdefault("CORE", {}).setdefault("perceptor", {})["user_schema"] = "schema_schemair"
     if "search_udf_function_by_name_keyword" in agent_tools:

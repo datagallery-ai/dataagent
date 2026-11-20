@@ -29,7 +29,6 @@ SUITE_NAME = "data_engineering"  # suite.yaml manifest name；目录名为 de_ag
 HOOK_WIRING = (
     ("hooks.hitl_auto_resolver.hitl_auto_resolver", "nodes.human_feedback.pre"),
     ("hooks.text_question_guard.text_question_guard", "nodes.planner.post"),
-    ("hooks.dataops_quality_check_post.dataops_quality_check_post", "agent.post"),
 )
 
 
@@ -76,8 +75,13 @@ def _registered_hooks(location: str) -> set[str]:
     return names
 
 
-def test_quality_check_post_hook_is_registered_in_hooks_yaml() -> None:
-    """质量校验 post-hook 必须在 hooks.yaml 里真的注册，否则交付后不会做数据质量校验。"""
-    assert "hooks.dataops_quality_check_post.dataops_quality_check_post" in _registered_hooks(
+def test_quality_check_post_hook_is_not_registered_in_hooks_yaml() -> None:
+    """数据质量校验**不再挂 post-hook** —— 改成用户显式触发。
+
+    交付后自动试算会把每一轮交付拖住几分钟（试算要连 DataOps 跑一遍）。
+    现在由用户在交付后输入「执行数据校验」触发，走 ``dataops_validate_data``
+    工具的同一条链路。
+    """
+    assert "hooks.dataops_quality_check_post.dataops_quality_check_post" not in _registered_hooks(
         "nodes.planner.post"
     )

@@ -276,7 +276,8 @@ class ToolManager:
     @staticmethod
     def is_explicit_sub_agent_tool_entry(tool_config: Mapping[str, Any]) -> bool:
         """Return whether a ``TOOLS.local_functions`` entry declares ``sub_agent_tool``."""
-        fn = tool_config.get("function") or tool_config.get("name")
+        # 按**注册名**判定（``name`` 覆盖 ``function``）—— 与注册规则一致。
+        fn = tool_config.get("name") or tool_config.get("function")
         return str(fn or "").strip() == "sub_agent_tool"
 
     @staticmethod
@@ -1021,39 +1022,49 @@ class ToolManager:
                     "use SUBAGENT_CONFIGS to register subagents instead."
                 )
             module_path = tool_config.get("module")
-            name = tool_config.get("function") or tool_config.get("name")
+            # ``function`` = 模块里要取的属性名；``name`` = 注册名。
+            #
+            # **``name`` 覆盖注册名**（不是被 ``function`` 覆盖）—— YAML 里
+            # ``name`` 的语义就是「覆盖注册名」（见 ``example_suite`` 的注释
+            # 「【选填】覆盖注册名」与 ``example.yaml`` 的「name 可覆盖注册名」）。
+            # 早先写成 ``function or name``，等于**把 ``name`` 忽略掉**：
+            # 声明 ``name: "dataops_validate_data"`` + ``function: "validate_data"``
+            # 的工具会注册成 ``validate_data`` —— agent 按 YAML 里写的名字调用
+            # 就报「Tool 'xxx' not found」。
+            func_attr = tool_config.get("function") or tool_config.get("name")
+            reg_name = tool_config.get("name") or func_attr
             category = tool_config.get("category", "general")
             config = tool_config.get("config", {})
             if not isinstance(config, dict):
                 config = {}
-            if not module_path or not name:
+            if not module_path or not func_attr or not reg_name:
                 continue
             try:
                 import importlib
 
                 module = importlib.import_module(module_path)
-                func = getattr(module, name)
-                register_kwargs: dict[str, Any] = {"name": name, "category": category, **config}
+                func = getattr(module, func_attr)
+                register_kwargs: dict[str, Any] = {"name": reg_name, "category": category, **config}
                 yaml_description = self._resolve_local_tool_description_from_config(tool_config)
                 resolved_description = self._resolve_registered_tool_description(
-                    tool_name=str(name),
+                    tool_name=str(reg_name),
                     func=func,
                     yaml_description=yaml_description,
                 )
                 if resolved_description is not None:
                     register_kwargs["description"] = resolved_description
                 # 允许 local_functions 覆盖已注册的同名 builtin/job 工具，以便重新挂 hooks
-                if name in self._tool_instances:
-                    self.tool_registry.unregister(name)
+                if reg_name in self._tool_instances:
+                    self.tool_registry.unregister(reg_name)
                 self.register_local_tool(func, **register_kwargs)
                 hook_lists = self._load_hooks_from_tool_config(tool_config)
                 if hook_lists.pre or hook_lists.post:
                     from dataagent.actions.tools.hooks.config import attach_hooks_to_tool
 
-                    attach_hooks_to_tool(self._tool_instances[name], hook_lists)
-                logger.trace(f"✅ Local tool: '{name}' registered.")
+                    attach_hooks_to_tool(self._tool_instances[reg_name], hook_lists)
+                logger.trace(f"✅ Local tool: '{reg_name}' registered.")
             except Exception as e:
-                logger.warning(f"❌ Local tool: '{name}' registration failed: {e}.")
+                logger.warning(f"❌ Local tool: '{reg_name}' registration failed: {e}.")
 
     def _register_implicit_sub_agent_tool(self, config: Mapping[str, Any]) -> None:
         """Register ``sub_agent_tool`` when ``SUBAGENT_CONFIGS`` is non-empty."""

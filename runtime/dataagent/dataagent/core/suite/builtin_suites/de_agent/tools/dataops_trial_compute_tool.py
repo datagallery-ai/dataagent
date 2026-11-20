@@ -69,6 +69,7 @@ from typing import Any
 
 from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.dataops_log_utils import bound_error_excerpt
+from dataagent.actions.tools.local_tool.dataops_table_schema import extract_ddl_table_ref
 from dataagent.utils.log import logger
 
 # ============================================================================
@@ -82,6 +83,7 @@ async def trial_compute_table(
     dml_path: str | None = None,
     query: str = "",
     _tool_context: ToolExecutionContext,
+    _sql_text: str | None = None,
 ) -> dict[str, Any]:
     """Run ``dml_path`` into a scratch table and validate the resulting data.
 
@@ -93,23 +95,31 @@ async def trial_compute_table(
             from disk so large statements stay out of chat history.
         query: The user's original request. Kept for diagnostics only.
         _tool_context: Tool execution context.
+        _sql_text: **内部参数** —— 直接给出 SQL 文本，跳过「从磁盘读」。
+
+            给「自修正闭环」用：修正后的 SQL 已经在内存里了，还要再写回
+            磁盘再读一遍既慢又容易读到旧内容（写回失败时读到的就是旧的）。
+            给它文本直接跑，同时把修正结果写回磁盘留痕。
 
     Returns:
         ``{"passed", "skipped", "reason"?, "summary", "quality_check"?, "job_id"?}``
     """
-    if not dml_path:
-        return _skipped("no_dml_path", "未提供 DML 文件路径，无法试算。")
+    if _sql_text is not None:
+        sql = _sql_text.strip()
+    else:
+        if not dml_path:
+            return _skipped("no_dml_path", "未提供 DML 文件路径，无法试算。")
 
-    try:
-        with open(dml_path, encoding="utf-8") as fh:
-            sql = fh.read().strip()
-    except OSError as exc:
-        return {
-            "passed": False,
-            "skipped": False,
-            "summary": f"failed to read {dml_path}: {exc}",
-            "trigger": "trial_compute",
-        }
+        try:
+            with open(dml_path, encoding="utf-8") as fh:
+                sql = fh.read().strip()
+        except OSError as exc:
+            return {
+                "passed": False,
+                "skipped": False,
+                "summary": f"failed to read {dml_path}: {exc}",
+                "trigger": "trial_compute",
+            }
 
     if not sql:
         return _skipped("empty_sql", "DML 文件内容为空，没有可试算的 SQL。")
@@ -159,7 +169,11 @@ async def trial_compute_table(
     # 语法校验链路已经把 adhoctemp.tmp_* 删掉了（而且它用的是「一年之后」的
     # 日期，跟本链路的临时表压根不是同一张表）。本链路要往一张**存在**的临时表
     # 里写数据才能做质量校验，所以先按交付物里的 DDL 再建一次。
-    ddl_path = _find_ddl(_tool_context)
+    #
+    # DDL 必须与 DML **指向同一张表** —— 多表交付时 workspace 里可能有多个
+    # ``create_*.sql``，拿错表名建出来的 schema 和写入的数据对不上。
+    ddl_target = _target_table_from_sql(sql) or (target_table or "").strip()
+    ddl_path = _find_ddl(_tool_context, ddl_target)
     ddl_sql = ""
     if ddl_path is not None:
         ddl_sql = ddl_path.read_text(encoding="utf-8")
@@ -312,12 +326,39 @@ async def _drop_scratch_tables(
         payload["cleanup_job_id"] = cleanup_job_ids[0]
 
 
-def _find_ddl(_tool_context: ToolExecutionContext) -> Path | None:
-    """Locate the deliverable ``create_*.sql`` in the workspace.
+def _target_table_from_sql(sql: str) -> str:
+    """从 INSERT SQL 里取目标表（``db.table``）。
 
-    Mirrors ``verify._locate_sql``: the DDL defines the scratch table's
-    schema, so the quality chain must create it with exactly that DDL before
-    running the INSERT into it.
+    用于把 DDL 与 DML **配对** —— 多表交付时必须按目标表匹配。
+    """
+    import re
+
+    match = re.search(
+        r"INSERT\s+(?:OVERWRITE|INTO)\s+(?:EXTERNAL\s+)?(?:TABLE\s+)?"
+        r"([`\w.-]+(?:\.[`\w.-]+)+)",
+        sql or "",
+        re.IGNORECASE,
+    )
+    if not match:
+        return ""
+    return ".".join(part.strip("`") for part in match.group(1).split("."))
+
+
+def _find_ddl(_tool_context: ToolExecutionContext, target_table: str = "") -> Path | None:
+    """找 workspace 里与目标表**匹配**的 ``create_*.sql``。
+
+    **必须按目标表名匹配** —— 多表交付时 workspace 里可能有多个
+    ``create_*.sql``，而 DML 只写其中一张表。早先这里取「字母序第一个」，
+    会拿 A 表的建表语句去建临时表、再把 B 表的数据写进去 —— schema 和数据
+    对不上，报错还很难看懂。
+
+    Args:
+        _tool_context: 工具执行上下文（提供 ``workspace_dir``）。
+        target_table: 目标表（``db.table`` 或裸表名）。留空时退回到
+            「最新修改的 create_*.sql」。
+
+    Returns:
+        匹配到的 DDL 路径；找不到返回 ``None``。
     """
     runtime = getattr(_tool_context, "runtime", None)
     raw = getattr(runtime, "workspace_dir", None) if runtime is not None else None
@@ -330,15 +371,68 @@ def _find_ddl(_tool_context: ToolExecutionContext) -> Path | None:
     if not workspace.is_dir():
         return None
 
-    # Prefer ``sql/`` (organized location) over the workspace root.
+    candidates: list[Path] = []
     for directory in (workspace / "sql", workspace):
         if not directory.is_dir():
             continue
         for path in sorted(directory.iterdir()):
             name = path.name.lower()
             if name.startswith("create_") and name.endswith(".sql") and path.is_file():
-                return path
-    return None
+                candidates.append(path)
+
+    if not candidates:
+        return None
+
+    if target_table.strip():
+        wanted = _normalize_table_ref(target_table)
+        matched: list[Path] = []
+        for path in candidates:
+            try:
+                ddl_sql = path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            # 用**认裸表名**的解析器 —— 交付物的 DDL 常常不带库名
+            # （``CREATE TABLE ads_x``），只认 ``db.table`` 的话这种 DDL
+            # 永远匹配不上 → 退回「按 mtime 取最新」→ 可能拿到**另一张表**的 DDL。
+            declared = extract_ddl_table_ref(ddl_sql)
+            if not declared:
+                continue
+            if _table_refs_match(declared, wanted):
+                matched.append(path)
+        if matched:
+            return max(matched, key=lambda p: _mtime(p))
+
+    return max(candidates, key=lambda p: _mtime(p))
+
+
+def _normalize_table_ref(ref: str) -> str:
+    """把表引用归一化成小写的 ``db.table``（去掉反引号）。"""
+    parts = [p.strip().strip("`").strip('"') for p in (ref or "").split(".")]
+    return ".".join(p for p in parts if p).lower()
+
+
+def _table_refs_match(left: str, right: str) -> bool:
+    """两个表引用是否指同一张表。
+
+    **裸表名视为匹配任何同名表** —— 交付物里的 DDL 可能不带库名
+    （``CREATE TABLE ads_x``），而 DML 里是 ``biads.ads_x``；这时按最后
+    一段（表名）比对。
+    """
+    left_norm = _normalize_table_ref(left)
+    right_norm = _normalize_table_ref(right)
+    if not left_norm or not right_norm:
+        return False
+    if left_norm == right_norm:
+        return True
+    return left_norm.split(".")[-1] == right_norm.split(".")[-1]
+
+
+def _mtime(path: Path) -> float:
+    """文件的修改时间（读不到时返回 0.0）。"""
+    try:
+        return path.stat().st_mtime
+    except OSError:
+        return 0.0
 
 
 def _skipped(reason: str, message: str = "") -> dict[str, Any]:
