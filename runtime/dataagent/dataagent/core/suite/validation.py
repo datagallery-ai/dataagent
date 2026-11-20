@@ -145,7 +145,9 @@ def _check_duplicate_list_keys(
 def _local_function_key(item: Any) -> str:
     if not isinstance(item, Mapping):
         return ""
-    fn = item.get("function") or item.get("name")
+    # 键用**注册名**（``name`` 覆盖 ``function``）—— 与 ToolManager 的注册
+    # 规则一致：两条目若注册名相同，后一条会覆盖前一条，必须当成重复。
+    fn = item.get("name") or item.get("function")
     return str(fn or "").strip()
 
 

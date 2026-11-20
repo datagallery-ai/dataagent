@@ -97,7 +97,11 @@ async def nl2sql_sub_agent_tool(
     local_functions = (
         {} if config_manager is None else (config_manager.get("TOOLS", {}) or {}).get("local_functions", {})
     )
-    agent_tools = [i.get("function", "") for i in local_functions if isinstance(i, dict)]
+    # 用**注册名**判定（``name`` 覆盖 ``function``）—— 与 ToolManager 的注册
+    # 规则一致。
+    agent_tools = [
+        i.get("name") or i.get("function", "") for i in local_functions if isinstance(i, dict)
+    ]
     if "search_udf_function_by_name_keyword" in agent_tools or "metadata_recall" in agent_tools:
         schema_udf_basic_path = os.path.join(workspace, "schema_udf_basic.md")
         if not os.path.exists(schema_udf_basic_path):

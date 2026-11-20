@@ -172,6 +172,49 @@ async def test_implicit_sub_agent_tool_appends_catalog_description(tmp_path):
 
 
 @pytest.mark.asyncio
+async def test_register_local_tools_uses_yaml_name_as_registration_name():
+    """YAML ``name`` overrides the registration name (``function`` is the attribute).
+
+    Regression: ``name`` used to be ignored (``function or name``), so a tool
+    declared as ``name: "dataops_validate_data"`` + ``function: "validate_data"``
+    registered as ``validate_data`` — and the agent, calling the name written in
+    the YAML / the skill, got ``Tool 'dataops_validate_data' not found``.
+    """
+    tm = ToolManager()
+    tm._register_local_tools(
+        [
+            {
+                "module": "tests.ut.tools.test_local_tools",
+                "function": "add_numbers",
+                "name": "renamed_add_numbers",
+            }
+        ]
+    )
+    assert tm.exists("renamed_add_numbers")
+    assert not tm.exists("add_numbers")
+    assert tm.get("renamed_add_numbers").func is add_numbers
+    assert tm.get("renamed_add_numbers").get_schema().to_dict().get("name") == "renamed_add_numbers"
+    await tm.cleanup()
+
+
+@pytest.mark.asyncio
+async def test_register_local_tools_defaults_to_function_when_name_absent():
+    """Without ``name``, the registration name stays the function name."""
+    tm = ToolManager()
+    tm._register_local_tools(
+        [
+            {
+                "module": "tests.ut.tools.test_local_tools",
+                "function": "add_numbers",
+            }
+        ]
+    )
+    assert tm.exists("add_numbers")
+    assert not tm.exists("renamed_add_numbers")
+    await tm.cleanup()
+
+
+@pytest.mark.asyncio
 async def test_register_local_tools_rejects_explicit_sub_agent_tool():
     """Explicit ``sub_agent_tool`` in ``TOOLS.local_functions`` is forbidden."""
     tm = ToolManager()

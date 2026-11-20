@@ -537,6 +537,103 @@ class TestCollapsePtDRange:
         assert "PARTITION(pt_d = '$date')" in out
         assert "pt_d <= '$date'" not in out
 
+    # --- 回归：``<`` + 调度宏（用户报的场景）-------------------------------
+
+    def test_exclusive_upper_bound_with_placeholder(self):
+        """``pt_d < '$date'`` → 上界是基准日且不含上界 → 往前挪一天。
+
+        这是用户报的原始场景：``pt_d < '$date' AND pt_d >= '${start_time,-23,yyyyMMdd}'``。
+        早先的实现把 ``<`` 的上界当普通字面量处理不了宏，直接留占位符；
+        现在先把宏解析成真实日期，再按 ``<`` 的语义挪一天。
+        """
+        sql = "SELECT a FROM t WHERE pt_d < '$date' AND pt_d >= '${start_time,-23,yyyyMMdd}'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert "pt_d = '20261020'" in out
+        assert "$date" not in out
+        assert "start_time" not in out
+        assert "<" not in out
+        assert ">=" not in out
+
+    def test_exclusive_upper_bound_placeholder_stays_in_range(self):
+        """收敛结果必须落在原时间窗口内（不能跑到基准日之后那一天）。"""
+        base = "20261021"
+        sql = "SELECT a FROM t WHERE pt_d < '$date' AND pt_d >= '${start_time,-23,yyyyMMdd}'"
+        out = vt._collapse_pt_d_range(sql, base)
+        collapsed = vt._RANGE_PARTITION_RE.search(out).group("val")
+        # 上界（不含）= 基准日 → 收敛日必须 < 基准日
+        assert collapsed < base
+        # 下界 = 基准日 - 23 天 → 收敛日必须 >= 下界
+        assert collapsed >= "20260928"
+
+    def test_lower_bound_only_resolves_macro(self):
+        """只有下界、没有上界时，也要能把宏解析掉（早先会整条留成占位符）。"""
+        sql = "SELECT a FROM t WHERE pt_d >= '${start_time,-23,yyyyMMdd}'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert "start_time" not in out
+        assert "pt_d = '20260928'" in out
+
+    def test_last_seven_day_macro_resolves(self):
+        sql = "SELECT a FROM t WHERE pt_d <= '$last_seven_day'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert "last_seven_day" not in out
+        assert "pt_d = '20261014'" in out
+
+    def test_brace_date_macro_resolves(self):
+        """``${date}`` 形态与 ``$date`` 等价。"""
+        sql = "SELECT a FROM t WHERE pt_d <= '${date}'"
+        out = vt._collapse_pt_d_range(sql, "20261021")
+        assert "${date}" not in out
+        assert "pt_d = '20261021'" in out
+
+    def test_non_partition_column_untouched(self):
+        """只处理 ``pt_d``；别的列上的占位符不在本函数的职责范围内。"""
+        sql = "SELECT a FROM t WHERE other_col <= '$date'"
+        assert vt._collapse_pt_d_range(sql, "20261021") == sql
+
+    def test_non_date_value_ignored(self):
+        """既不是宏也不是日期的值 → 忽略，整条 SQL 原样返回。"""
+        sql = "SELECT a FROM t WHERE pt_d <= 'not_a_date'"
+        assert vt._collapse_pt_d_range(sql, "20261021") == sql
+
+
+# ===========================================================================
+# 调度宏 → 真实日期解析
+# ===========================================================================
+
+
+class TestResolveSchedulerMacro:
+    """``_resolve_scheduler_macro``：调度宏 → 真实日期（``YYYYMMDD``）。"""
+
+    def test_bare_date(self):
+        assert vt._resolve_scheduler_macro("$date", "20261021") == "20261021"
+
+    def test_brace_date(self):
+        assert vt._resolve_scheduler_macro("${date}", "20261021") == "20261021"
+
+    def test_start_time_with_offset(self):
+        """``${start_time,-23,yyyyMMdd}`` → 基准日往前 23 天。"""
+        assert vt._resolve_scheduler_macro("${start_time,-23,yyyyMMdd}", "20261021") == "20260928"
+
+    def test_start_time_with_positive_offset(self):
+        """正偏移往后挪。"""
+        assert vt._resolve_scheduler_macro("${start_time,3,yyyyMMdd}", "20261021") == "20261024"
+
+    def test_last_seven_day(self):
+        assert vt._resolve_scheduler_macro("$last_seven_day", "20261021") == "20261014"
+
+    def test_quoted_token(self):
+        """带引号的值也能解析。"""
+        assert vt._resolve_scheduler_macro("'$date'", "20261021") == "20261021"
+
+    def test_unknown_macro_returns_empty(self):
+        """解析不出来 → 返回空串（调用方兜底），不瞎猜。"""
+        assert vt._resolve_scheduler_macro("${weird_var}", "20261021") == ""
+        assert vt._resolve_scheduler_macro("", "20261021") == ""
+
+    def test_month_boundary(self):
+        """跨月偏移不能算错。"""
+        assert vt._resolve_scheduler_macro("${start_time,-25,yyyyMMdd}", "20261003") == "20260908"
+
 
 # ===========================================================================
 # Text analysis helpers
@@ -2111,10 +2208,10 @@ class TestSqlFilePathContract:
 
 
 class TestQualityCheckNotInValidationChain:
-    """质量校验已从本链路移除 —— 只在 post-hook 里跑一次。
+    """质量校验已从本链路移除 —— 只在用户显式触发时跑一次。
 
     动机：静态校验阶段要"快"，agent 才能快速迭代修 SQL；昂贵的采样统计
-    放到交付后由 ``dataops_quality_check_post`` post-hook 统一执行。
+    放到用户输入「执行数据校验」后由 ``dataops_validate_data`` 统一执行。
     """
 
     @pytest.mark.asyncio

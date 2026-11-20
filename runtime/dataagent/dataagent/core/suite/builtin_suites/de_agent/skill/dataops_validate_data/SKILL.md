@@ -2,136 +2,241 @@
 name: dataops_validate_data
 description: |
   Use when (任一即触发):
-    1. 独立数据验证 —— 用户给了一张表（或一条 INSERT 语句 / 建表 DDL）,
-       要看这张表/这批数据是否合理(空值/单一值/比率越界/行数);
-    2. 目标表已有历史产出 —— 想直接对那张真实表做数据体检,而不是再跑一遍试算。
-  本 skill **只做数据验证**:不建表、不插入、不用临时表替换,直接查真实目标表。
-  字段来源三选一:①只给表名 → 走 semantic 元数据取列;②给 DDL → 解析列清单;
-    ③给 DML(INSERT) → 解析 SELECT 投影。
-  能力:空值覆盖率(non-null rate) + 单一值覆盖率(single-value ratio)
-    + 异常值占比(outlier ratio,仅比率类字段) + 数据行数(row count,表级)。
+    1. **用户输入「执行数据校验」** —— 交付之后用户显式要求校验数据质量,
+       MUST 调用本工具(不要自己写 SQL 查,不要只口头回复);
+    2. 用户要求「校验/体检」一份交付物的数据质量(空值/单一值/比率越界/行数);
+    3. 用户给了一条 INSERT 语句或建表 DDL,问「这批数据看着对吗」;
+    4. 用户只给了一个**表名**(如「biads.xxx 这表现在数据对吗」)——
+       走**直连真实目标表**的只读兜底路径。
+  两条路径:
+    ①**试算链路**(workspace 里有 insert_*.sql/create_*.sql 时):建临时表 →
+      试算 INSERT → 全部质量校验项 → 流程型校验(常识/回源比对) →
+      error 级违规自修正闭环 → 结论落盘。校验对象是「这份交付物跑出来的数据」。
+    ②**直连兜底**(没有交付物、只给了表名时):只读查真实目标表 → 同一套
+      校验项。**不建表、不插入、不改真实数据、不做自修正。**
   实现:工具 `dataops_validate_data`(`de_agent/tools/dataops_validate_data_tool.py`),
-    校验器注册表在 `actions/tools/local_tool/dataops_quality_check.py`。
-  NOT for: 建表 + 试算 + 交付后自动校验(那是 dataops_quality_check skill 的活);
-    字段是否存在/取值范围探查(那是 dataops_probe 的活);
+    校验器注册表在 `actions/tools/local_tool/dataops_quality_check.py`,
+    自修正在 `actions/tools/local_tool/dataops_self_correct.py`。
+  NOT for: 字段是否存在/取值范围探查(那是 dataops_probe 的活);
     SQL 语法/规范校验(那是 validate_deliverables 的活)。
 ---
 
-# 独立数据验证 (Standalone Data Validation)
+# 数据校验 (Data Validation)
 
 ## 核心心智模型
 
-```
-   目标表 db.table  +  字段清单
-        │              └─ 从哪来（三种给法，三条来源）
-        │                 ① 表名 → semantic-service 列元数据
-        │                 ② DDL  → CREATE TABLE 的列清单
-        │                 ③ DML  → INSERT 的 SELECT 投影
-        ▼
-   直接查【真实目标表】（只读！）
-        │
-        ├─ null_rate          空值覆盖率
-        ├─ single_value_ratio 单一值覆盖率
-        ├─ outlier_ratio      异常值占比（仅比率类字段）
-        └─ row_count          数据行数（表级指标，不挂字段）
-        │
-        ▼
-   Markdown 表格 → 前端展示
-```
+**两条路径，自动选**：
 
-**与 `dataops_quality_check` skill 的边界**（别用错）：
+```
+  ①主路径：试算链路（workspace 里有交付物时）
+     workspace 里的交付物 (insert_*.sql + create_*.sql)
+          │  自动定位：dml_path > sql_file_path > workspace 里最新的 insert_*.sql
+          ▼
+     建临时表（按 create_*.sql）           → adhoctemp.tmp_*
+     试算 INSERT（写入量截断到采样量级）
+     全部质量校验项（多条 SQL 并发）
+          ├─ null_rate          空值覆盖率
+          ├─ single_value_ratio 单一值覆盖率
+          ├─ outlier_ratio      异常值占比（仅比率类字段）
+          ├─ row_count          数据行数（表级，全量 COUNT）
+          ├─ pk_duplicate_rate  主键重复率（表级，全表算，必须为 0）
+          └─ negative_count     计数型字段负值占比（必须为 0）
+     流程型校验
+          ├─ common_sense       常识违规（抽样 20 行 + 模型判定）
+          └─ source_reconciliation 抽样 3 行回源比对
+     DROP 临时表（无论成败）
+          ▼
+     自修正闭环（有 error 级违规时）
+        改 SQL → 备份 → 写回 → **重新走整个上面** → 复检
+        （复检必须完整；部分完成 ≠ 收敛）
+          ▼
+     落盘  .runtime/data_quality_<digest>.json
+          ▼
+     Markdown 报告 + 明确的「交付结论」
 
-| | 本 skill（独立数据验证） | `dataops_quality_check` skill |
-|---|---|---|
-| 入口 | `dataops_validate_data` | `trial_compute_table` / 交付后 post-hook |
-| 建表 | **不建** | 按 `create_*.sql` 建临时表 |
-| 插入 | **不插** | 试算 INSERT 到临时表 |
-| 查哪张表 | **真实目标表** `db.table` | `adhoctemp.tmp_*` 临时表 |
-| 临时表替换 | **不做** | 做 |
+  ②兜底路径：直连真实目标表（workspace 里没有交付物、只给了表名时）
+     target_table（db.table）
+          │  字段走 semantic 元数据
+          ▼
+     只读查真实表 → 同一套校验项 → Markdown 报告 + 「数据结论」
+     **不建表、不插入、不改真实数据、不做自修正**
+```
 
 ## 什么时候用
 
-- 用户直接甩了一张表名：「`biads.ads_user_profile_ds` 这张表的数据看着对吗？」
-- 用户给了一条 INSERT：「这条 SQL 写出来的数据看着对吗？」
+- **用户输入「执行数据校验」** —— 这是最主要的触发场景。交付完成后用户主动
+  要求校验，此时调用本工具。
+- 用户直接甩了一条 INSERT：「这条 SQL 写出来的数据看着对吗？」
 - 用户给了一段建表 DDL：「按这个表结构体检一下。」
-- 目标表里已经有历史产出，想直接体检，不用再跑一遍试算。
-- 交付前自查：想让 agent 主动对某个目标表跑一次数据体检。
+- **用户只给了一个表名**：「`biads.xxx` 这张表现在数据对吗？」—— 走兜底路径。
+- 交付前自查：想让 agent 主动对交付物跑一次数据体检。
 
-**不该用的场景**：要「建表 + 试算 + 校验 + 清理」这一整套 —— 那是
-`dataops_quality_check` skill 的 `trial_compute_table`（或交付后的 post-hook）。
+**不该用的场景**：要「建表 + 试算 + 校验 + 清理」这一整套但用户没要求校验
+（那是 `dataops_quality_check` skill 的 `trial_compute_table`）—— 那个工具只
+试算+校验，不做自修正闭环，也不落盘。
 
 ## 典型调用
 
 ```python
-# ① 只给表名 —— 字段走 semantic 元数据
+# 最常见：交付后用户输入「执行数据校验」—— 不传任何参数，
+# 工具自己去 workspace 里找交付物
+dataops_validate_data()
+
+# 显式指定交付物（推荐 —— 不依赖 workspace 扫描）
+dataops_validate_data(dml_path="<workspace>/insert_ads_user_profile_ds.sql")
+
+# 只有表名 —— 走兜底路径（直连真实目标表，只读）
 dataops_validate_data(target_table="biads.ads_user_profile_ds")
 
-# ② 给 DDL —— 字段从 CREATE TABLE 的列清单解析
+# 指定目标表（只用于报告展示，不影响试算路径）
 dataops_validate_data(
-    sql="CREATE TABLE biads.ads_user_profile_ds (udid STRING, pay_cnt_udid BIGINT)",
-)
-
-# ③ 给 DML —— 字段从 INSERT 的 SELECT 投影解析（推荐传文件路径，
-#    避免大段 SQL 进 chat history）
-dataops_validate_data(
-    sql_file_path="<workspace>/sql/insert_ads_user_profile_ds.sql",
+    dml_path="<workspace>/insert_ads_user_profile_ds.sql",
+    target_table="biads.ads_user_profile_ds",
 )
 ```
 
 参数：
 
-| 参数 | 必填 | 说明 |
-|---|---|---|
-| `sql` | 三选一 | SQL 语句文本（INSERT 或 DDL 皆可） |
-| `sql_file_path` | 三选一 | 工作区里 SQL 文件的路径（**推荐**） |
-| `target_table` | 三选一 | 目标表 `db.table`；留空则从 SQL 里解析 |
-| `partition_filter` | 否 | 分区条件，如 `pt_d = '20261020'`；留空则从 INSERT 解析 |
-
-> 至少要给出「表名 / SQL 文件路径 / SQL 文本」三者之一，否则工具会优雅跳过
-> （`reason=no_sql`）。
-
-## 字段来源优先级
-
-| 给法 | 字段怎么来 | 有类型吗 |
-|---|---|---|
-| 表名 | semantic-service `table-columns-info` | 有（`value_type`） |
-| DDL | `CREATE TABLE ... (col TYPE, ...)` | 有 |
-| DML | `INSERT ... SELECT` 的投影别名 | semantic 补 → workspace 的 DDL → `IS NOT NULL` |
-
-> DDL 的表名可以不带库名（`CREATE TABLE ads_x (...)`）—— 这种情况下要显式传
-> `target_table`，工具才知道查哪张表。
-
-字段类型决定判空写法：**STRING 存储**用 `!bicoredata.IsEmpty(col)`（空字符串也算空），
-数值/时间戳等用 `col IS NOT NULL`。DDL / semantic 两条路径天然带类型，所以口径最准。
-
-> `varchar(n)` / `char(n)` 也按字符串处理（空串算空）。类型查找**大小写不敏感** ——
-> DDL / semantic 的列名大小写与 INSERT 投影不一致时也能对上。
-
-分区列（`pt_d`/`pt`/`pt_h`）、时间戳（`create_time`/`update_time`/`modify_time`）、
-主键 ID（`id`/`uuid`/`udid`/`guid`/`row_key`）会被自动排除 —— 这些字段做覆盖率统计没有业务含义。
-
-**类型拿不到时的降级链**：semantic → workspace 的 `create_*.sql`（**仅当它的表名与目标表一致**）→
-`IS NOT NULL`（对所有类型都成立，比用错类型安全）。
+| 参数 | 说明 |
+|---|---|
+| `dml_path` | 工作区里 INSERT SQL 的路径。**留空时自动在 workspace 里找** `insert_*.sql`（同名时**根目录**那份优先 —— `sql/` 里的只是 `organize_workspace` 复制出来的镜像，不是交付物本体）。 |
+| `sql_file_path` | 同上的另一个入口。 |
+| `sql` | 直接给 SQL 文本。**仅当既没有路径也找不到交付物时**才有意义 —— 此时**无法写回**，自修正会被跳过（报告里会注明「自修正未执行」）。 |
+| `target_table` | 目标表 `db.table`。**两种用法**：① 试算路径里只是用于报告展示（留空时从交付物猜）；② **workspace 里没有交付物时，填了它就直连真实目标表做只读校验**（字段走 semantic 元数据）。 |
+| `partition_filter` | 分区过滤条件（形如 `pt_d = '20261020'`）。**只对直连真实目标表的兜底路径生效** —— 试算链路查的是临时表，它的分区过滤由校验器**从交付物 INSERT 的 `PARTITION (...)` 里自动推导**（见下方约束 8）。留空时直连模式查「一周之前」那一天。 |
 
 ## 关键约束（Must Follow）
 
-1. **只读**。本工具不建表、不插入、不删表、不改真实数据。它只是查表。
-   不要在调用前先「建一张临时表再验证」—— 那是另一条链路。
-2. **不强制要求 INSERT**。`CREATE` / `SELECT` / 空语句不会因为「不是 INSERT」被跳过 ——
-   DDL 能提供字段，SELECT 会被优雅跳过（没有目标表可查）。
-3. **目标表必须是真实表**。工具从 INSERT 的 `INSERT OVERWRITE TABLE db.table`
-   或 DDL 的 `CREATE TABLE db.table` 解析目标；解析不出来会优雅跳过并提示显式传
-   `target_table`。
-4. **分区只用 `pt_d`**。INSERT 里写了字面日期分区时，工具沿用它的**日期**，
-   并统一归一化成天分区 `pt_d = 'YYYYMMDD'` —— 小时/分钟分区（`pt_h` / `pt_i`）
-   不单独使用（与数据探查、质量校验链路的 `pt_d` 口径一致）。
-   写的是 `$date` 占位符时，工具用默认分区列 `pt_d` + 一周前的日期。
-   要查别的分区，显式传 `partition_filter`（同样只支持 `pt_d`）。
+1. **用户说「执行数据校验」时 MUST 调用本工具**。不要自己写 SQL 去查，
+   不要只回一句「已校验」—— 校验要走试算链路（临时表 + 全部校验项 +
+   流程型校验 + 自修正闭环），手工查只能覆盖一部分。
+2. **校验对象是临时表，不是真实目标表**。试算链路把目标改写成
+   `adhoctemp.tmp_*`，写进去的是「这份交付物跑出来的数据」。真实目标表里
+   的数据可能是上一版 SQL 写的，校验它没有意义。
+3. **不建表、不插入真实表**。临时表建完就删（无论成败），真实数据零影响。
+4. **分区只用 `pt_d`**，且用的是「一周之前」的日期（真实产出已稳定落盘）。
+   静态校验链路用的是「一年之后」，两者刻意不同。
 5. **采样而非全表**。默认 `LIMIT 10000` 行统计，极端倾斜数据请调大
    `tools.yaml` 里 `dataops_validate_data.config.quality_check.sample_size`。
-   （例外：数据行数 `row_count` 是表级指标，必须全量 COUNT，不采样。）
-6. **多条 SQL 并发执行**。DataOps 不支持把多个校验项合并成一条语句，所以
-   空值率 / 单一值比率 / 异常值占比 / 数据行数是**多条独立语句并发提交**的。
+   （例外：`row_count` 与 `pk_duplicate_rate` 是表级指标，必须全量算，不采样。）
+6. **主键重复率是全表指标，但试算写入被截断** —— 它算的是「临时表这 N 行里
+   的重复率」，报告会标注口径。主键列取自
+   `DataTaskIR.identity.components`（明细/特征任务）或
+   `output_features[].aggregation.grain`（聚合表粒度），
+   其次 `quality_check.primary_key_columns` 配置，
+   **最后是 semantic-service 元数据里的主键标记**（`is_primary_key`）。
+   四个来源都拿不到就**跳过**该项并注明「未提供主键列」，不猜主键。
+   **semantic 兜底为什么必须有**：独立的数据校验（用户输入「执行数据校验」）
+   **根本没建 DataTaskIR** → 前两个来源必然为空；`tools.yaml` 里的
+   `primary_key_columns` 默认是注释掉的 → 三个来源全落空 → 主键重复率与
+   抽样回源比对**整项跳过** —— 而它们恰恰是正确性校验里最硬的两条。
+   声明是复合主键时必须**整组都**在目标表的列里存在，否则整组作废并跳过 ——
+   把复合主键降级成单列主键会报出「重复率极高」的误报。
+   **主键匹配用的是「未排除」的投影列** —— `exclude_fields` 里有 `udid` /
+   `id` / `uuid` / `guid`，而这些恰恰经常就是主键本身；排除名单的本意是
+   「这些字段做**覆盖率**统计没业务含义」，不是「不能当主键」。7. **空表（0 行）→ error 级违规，阻断交付**。0 行时字段级指标全是
+   `SUM(IF(...)) / COUNT(1)` = `0/0` = **NULL**，指标表里渲染成
+   **「无数据」**（不是「—」——「—」读起来像「该指标不适用」，而真实语义是
+   「**一行数据都没校验到**」）。同时产出 `empty_table` 这条 error 级违规，
+   交付结论会写「**本表不建议直接交付**」。
+   判定依据是「`row_count` **成功算出且等于 0**」——「没算出来」是**未知**，
+   不猜成空表。
+   **注意**：真正的 0 行只可能来自试算本身没数据。查不到数据还有另一个原因 ——
+   **分区口径错位**（见下一条），那是校验器的 bug，不是数据的问题。
+8. **临时表模式的分区过滤 = 交付物 INSERT 里写死的分区值**。临时表是**分区表**
+   （DDL 的 `PARTITIONED BY` 被原样保留），Spark / Hive 的分析器会拒绝扫描分区表
+   却没有分区条件的语句（`partition condition not found in where or on node`），
+   所以**不能简单地「不过滤」**。
+   但也**不能**用试算的基准日（today-7）去过滤 —— 临时表里只有这一次 INSERT
+   写进去的数据，它落在哪个分区取决于**交付物自己的分区声明**
+   （`PARTITION (pt_d = '20261020')` → 数据在 `20261020`）。用基准日过滤 →
+   查询恒为 0 行 → 报「空表」→ 把一次**成功的**试算误判成「一行数据都没校验过」。
+   所以校验器**解析交付物 INSERT 的 `PARTITION (...)` 子句**，取里面**静态写死**
+   的分区字面量当过滤条件（`$date` / `${date}` 会被替换成试算基准日）。
+   解析不出来（**动态分区** `PARTITION (pt_d)` / 表达式分区 / 调度宏）时
+   退回「不过滤」。
+   直连真实表**才需要**自己指定分区（`partition_filter` 或默认「一周之前」）。
+9. **分区列名从 DDL 解析，不硬编码 `pt_d`**。交付物按 `ds` / `dt` /
+   `p_date` 分区是常态；分区列名错了，直连模式的分区过滤就查不到行 →
+   报「空表」。DDL 声明的分区列优先于配置的 `partition_col`。
+10. **DDL 与 DML 必须按目标表配对**。多表交付时 workspace 里可能有多个
+    `create_*.sql`；拿 A 表的建表语句建 B 表的临时表 → schema 和数据对不上，
+    列类型也会认错（STRING 被当成数值 → 判空口径直接错）。
+    找不到匹配时退回「最新修改的那份」。
+    **DDL 不带库名（`CREATE TABLE ads_x`）时按裸表名匹配** —— 只认 `db.table`
+    的话这种 DDL 永远匹配不上 → 又退回「按 mtime 取最新」→ 拿到的可能是
+    **另一张表**的 DDL。
+11. **交付物本体是 workspace 根目录那份，不是 `sql/` 里的镜像**。
+    `organize_workspace`（agent 级 post-hook）用 `shutil.copy` 把根目录的
+    `insert_*.sql` 复制到 `sql/` —— 不保留 mtime，**副本反而更新**。
+    按「最新修改」挑会挑到影子副本，于是自修正把补丁写回**影子**，
+    根目录的交付物原封不动 —— 而语法校验链路读的是**根目录**那份，
+    于是它看到的还是**改坏之前**的 SQL。agent 明明被告知「已修好」，
+    交付物却没变。
+12. **主键匹配用的是「未排除」的字段集** —— `exclude_fields` 里有 `udid` /
+    `id` / `uuid` / `guid`，而这些恰恰经常就是主键本身；排除名单的本意是
+    「这些字段做**覆盖率**统计没业务含义」，不是「不能当主键」。
+    覆盖率统计用「已排除」的字段，主键匹配用「未排除」的字段。
+13. **复合主键用多列 `GROUP BY`，不用 `CONCAT_WS`** —— 生产 adHoc 跑的是
+    Spark SQL，`CONCAT_WS` 是 Hive 函数，没注册（实测报错
+    `Undefined function: 'CONCAT_WS'`）。
+14. **回源比对需要源表信息**。`source_reconciliation` 从 INSERT 的 `FROM`/`JOIN`
+    解析源表清单；解析不到或没有主键列时记「无法验证」，不判定为不匹配。
+15. **多条 SQL 并发执行**。DataOps 不支持把多个校验项合并成一条语句，所以
+    空值率 / 单一值比率 / 异常值占比 / 数据行数是**多条独立语句并发提交**的。
+16. **自修正只处理 error 级违规**，warning 级只报告不修正。自修正会**改写
+    交付文件**（原文件备份成 `insert_x.sql.bak.<轮次>`），所以它必须拿到
+    文件路径 —— 找不到交付物时自修正会被跳过。
+17. **未收敛 MUST 要求人工复核**，不伪装成功。报告的「交付结论」小节会
+    明确写出来。**复检没跑成 ≠ 校验通过** —— 复检试算失败时报告写
+    「复检未产出任何结果」，**绝不会**写「✅ 自修正已收敛」。
+18. **「没跑完」与「有告警」必须分开说**。报告摘要句会直接点名**哪几项没跑完**
+   （报告会被前端截断，只写在末尾小节里等于没说），并明写
+   「**未跑完的校验项没有产出结论 —— 不等于校验通过**」。
+19. **「被跳过」也必须点名**。因信息不足而跳过的校验项（最典型的是主键拿不到
+   时的 `pk_duplicate_rate` 与 `source_reconciliation`）与「跑完了但没告警」
+   完全是两回事 —— 前者**根本没跑**。报告摘要句会写明「N 项校验因信息不足
+   被跳过（名字）—— 这些项**没有产出任何结论**」，「交付结论」小节里也会
+   重复一次。不点名的话，摘要写「校验全部通过」而末尾小节里有一行
+   「pk_duplicate_rate：未提供主键列」，用户会读成**所有规则都验过了**。
+20. **抽样到的实际数据要进报告**。常识检测抽了 20 行，报告里必须能看到
+   这些行 —— 「0 处违规」这个结论**只有放回具体取值才可信**。没有违规明细
+   时，抽样数据是**唯一**能证明「校验真的跑过」的证据。
+21. **报告形状固定**。十个小节永远按同一顺序出现（校验概况 / 校验项执行情况 /
+   字段级指标 / 表级指标 / 数据示例 / 正确性违规明细 / 告警明细 / 流程型校验明细 /
+   自修正结果 / 交付结论），内容为空时写明「（无内容）」而**不是让小节凭空消失**。
+   格式每次都不一样时，用户每次都要重新扫一遍结构才知道这次查了什么；
+   而且「这一小节没出现」到底是「没查」还是「查完了没问题」根本分不清。
+   实现见 `actions/tools/local_tool/dataops_quality_report_format.py`。
+22. **每一项校验都要有数据示例**。「数据示例」小节给**统一口径**的样本
+   （主键 + 全部校验字段），「流程型校验明细」里给**各自口径**的抽样
+   （常识 20 行 / 回源 3 行）—— 两者不可互相替代：前者回答「指标算在什么
+   数据上」，后者回答「模型 / 回源到底看了什么」。23. **超时**：质量校验 SQL 的超时是 **1 小时**（`_MAX_CHECK_TIMEOUT_SEC`），
+   与主 INSERT 链路对齐。远端单次 HTTP 请求超时是 30s
+   （`DATAOPS_REQUEST_TIMEOUT_SEC`）、MCP 单次调用 300s
+   （`DATAOPS_MCP_TIMEOUT`）—— 这两个是**单次调用**超时，不是整轮校验超时。
+
+## 两条路径的边界
+
+| | ①试算链路（主） | ②直连真实目标表（兜底） |
+|---|---|---|
+| 触发条件 | workspace 里有 `insert_*.sql` / `create_*.sql` | 没有交付物，**只给了表名** |
+| 校验对象 | 临时表 `adhoctemp.tmp_*`（本次产出） | 真实表 `db.table`（存量数据） |
+| 建表 / 插入 | 建临时表 + 试算 INSERT | **都不做**（只读） |
+| 字段来源 | 交付物 SELECT 投影 | semantic 元数据 |
+| 自修正闭环 | **做**（改 SQL → 重走全流程 → 复检） | **不做** |
+| 结论落盘 | **落盘** `.runtime/data_quality_<hash>.json` | 不落盘 |
+| 主键重复率口径 | 临时表全量（但写入被截断 → 只代表 N 行） | **真实表全量**（非采样） |
+| 分区过滤 | **有**（从交付物 INSERT 的 `PARTITION (...)` 推导；动态分区时无） | 有（`partition_filter` 或默认「一周之前」） |
+| 分区列 | 从 DDL 解析 | 从 DDL 解析；读不到时用配置的 `partition_col` |
+| 结论小节标题 | 「交付结论」 | 「数据结论」 |
+| `data.mode` | 无（默认） | `"direct_table"` |
+
+**直连模式为什么不做自修正**：真实表里的数据是**历史产出** —— 要改它得重跑
+上游任务，不是校验器该干的事。error 级违规如实报出，由用户决定怎么办。
+
+**不要用直连模式去校验「刚交付的 SQL」**：真实表里可能是上一版 SQL 写的数
+据，校验它没有意义。要校验交付物，走试算链路。
 
 ## 返回结果解读
 
@@ -139,33 +244,106 @@ dataops_validate_data(
 
 | 字段 | 含义 |
 |---|---|
-| `ok` | 是否全部通过（无告警） |
-| `skipped` | 是否被优雅跳过（没输入 / 解析不出目标表 / 拿不到字段） |
-| `reason` | 跳过原因：`no_sql` / `no_target_table` / `no_checkable_fields` / `schema_unavailable` / `check_not_run` |
-| `field_source` | 字段来源：`ddl` / `dml` / `semantic` |
-| `warnings` | 告警列表（人类可读） |
-| `details` | `{字段名: {null_rate, single_value_ratio, outlier_ratio}}` |
-| `table_metrics` | `{row_count: N}` —— **表级**指标（数据行数），不挂字段 |
-| `markdown` | 渲染好的 Markdown 表格 + 结论（前端展示用） |
+| `ok` | 试算通过 **且** 没有未解决的 error 级违规（直连模式：校验通过且无 error 级违规） |
+| `passed` | 试算本身是否通过（直连模式：校验项是否全部跑完且无告警） |
+| `skipped` / `reason` | 跳过的原因（`no_dml` / `empty_sql` / `schema_unavailable` / ...） |
+| `mode` | `"direct_table"` 表示走的是直连兜底路径；不填 = 试算路径 |
+| `quality_check` | 完整的校验结论（`details` / `violations` / `warnings` / `table_metrics` / `self_correct`） |
+| `violations` | 结构化违规列表（`rule` / `field` / `severity` / `message` / `evidence` / `suggestion`） |
+| `needs_manual_review` | 自修正未收敛 / 执行失败 / 被关闭 / 直连模式有 error 级违规 —— 需要人工介入 |
+| `persisted_report` | 落盘的结论文件路径（`.runtime/data_quality_<digest>.json`；直连模式不落盘，为 `null`） |
+| `markdown` | 与 `frontend_msg` 相同的完整报告文本 |
 
-`frontend_msg` 里就是那张 Markdown 表格：
+报告结构（**固定形状** —— 十个小节永远按同一顺序出现）：
 
 ```
+【数据校验】试算通过，数据正确性校验全部通过。（校验项：…；采样 10000 行）
+
+流程型校验明细：
+- 常识违规检测：状态=completed；抽样 20 行；发现 0 处违规
+- 抽样回源比对：状态=completed；抽样 3 行；成功比对 1 行
+常识违规检测抽样明细（共 20 行）：
+- 第 1 行：app_id=com.a，pay_cnt_30d=3
+- 第 2 行：app_id=com.b，pay_cnt_30d=0
+（另有 18 行未展示）
+
+### 校验概况
+| 项 | 值 |
+|---|---|
+| 校验对象 | 目标表 `ads.t`（试算临时表 `adhoctemp.tmp_x`） |
+| 校验方式 | 试算临时表 |
+| 采样行数 | 10000 |
+| 主键列 | udid |
+| 质量校验项 | null_rate、single_value_ratio、outlier_ratio |
+| 正确性校验项 | pk_duplicate_rate、negative_count |
+| 违规统计 | 1 处 error 级、0 处 warning 级 |
+
+### 校验项执行情况
+| 校验项 | 状态 | 说明 |
+|---|---|---|
+| 空值覆盖率（`null_rate`） | ✅ 完成 | |
+| 主键重复率（pk_duplicate_rate） | ❌ 未完成 | 执行超时 |
+| 抽样回源比对（source_reconciliation） | ⚪ 已跳过 | 未提供主键列 |
+
+### 字段级指标
 | 字段名 | 非空率(覆盖率) | 单一值比率 | 异常值占比 | 状态 |
 |---|---|---|---|---|
-| udid | 1.0000 | 0.0120 | — | ✅ 通过 |
-| app_dl_retention_ratio_1d_udid | 0.4500 | 0.9800 | 0.0500 | ⚠️ 告警 |
-```
+| udid | 1.0000 | 0.0000 | — | ✅ 通过 |
 
-`—` 表示该指标**不适用**（例如非比率类字段不参与异常值占比）。
-
-表级指标单独一张表：
-
-```
+### 表级指标
 | 表级指标 | 值 |
 |---|---|
-| 数据行数 | 12345 |
+| 数据行数 | 1000 |
+
+### 数据示例
+| 行 | udid | pay_cnt_30d |
+|---|---|---|
+| 1 | u1 | 3 |
+| 2 | u2 | 0 |
+
+### 正确性违规明细
+| 规则 | 字段 | 级别 | 结论 | 证据 | 修正建议 |
+|---|---|---|---|---|---|
+| pk_duplicate_rate | 主键 | ❌ 错误 | 重复率 0.866412 超过阈值 0.000000 | … | … |
+
+### 告警明细
+（无告警）
+
+### 流程型校验明细
+（上面摘要区已有紧凑版，这里是完整版）
+
+### 自修正结果
+- ✅ 自修正成功（第 1 轮）
+
+### 交付结论
+- ✅ 校验项全部跑完
+- ❌ 仍有 1 处 **error 级违规**未解决
+- **本表不建议直接交付**：请先修正上述 error 级违规并重新执行数据校验
 ```
+
+**为什么形状必须固定**：报告格式每次都不一样时，用户每次都要重新扫一遍
+结构才知道「这次查了什么」—— 而且「这一小节没出现」到底是「没查」还是
+「查完了没问题」根本分不清。固定形状把两种情况都变成明确的信息
+（「这一格是空的」本身就是信息），而不是让小节凭空消失。
+
+**「校验项执行情况」小节是核心**：它给**每一个**校验项一行状态
+（✅ 完成 / ❌ 未完成 / ⚪ 已跳过），各自带原因。「跳过」与「跑完了但没告警」
+完全是两回事 —— 前者根本没跑，报告里绝不能把它读成「查过了没问题」。
+
+**「数据示例」与「流程型校验明细」里的抽样是两回事**：
+
+| | 「数据示例」 | 「流程型校验明细」里的抽样 |
+|---|---|---|
+| 口径 | **统一口径**（主键 + 全部校验字段） | **各自口径**（常识 20 行 / 回源 3 行，列也不同） |
+| 用途 | 核对指标算在什么数据上 | 核对模型 / 回源到底看了什么 |
+
+**摘要区（正文之前）必须带数据行**：终端渲染层把工具结果截断到 500 字符
+（DEFAULT_RICH_RESULT_TRUNCATION），而完整报告很长。摘要区里塞进
+**紧凑的抽样行**，用户不用翻文件就能判断「这轮到底验了什么」。
+
+**结论句后面必须紧跟数据行**：常识检测抽了 20 行却一行不展示，用户无法判断
+模型到底看了什么、「没违规」是真没问题还是模型压根没认真看。回源比对同理 ——
+「成功比对 1 行」必须说明**比上了哪几行、没比上的那几行为什么没比上**。
 
 ## 扩展：新增第 N 种校验
 
@@ -175,6 +353,6 @@ dataops_validate_data(
 
 ## 相关文档
 
-- 试算 + 交付后自动校验：`dataops_quality_check` skill
+- 试算（只试算+校验，不自修正不落盘）：`dataops_quality_check` skill
 - 字段存在性/取值范围探查：`dataops_probe` skill
-- SQL 语法/规范校验：`validate_deliverables` 工具
+- SQL 规范校验：`validate_deliverables` 工具

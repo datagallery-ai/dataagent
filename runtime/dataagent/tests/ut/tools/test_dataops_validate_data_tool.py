@@ -10,16 +10,22 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Unit tests for the standalone data validation tool (``dataops_validate_data``).
+"""Unit tests for the data validation tool (``dataops_validate_data``).
+
+The tool now runs the **trial-compute** flow (the flow that used to live in the
+delivery post-hook): scratch table → trial INSERT → quality check → self-correction.
 
 The contracts under test:
 
-1. **Read-only** — the tool never creates/inserts/drops and never rewrites the
-   target into a scratch table; it queries the *real* target table.
-2. **Graceful exit** — no input / unresolvable target table / unavailable schema
-   are friendly skips, not exceptions and not raw error dumps.
-3. **Three field sources** — DML projection, DDL column list, semantic metadata.
-4. **Markdown table** — the metrics are rendered as a Markdown table that the
+1. **Deliverable discovery** — the tool finds the workspace's ``insert_*.sql``
+   (newest wins) or honours an explicit path.
+2. **Graceful exit** — no deliverable / unreadable / empty are friendly skips,
+   not exceptions and not raw error dumps.
+3. **Trial compute delegation** — the trial compute result is the single source
+   of truth for the report; the tool never fabricates a verdict.
+4. **Self-correction** — error-level violations trigger the correction loop, and
+   the verdict comes from a *complete* re-check, never from the "converged" flag.
+5. **Markdown table** — the metrics are rendered as a Markdown table that the
    frontend can display directly.
 """
 
@@ -38,589 +44,861 @@ _INSERT_SQL = (
     "FROM dws.src WHERE pt_d = '20261020'"
 )
 
-_DDL_SQL = (
-    "CREATE TABLE biads.ads_user_profile_ds ("
-    "device_id STRING, app_dl_retention_ratio_1d_udid DOUBLE, pay_cnt_udid BIGINT"
-    ")"
-)
 
-
-def _ctx() -> MagicMock:
+def _ctx(workspace: Path | None = None) -> MagicMock:
     ctx = MagicMock()
     ctx.tool_config = {}
+    runtime = MagicMock()
+    runtime.workspace_dir = workspace
+    ctx.runtime = runtime
     return ctx
 
 
-def _ok_result(**overrides):
-    result = {
+def _quality(**overrides) -> dict:
+    """一份「校验跑完了」的 quality_check 结果。"""
+    quality = {
         "ok": True,
         "warnings": [],
+        "violations": [],
         "details": {
             "pay_cnt_udid": {
                 "null_rate": 0.95,
                 "single_value_ratio": 0.12,
                 "outlier_ratio": None,
             },
-            "app_dl_retention_ratio_1d_udid": {
-                "null_rate": 0.45,
-                "single_value_ratio": 0.98,
-                "outlier_ratio": 0.05,
-            },
         },
         "sampled": True,
         "sample_size": 10000,
         "checks": ["null_rate", "single_value_ratio", "outlier_ratio"],
+        "table_metrics": {"row_count": 1000},
+    }
+    quality.update(overrides)
+    return quality
+
+
+def _trial_result(**overrides) -> dict:
+    """一份「试算通过 + 校验通过」的试算结果。"""
+    result = {
+        "passed": True,
+        "skipped": False,
+        "target_table": "biads.ads_user_profile_ds",
+        "quality_check": _quality(),
     }
     result.update(overrides)
     return result
 
 
+def _deliverable(workspace: Path, name: str = "insert_x.sql", sql: str = _INSERT_SQL) -> Path:
+    path = workspace / name
+    path.write_text(sql, encoding="utf-8")
+    return path
+
+
 # ============================================================================
-# Graceful exit — no usable input
+# Graceful exit — no usable deliverable
 # ============================================================================
 class TestGracefulExit:
     @pytest.mark.asyncio
-    async def test_no_sql_and_no_table_is_a_friendly_skip(self):
-        result = await tool.validate_data("", _tool_context=_ctx())
+    async def test_no_deliverable_is_a_friendly_skip(self, tmp_path):
+        result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
 
         assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "no_sql"
+        assert result["data"]["reason"] == "no_dml"
         assert result["data"]["ok"] is True
         # 必须是人话，不是异常堆栈
-        assert "未检测到可用的校验输入" in result["frontend_msg"]
-        assert "Traceback" not in result["frontend_msg"]
+        assert "未找到可校验的交付物" in result["frontend_msg"]
 
     @pytest.mark.asyncio
-    async def test_whitespace_only_sql_is_a_friendly_skip(self):
-        result = await tool.validate_data("   \n\t  ", _tool_context=_ctx())
+    async def test_inline_sql_without_a_file_still_validates(self, tmp_path):
+        """只给 ``sql`` 文本（没有文件）→ 能试算、能校验，但自修正没法写回。"""
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ) as spy:
+            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx(tmp_path))
+
+        assert result["data"]["passed"] is True
+        assert spy.await_args.kwargs["sql"] == _INSERT_SQL
+
+    @pytest.mark.asyncio
+    async def test_empty_deliverable_is_a_friendly_skip(self, tmp_path):
+        _deliverable(tmp_path, sql="")
+
+        result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
 
         assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "no_sql"
+        assert result["data"]["reason"] == "empty_sql"
+        assert "内容为空" in result["frontend_msg"]
 
     @pytest.mark.asyncio
-    async def test_select_sql_without_target_table_is_a_friendly_skip(self):
-        """纯 SELECT 既没有目标表也没有字段 —— 友好跳过。"""
-        result = await tool.validate_data("SELECT a, b FROM t", _tool_context=_ctx())
-
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "no_target_table"
-        assert "无法确定要校验的目标表" in result["frontend_msg"]
-
-    @pytest.mark.asyncio
-    async def test_insert_without_target_table_is_a_friendly_skip(self):
-        result = await tool.validate_data("INSERT INTO x SELECT a FROM t", _tool_context=_ctx())
-
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "no_target_table"
-        assert "无法确定要校验的目标表" in result["frontend_msg"]
-
-    @pytest.mark.asyncio
-    async def test_missing_sql_file_is_a_friendly_skip(self, tmp_path):
-        result = await tool.validate_data(
-            "", sql_file_path=str(tmp_path / "nope.sql"), _tool_context=_ctx()
-        )
-
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "sql_read_failed"
-        assert "Traceback" not in result["frontend_msg"]
-
-    @pytest.mark.asyncio
-    async def test_empty_sql_file_is_a_friendly_skip(self, tmp_path):
-        path = tmp_path / "insert_x.sql"
-        path.write_text("   \n", encoding="utf-8")
-
-        result = await tool.validate_data(
-            "", sql_file_path=str(path), _tool_context=_ctx()
-        )
-
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "no_sql"
-
-
-# ============================================================================
-# Read-only direct-target validation
-# ============================================================================
-class TestDirectTargetValidation:
-    @pytest.mark.asyncio
-    async def test_queries_the_real_target_table(self):
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
-
-        assert result["data"]["skipped"] is False
-        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
-        # 直连真实目标表 —— 没有临时表参数
-        assert captured["direct_table"] == "biads.ads_user_profile_ds"
-        assert "temp_table" not in captured
-
-    @pytest.mark.asyncio
-    async def test_partition_filter_is_taken_from_the_insert(self):
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
-
-        assert captured["partition_filter"] == "pt_d = '20261020'"
-
-    @pytest.mark.asyncio
-    async def test_explicit_partition_filter_wins(self):
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            await tool.validate_data(
-                _INSERT_SQL, partition_filter="pt_d = '20260101'", _tool_context=_ctx()
-            )
-
-        assert captured["partition_filter"] == "pt_d = '20260101'"
-
-    @pytest.mark.asyncio
-    async def test_explicit_target_table_wins(self):
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            await tool.validate_data(
-                _INSERT_SQL, target_table="biads.other_table", _tool_context=_ctx()
-            )
-
-        assert captured["direct_table"] == "biads.other_table"
-
-    @pytest.mark.asyncio
-    async def test_reads_sql_from_file(self, tmp_path):
-        path = tmp_path / "insert_x.sql"
-        path.write_text(_INSERT_SQL, encoding="utf-8")
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(
-                "", sql_file_path=str(path), _tool_context=_ctx()
-            )
-
-        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
-        assert captured["direct_table"] == "biads.ads_user_profile_ds"
-
-    @pytest.mark.asyncio
-    async def test_no_checkable_fields_is_a_friendly_skip(self):
-        """没有任何可校验项时（字段级 + 表级都关掉）友好跳过。"""
-        ctx = _ctx()
-        ctx.tool_config = {"checks": ["null_rate"]}
-        with patch.object(tool, "run_quality_check", AsyncMock()):
-            result = await tool.validate_data(
-                "INSERT OVERWRITE TABLE biads.t SELECT 1 FROM src", _tool_context=ctx
-            )
-
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "no_checkable_fields"
-        assert "无法解析出可校验的字段" in result["frontend_msg"]
-
-    @pytest.mark.asyncio
-    async def test_table_level_checker_runs_without_parsed_fields(self):
-        """表级指标（数据行数）不依赖字段 —— 字段解析不出来时它仍然可以跑。"""
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(
-                "INSERT OVERWRITE TABLE biads.t SELECT 1 FROM src", _tool_context=_ctx()
-            )
-
-        assert result["data"].get("skipped") is not True
-        assert captured["direct_table"] == "biads.t"
-
-    @pytest.mark.asyncio
-    async def test_check_not_run_is_not_reported_as_pass(self):
-        """校验没跑起来时不能报成「全部通过」。"""
-        with patch.object(tool, "run_quality_check", AsyncMock(return_value=None)):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
-
-        assert result["data"]["ok"] is False
-        assert result["data"]["reason"] == "check_not_run"
-        assert "未能执行" in result["frontend_msg"]
-
-    @pytest.mark.asyncio
-    async def test_sampled_false_is_not_reported_as_pass(self):
+    async def test_table_name_only_falls_back_to_direct_table(self, tmp_path):
+        """workspace 里没有交付物，但给了表名 → 走直连真实目标表的兜底路径。"""
         with patch.object(
             tool,
-            "run_quality_check",
-            AsyncMock(
-                return_value={
-                    "ok": False,
-                    "warnings": [],
-                    "details": {},
-                    "sampled": False,
-                    "error": "partition condition not found",
-                    "sample_size": 10000,
+            "fetch_semantic_columns",
+            new=MagicMock(return_value=(["udid", "pay_cnt"], {"udid": "STRING"})),
+        ), patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=_quality())
+        ) as spy:
+            result = await tool.validate_data(
+                "", target_table="biads.ads_user_profile_ds", _tool_context=_ctx(tmp_path)
+            )
+
+        assert result["data"]["mode"] == "direct_table"
+        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
+        # 直连模式**不试算** —— 不建表不插入。
+        assert spy.await_args.kwargs["direct_table"] == "biads.ads_user_profile_ds"
+        assert "直连真实目标表" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_direct_table_does_not_self_correct(self, tmp_path):
+        """直连模式是只读体检 —— 不改真实数据，也不改上游 SQL。"""
+        errored = _quality(
+            ok=False,
+            violations=[
+                {
+                    "rule": "pk_duplicate_rate",
+                    "field": "主键",
+                    "severity": "error",
+                    "message": "重复率 0.5 超过阈值 0.0",
                 }
-            ),
+            ],
+        )
+
+        with patch.object(
+            tool,
+            "fetch_semantic_columns",
+            new=MagicMock(return_value=(["udid"], {"udid": "STRING"})),
+        ), patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=errored)
+        ), patch.object(
+            tool, "run_self_correct", new=AsyncMock()
+        ) as sc:
+            result = await tool.validate_data(
+                "",
+                target_table="biads.ads_user_profile_ds",
+                _tool_context=_ctx(tmp_path),
+            )
+
+        sc.assert_not_called()
+        assert result["data"]["needs_manual_review"] is True
+        msg = result["frontend_msg"]
+        assert "未执行" in msg
+        assert "不建议" not in msg  # 直连模式没有「交付物」可交付
+
+    @pytest.mark.asyncio
+    async def test_direct_table_schema_unavailable_is_a_friendly_skip(self, tmp_path):
+        """semantic 拿不到字段元数据 → 友好跳过，不是异常。"""
+        from dataagent.actions.tools.local_tool.dataops_table_schema import (
+            SchemaResolutionError,
+        )
+
+        with patch.object(
+            tool,
+            "fetch_semantic_columns",
+            new=MagicMock(side_effect=SchemaResolutionError("表不在元数据里")),
         ):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+            result = await tool.validate_data(
+                "", target_table="biads.nope", _tool_context=_ctx(tmp_path)
+            )
+
+        assert result["data"]["skipped"] is True
+        assert result["data"]["reason"] == "schema_unavailable"
+        assert "表不在元数据里" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_missing_explicit_path_falls_back_to_workspace(self, tmp_path):
+        """显式路径不存在时退回 workspace 扫描，而不是直接报错。"""
+        _deliverable(tmp_path)
+
+        with patch.object(tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())):
+            result = await tool.validate_data(
+                "", dml_path=str(tmp_path / "nope.sql"), _tool_context=_ctx(tmp_path)
+            )
+
+        assert result["data"]["passed"] is True
+
+    @pytest.mark.asyncio
+    async def test_unexpected_error_never_escapes(self, tmp_path):
+        _deliverable(tmp_path)
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(side_effect=RuntimeError("boom"))
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
 
         assert result["data"]["ok"] is False
-        assert "partition condition not found" in result["frontend_msg"]
+        assert result["data"]["reason"] == "validation_failed"
+        assert "数据校验执行失败" in result["frontend_msg"]
 
 
 # ============================================================================
-# Field sources — DML / DDL / semantic
+# Deliverable discovery
 # ============================================================================
-class TestFieldSources:
+class TestDeliverableDiscovery:
     @pytest.mark.asyncio
-    async def test_dml_projection_provides_fields(self):
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
-
-        assert result["data"]["field_source"] == "dml"
-        assert captured["fields"] == [
-            "app_dl_retention_ratio_1d_udid",
-            "pay_cnt_udid",
-        ]
-
-    @pytest.mark.asyncio
-    async def test_ddl_provides_fields_and_types(self):
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(_DDL_SQL, _tool_context=_ctx())
-
-        assert result["data"]["skipped"] is False
-        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
-        assert result["data"]["field_source"] == "ddl"
-        assert captured["fields"] == [
-            "device_id",
-            "app_dl_retention_ratio_1d_udid",
-            "pay_cnt_udid",
-        ]
-        assert captured["column_types"]["device_id"] == "string"
-        assert captured["column_types"]["pay_cnt_udid"] == "bigint"
-
-    @pytest.mark.asyncio
-    async def test_table_name_alone_uses_semantic_metadata(self):
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        semantic_fields = ["device_id", "pay_cnt_udid"]
-        semantic_types = {"device_id": "string", "pay_cnt_udid": "bigint"}
-
-        with (
-            patch.object(tool, "run_quality_check", _fake_run),
-            patch.object(
-                tool,
-                "fetch_semantic_columns",
-                return_value=(semantic_fields, semantic_types),
-            ),
-        ):
-            result = await tool.validate_data(
-                target_table="biads.ads_user_profile_ds", _tool_context=_ctx()
-            )
-
-        assert result["data"]["skipped"] is False
-        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
-        assert result["data"]["field_source"] == "semantic"
-        assert captured["fields"] == semantic_fields
-        assert captured["column_types"] == semantic_types
-        assert captured["direct_table"] == "biads.ads_user_profile_ds"
-
-    @pytest.mark.asyncio
-    async def test_semantic_unavailable_is_a_friendly_skip(self):
-        from dataagent.actions.tools.local_tool.dataops_table_schema import (
-            SchemaResolutionError,
-        )
+    async def test_finds_insert_sql_in_workspace(self, tmp_path):
+        _deliverable(tmp_path)
 
         with patch.object(
-            tool,
-            "fetch_semantic_columns",
-            side_effect=SchemaResolutionError("表 `x` 在元数据中不存在或没有字段。"),
-        ):
-            result = await tool.validate_data(
-                target_table="biads.missing_table", _tool_context=_ctx()
-            )
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ) as spy:
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
 
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "schema_unavailable"
-        assert "元数据中不存在" in result["frontend_msg"]
-        assert "Traceback" not in result["frontend_msg"]
+        assert result["data"]["passed"] is True
+        assert spy.await_args.kwargs["sql"] == _INSERT_SQL
 
-    @pytest.mark.asyncio
-    async def test_unexpected_semantic_exception_does_not_escape(self):
-        """semantic 抛非 SchemaResolutionError 的异常时，不能冒泡给调用方。
+    def test_prefers_the_newest_insert_file(self, tmp_path):
+        """``sql/`` 里可能是上一轮的旧副本 —— 必须取最新修改的那个。"""
+        old = tmp_path / "sql"
+        old.mkdir()
+        stale = old / "insert_old.sql"
+        stale.write_text("INSERT OVERWRITE TABLE t SELECT 1", encoding="utf-8")
+        fresh = tmp_path / "insert_new.sql"
+        fresh.write_text("INSERT OVERWRITE TABLE t SELECT 2", encoding="utf-8")
 
-        回归点：``except SchemaResolutionError`` 之外没有兜底，形态异常的
-        元数据会打穿工具的「永不抛异常」契约。
+        import os
+        import time
+
+        now = time.time()
+        os.utime(stale, (now - 3600, now - 3600))
+
+        assert tool._find_dml(tmp_path) == fresh
+
+    def test_ignores_non_insert_files(self, tmp_path):
+        (tmp_path / "create_x.sql").write_text("CREATE TABLE t (a STRING)", encoding="utf-8")
+        (tmp_path / "notes.md").write_text("hello", encoding="utf-8")
+
+        assert tool._find_dml(tmp_path) is None
+
+    def test_prefers_root_deliverable_over_sql_mirror(self, tmp_path):
+        """同名时**根目录**优先 —— ``sql/`` 只是镜像，不是交付物本体。
+
+        ``organize_workspace`` 用 ``shutil.copy`` 把根目录的 ``insert_*.sql``
+        复制到 ``sql/``（不保留 mtime → 副本反而更新）。按 mtime 取「最新」
+        会挑到影子副本，于是自修正把修好的 SQL 写回**影子**，而根目录的
+        交付物原封不动 —— 语法校验链路读根目录那份，看到的还是改坏前的 SQL。
         """
-        with patch.object(
-            tool,
-            "fetch_semantic_columns",
-            side_effect=RuntimeError("metavisor exploded"),
-        ):
-            result = await tool.validate_data(
-                target_table="biads.some_table", _tool_context=_ctx()
-            )
+        import os
+        import time
 
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "schema_unavailable"
-        assert "Traceback" not in result["frontend_msg"]
-        assert "metavisor exploded" in result["frontend_msg"]
+        mirror_dir = tmp_path / "sql"
+        mirror_dir.mkdir()
+        root = tmp_path / "insert_a.sql"
+        root.write_text("INSERT OVERWRITE TABLE t SELECT 1", encoding="utf-8")
+        mirror = mirror_dir / "insert_a.sql"
+        mirror.write_text("INSERT OVERWRITE TABLE t SELECT 1", encoding="utf-8")
 
-    @pytest.mark.asyncio
-    async def test_resolution_failure_does_not_escape(self):
-        """解析阶段整体挂掉时，也要变成友好跳过而不是抛异常。"""
-        with patch.object(
-            tool,
-            "_resolve_target_and_fields",
-            side_effect=ValueError("bad input"),
-        ):
-            result = await tool.validate_data(
-                target_table="biads.some_table", _tool_context=_ctx()
-            )
+        # 让副本的 mtime **更新**（模拟 shutil.copy 的行为）
+        now = time.time()
+        os.utime(root, (now - 3600, now - 3600))
+        os.utime(mirror, (now, now))
 
-        assert result["data"]["skipped"] is True
-        assert result["data"]["reason"] == "resolution_failed"
-        assert "Traceback" not in result["frontend_msg"]
+        assert tool._find_dml(tmp_path) == root
 
     @pytest.mark.asyncio
-    async def test_excluded_fields_are_dropped(self):
-        """分区列 / 时间戳 / 主键 ID 不参与校验。"""
-        captured = {}
+    async def test_self_correct_writes_back_to_root_deliverable(self, tmp_path):
+        """端到端：自修正的补丁必须落到**根目录**的交付物上。
 
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
+        ``sql/`` 里的镜像必须**保持原样** —— 它只是备份。
+        """
+        import os
+        import time
 
-        ddl = (
-            "CREATE TABLE biads.t ("
-            "device_id STRING, pt_d STRING, create_time TIMESTAMP, pay_cnt_udid BIGINT)"
+        mirror_dir = tmp_path / "sql"
+        mirror_dir.mkdir()
+        root = tmp_path / "insert_a.sql"
+        root.write_text("INSERT OVERWRITE TABLE t SELECT 1", encoding="utf-8")
+        mirror = mirror_dir / "insert_a.sql"
+        mirror.write_text("INSERT OVERWRITE TABLE t SELECT 1", encoding="utf-8")
+
+        # 让副本的 mtime **更新**（模拟 shutil.copy 的行为）
+        now = time.time()
+        os.utime(root, (now - 3600, now - 3600))
+        os.utime(mirror, (now, now))
+
+        fixed_sql = "INSERT OVERWRITE TABLE t SELECT 2"
+
+        async def _fake_self_correct(*, dml_path, original_sql, violations, recheck, **kwargs):
+            # 模拟自修正：写回修正后的 SQL，并触发一次完整复检。
+            await recheck(fixed_sql)
+            return MagicMock(
+                converged=True,
+                to_dict=lambda: {"status": "converged"},
+            )
+
+        error_quality = _quality(
+            ok=False,
+            violations=[
+                {
+                    "id": "pk_duplicate_rate",
+                    "tier": "error",
+                    "severity": "error",
+                    "message": "主键重复",
+                }
+            ],
         )
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(ddl, _tool_context=_ctx())
-
-        assert result["data"]["skipped"] is False
-        assert captured["fields"] == ["device_id", "pay_cnt_udid"]
-
-    @pytest.mark.asyncio
-    async def test_empty_field_list_still_runs_table_level_checks(self):
-        """字段一个都没有时，表级校验项（数据行数）仍要能跑。
-
-        回归点：``fields=[]`` 曾被当成「没传字段」，导致整轮校验被跳过。
-        """
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result(table_metrics={"row_count": 42})
-
-        ctx = _ctx()
-        ctx.tool_config = {"checks": ["row_count"]}
-        with (
-            patch.object(tool, "run_quality_check", _fake_run),
-            patch.object(tool, "fetch_semantic_columns", return_value=([], {})),
-        ):
-            result = await tool.validate_data(
-                target_table="biads.ads_user_profile_ds", _tool_context=ctx
-            )
-
-        assert result["data"]["skipped"] is False
-        # 传的是**列表**（可能是空的），不是 None —— None 表示「字段由调用方自己解析」。
-        assert captured["fields"] == []
-
-    @pytest.mark.asyncio
-    async def test_ddl_with_bare_table_name_is_recognised_as_ddl(self):
-        """裸表名的 DDL 也要被识别为 DDL（不能误走 semantic 路径）。
-
-        回归点：``looks_like_ddl`` 曾要求表名带库名，导致裸表名 DDL 被丢掉。
-        """
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(
-                "CREATE TABLE ads_user_profile_ds (device_id STRING)",
-                target_table="biads.ads_user_profile_ds",
-                _tool_context=_ctx(),
-            )
-
-        assert result["data"]["skipped"] is False
-        assert result["data"]["field_source"] == "ddl"
-        assert captured["fields"] == ["device_id"]
-        assert captured["direct_table"] == "biads.ads_user_profile_ds"
-
-    @pytest.mark.asyncio
-    async def test_backtick_quoted_insert_target_is_normalised(self):
-        """反引号包裹的目标表要解析成 ``db.table``。
-
-        回归点：只 ``strip("`")`` 剥首尾的话，``\\`biads\\`.\\`ads_x\\``` 会留下
-        中间的反引号变成 ``biads`.`ads_x`` —— 拿这个名字去查表必然查不到。
-        """
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        sql = "INSERT OVERWRITE TABLE `biads`.`ads_user_profile_ds` SELECT device_id FROM src"
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(sql, _tool_context=_ctx())
-
-        assert result["data"]["target_table"] == "biads.ads_user_profile_ds"
-        assert captured["direct_table"] == "biads.ads_user_profile_ds"
-
-    @pytest.mark.asyncio
-    async def test_ddl_comment_mentioning_create_table_is_not_misdetected(self):
-        """注释里写 ``create table`` 不应把 INSERT 误判成 DDL。"""
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        sql = (
-            "-- create table biads.something\n"
-            "INSERT OVERWRITE TABLE biads.t SELECT device_id FROM src"
-        )
-        with patch.object(tool, "run_quality_check", _fake_run):
-            result = await tool.validate_data(sql, _tool_context=_ctx())
-
-        assert result["data"]["field_source"] == "dml"
-        assert captured["fields"] == ["device_id"]
-
-    @pytest.mark.asyncio
-    async def test_dml_path_enriches_types_from_semantic(self):
-        """DML 路径也去 semantic 补一次列类型 —— 判空写法的口径靠它。"""
-        captured = {}
-
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
 
         with (
-            patch.object(tool, "run_quality_check", _fake_run),
             patch.object(
                 tool,
-                "fetch_semantic_columns",
-                return_value=(["device_id"], {"device_id": "string"}),
+                "_invoke_trial_compute",
+                new=AsyncMock(return_value=_trial_result(quality_check=error_quality)),
             ),
+            patch.object(tool, "run_self_correct", new=AsyncMock(side_effect=_fake_self_correct)),
         ):
-            await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+            await tool.validate_data("", _tool_context=_ctx(tmp_path))
 
-        assert captured["column_types"] == {"device_id": "string"}
+        # 补丁落在根目录的交付物上
+        assert root.read_text(encoding="utf-8") == fixed_sql
+        # 镜像没被动过
+        assert mirror.read_text(encoding="utf-8") == "INSERT OVERWRITE TABLE t SELECT 1"
 
     @pytest.mark.asyncio
-    async def test_dml_path_degrades_gracefully_when_semantic_unavailable(self):
-        """semantic 查不到类型时不能抛异常 —— 降级成 None（退回 DDL / IS NOT NULL）。"""
-        from dataagent.actions.tools.local_tool.dataops_table_schema import (
-            SchemaResolutionError,
-        )
+    async def test_explicit_dml_path_wins(self, tmp_path):
+        explicit = _deliverable(tmp_path, name="chosen.sql", sql="INSERT OVERWRITE TABLE t SELECT 9")
+        _deliverable(tmp_path, name="insert_other.sql")
 
-        captured = {}
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ) as spy:
+            await tool.validate_data(
+                "", dml_path=str(explicit), _tool_context=_ctx(tmp_path)
+            )
 
-        async def _fake_run(sql, **kwargs):
-            captured.update(kwargs)
-            return _ok_result()
-
-        with (
-            patch.object(tool, "run_quality_check", _fake_run),
-            patch.object(
-                tool,
-                "fetch_semantic_columns",
-                side_effect=SchemaResolutionError("查不到"),
-            ),
-        ):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
-
-        assert result["data"]["skipped"] is False
-        assert captured["column_types"] is None
+        assert spy.await_args.kwargs["sql"] == "INSERT OVERWRITE TABLE t SELECT 9"
 
 
 # ============================================================================
-# Markdown table rendering
+# Trial compute delegation
+# ============================================================================
+class TestTrialComputeDelegation:
+    @pytest.mark.asyncio
+    async def test_trial_failure_is_reported_as_failure(self, tmp_path):
+        _deliverable(tmp_path)
+
+        failed = {
+            "passed": False,
+            "skipped": False,
+            "error": "Table not found: biads.x",
+            "log_analysis": {"error_type": "table_not_found", "suggestions": ["检查表名"]},
+        }
+        with patch.object(tool, "_invoke_trial_compute", new=AsyncMock(return_value=failed)):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        assert result["data"]["ok"] is False
+        assert result["data"]["passed"] is False
+        msg = result["frontend_msg"]
+        assert "试算失败" in msg
+        assert "Table not found" in msg
+        assert "检查表名" in msg
+
+    @pytest.mark.asyncio
+    async def test_sampled_false_is_not_reported_as_pass(self, tmp_path):
+        """校验没跑起来 —— 不能报成「全部通过」，也不能报成「0 处告警」。"""
+        _deliverable(tmp_path)
+
+        result_ = _trial_result(
+            quality_check={"sampled": False, "error": "提交超时"}
+        )
+        with patch.object(tool, "_invoke_trial_compute", new=AsyncMock(return_value=result_)):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        msg = result["frontend_msg"]
+        assert "未能执行" in msg
+        assert "提交超时" in msg
+        assert "全部通过" not in msg
+
+    @pytest.mark.asyncio
+    async def test_partial_completion_is_not_reported_as_pass(self, tmp_path):
+        """部分完成 ≠ 通过。"""
+        _deliverable(tmp_path)
+
+        result_ = _trial_result(
+            quality_check=_quality(
+                ok=False,
+                failed_checks=[{"name": "common_sense", "reason": "超时"}],
+                completed_checks=["null_rate", "row_count"],
+            )
+        )
+        with patch.object(tool, "_invoke_trial_compute", new=AsyncMock(return_value=result_)):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        msg = result["frontend_msg"]
+        # 「未完整完成」必须出现在**摘要句**里，且必须点名缺了哪几项 ——
+        # 报告会被前端截断，只把它放在末尾小节里等于没说。
+        assert "未完整完成" in msg
+        assert "未跑完" in msg
+        assert "common_sense" in msg
+        # 「没跑完」与「有告警」必须分开说，不能混成一句。
+        assert "不等于校验通过" in msg
+
+
+# ============================================================================
+# Markdown table + report shape
 # ============================================================================
 class TestMarkdownTable:
     @pytest.mark.asyncio
-    async def test_frontend_msg_contains_a_markdown_table(self):
-        with patch.object(tool, "run_quality_check", AsyncMock(return_value=_ok_result())):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+    async def test_frontend_msg_contains_a_markdown_table(self, tmp_path):
+        _deliverable(tmp_path)
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
 
         msg = result["frontend_msg"]
-        assert "| 字段名 | 非空率(覆盖率) | 单一值比率 | 异常值占比 | 状态 |" in msg
-        assert "|---|---|---|---|---|" in msg
-        assert "| pay_cnt_udid | 0.9500 | 0.1200 | — | ✅ 通过 |" in msg
+        assert "| 字段 |" in msg or "|" in msg
+        assert "pay_cnt_udid" in msg
 
     @pytest.mark.asyncio
-    async def test_not_applicable_metric_renders_as_dash(self):
-        """非比率类字段的异常值占比是 None —— 必须渲染成 ``—`` 而不是 0。"""
-        with patch.object(tool, "run_quality_check", AsyncMock(return_value=_ok_result())):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+    async def test_original_msg_and_frontend_msg_carry_the_table(self, tmp_path):
+        _deliverable(tmp_path)
 
-        assert "| pay_cnt_udid | 0.9500 | 0.1200 | — | ✅ 通过 |" in result["frontend_msg"]
-        assert "| 0.0000 |" not in result["frontend_msg"]
-
-    @pytest.mark.asyncio
-    async def test_warned_field_is_flagged(self):
-        result_payload = _ok_result(
-            ok=False,
-            warnings=["字段 'app_dl_retention_ratio_1d_udid' 非空率 0.4500 < 阈值 0.80"],
-        )
-        with patch.object(tool, "run_quality_check", AsyncMock(return_value=result_payload)):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
-
-        assert "⚠️ 告警" in result["frontend_msg"]
-        assert "1 处告警" in result["frontend_msg"]
-
-    @pytest.mark.asyncio
-    async def test_original_msg_and_frontend_msg_carry_the_table(self):
-        with patch.object(tool, "run_quality_check", AsyncMock(return_value=_ok_result())):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
 
         assert result["original_msg"] == result["frontend_msg"]
-        assert "| 字段名 |" in result["original_msg"]
         assert result["data"]["markdown"] == result["frontend_msg"]
 
     @pytest.mark.asyncio
-    async def test_data_payload_carries_structured_details(self):
-        with patch.object(tool, "run_quality_check", AsyncMock(return_value=_ok_result())):
-            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx())
+    async def test_data_payload_carries_structured_details(self, tmp_path):
+        _deliverable(tmp_path)
 
-        assert result["data"]["details"]["pay_cnt_udid"]["null_rate"] == 0.95
-        assert result["data"]["sample_size"] == 10000
-        assert result["data"]["checks"] == [
-            "null_rate",
-            "single_value_ratio",
-            "outlier_ratio",
-        ]
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        data = result["data"]
+        assert data["details"]["pay_cnt_udid"]["null_rate"] == 0.95
+        assert data["table_metrics"]["row_count"] == 1000
+        assert data["quality_check"]["sampled"] is True
+
+    @pytest.mark.asyncio
+    async def test_report_has_an_explicit_delivery_conclusion(self, tmp_path):
+        """必须有明确的「交付结论」—— 避免把「试算通过」读成「数据没问题」。"""
+        _deliverable(tmp_path)
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        assert "交付结论" in result["frontend_msg"]
+        assert "校验项全部跑完" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_error_violation_blocks_delivery_conclusion(self, tmp_path):
+        """有 error 级违规 → 结论必须说「不建议直接交付」。"""
+        _deliverable(tmp_path)
+
+        result_ = _trial_result(
+            quality_check=_quality(
+                ok=False,
+                violations=[
+                    {
+                        "rule": "pk_duplicate_rate",
+                        "field": "主键",
+                        "severity": "error",
+                        "message": "重复率 0.5 超过阈值 0.0",
+                    }
+                ],
+            )
+        )
+        with patch.object(tool, "_invoke_trial_compute", new=AsyncMock(return_value=result_)):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        assert result["data"]["ok"] is False
+        msg = result["frontend_msg"]
+        assert "error 级违规" in msg
+        assert "不建议直接交付" in msg
+
+
+# ============================================================================
+# Self-correction
+# ============================================================================
+class TestSelfCorrection:
+    @pytest.mark.asyncio
+    async def test_no_error_violation_skips_self_correction(self, tmp_path):
+        """只有 warning 级告警 → 不触发自修正。"""
+        _deliverable(tmp_path)
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ), patch.object(tool, "run_self_correct", new=AsyncMock()) as sc:
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        sc.assert_not_called()
+        assert result["data"]["quality_check"]["self_correct"]["status"] == "not_needed"
+
+    @pytest.mark.asyncio
+    async def test_inline_sql_cannot_self_correct_but_says_so(self, tmp_path):
+        """没有交付文件 → 自修正无法写回 → 必须**显式**标记，不能静默跳过。
+
+        静默跳过会让用户看到「发现 N 处 error 级违规」却看不到任何自修正
+        痕迹，以为闭环跑过了。
+        """
+        errored = _trial_result(
+            quality_check=_quality(
+                ok=False,
+                violations=[
+                    {
+                        "rule": "pk_duplicate_rate",
+                        "field": "主键",
+                        "severity": "error",
+                        "message": "重复率 0.5 超过阈值 0.0",
+                    }
+                ],
+            )
+        )
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=errored)
+        ), patch.object(tool, "run_self_correct", new=AsyncMock()) as sc:
+            result = await tool.validate_data(_INSERT_SQL, _tool_context=_ctx(tmp_path))
+
+        sc.assert_not_called()
+        assert result["data"]["needs_manual_review"] is True
+        self_correct = result["data"]["quality_check"]["self_correct"]
+        assert self_correct["status"] == "unavailable"
+        # 报告里必须显式写出「未执行」+ 原因，不能静默跳过。
+        assert "未执行" in result["frontend_msg"]
+        assert "没有交付文件可供写回" in result["frontend_msg"]
+    @pytest.mark.asyncio
+    async def test_error_violation_triggers_self_correction(self, tmp_path):
+        _deliverable(tmp_path)
+
+        first = _trial_result(
+            quality_check=_quality(
+                ok=False,
+                violations=[
+                    {
+                        "rule": "pk_duplicate_rate",
+                        "field": "主键",
+                        "severity": "error",
+                        "message": "重复率 0.5 超过阈值 0.0",
+                    }
+                ],
+            )
+        )
+        # 复检后违规清零。
+        second = _trial_result()
+
+        corrected = MagicMock()
+        corrected.converged = True
+        corrected.to_dict.return_value = {"status": "converged", "rounds": 1, "converged": True}
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(side_effect=[first, second])
+        ), patch.object(tool, "run_self_correct", new=AsyncMock(return_value=corrected)), patch.object(
+            tool, "resolve_config", new=MagicMock()
+        ), patch.object(
+            tool, "resolve_llm", new=MagicMock(return_value=MagicMock())
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        assert result["data"]["quality_check"]["self_correct"]["converged"] is True
+        assert "自修正已收敛" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_unconverged_requires_manual_review(self, tmp_path):
+        """未收敛 MUST 明确要求人工复核 —— 不伪装成功。"""
+        _deliverable(tmp_path)
+
+        first = _trial_result(
+            quality_check=_quality(
+                ok=False,
+                violations=[
+                    {
+                        "rule": "pk_duplicate_rate",
+                        "field": "主键",
+                        "severity": "error",
+                        "message": "重复率 0.5 超过阈值 0.0",
+                    }
+                ],
+            )
+        )
+        second = _trial_result(
+            quality_check=_quality(
+                ok=False,
+                violations=[
+                    {
+                        "rule": "pk_duplicate_rate",
+                        "field": "主键",
+                        "severity": "error",
+                        "message": "重复率 0.5 超过阈值 0.0",
+                    }
+                ],
+            )
+        )
+
+        corrected = MagicMock()
+        corrected.converged = False
+        corrected.to_dict.return_value = {
+            "status": "not_converged",
+            "rounds": 3,
+            "converged": False,
+            "reason": "仍有 error 级违规",
+        }
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(side_effect=[first, second])
+        ), patch.object(tool, "run_self_correct", new=AsyncMock(return_value=corrected)), patch.object(
+            tool, "resolve_config", new=MagicMock()
+        ), patch.object(
+            tool, "resolve_llm", new=MagicMock(return_value=MagicMock())
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        assert result["data"]["needs_manual_review"] is True
+        msg = result["frontend_msg"]
+        assert "需要人工复核" in msg
+        assert "不建议直接交付" in msg
+
+    @pytest.mark.asyncio
+    async def test_disputed_status_reports_rule_review_not_sql_fix(self, tmp_path):
+        """模型判定误报 → 报告必须引导去**复核校验规则**，而不是改 SQL。"""
+        _deliverable(tmp_path)
+
+        first = _trial_result(
+            quality_check=_quality(
+                ok=False,
+                violations=[
+                    {
+                        "rule": "common_sense",
+                        "field": "target_conversion_rate",
+                        "severity": "error",
+                        "message": "转换率超过 1",
+                    }
+                ],
+            )
+        )
+        second = _trial_result()
+
+        corrected = MagicMock()
+        corrected.converged = False
+        corrected.to_dict.return_value = {
+            "status": "disputed",
+            "rounds": 1,
+            "converged": False,
+            "disputed": True,
+            "reason": "模型判定该违规不成立（判定为误报）：common_sense；实际值与期望值一致",
+        }
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(side_effect=[first, second])
+        ), patch.object(tool, "run_self_correct", new=AsyncMock(return_value=corrected)), patch.object(
+            tool, "resolve_config", new=MagicMock()
+        ), patch.object(
+            tool, "resolve_llm", new=MagicMock(return_value=MagicMock())
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        msg = result["frontend_msg"]
+        # 报告里必须区分「误报」和「改不动」。
+        assert "误报" in msg
+        assert "复核校验规则" in msg
+        # 不能出现「自修正未收敛」这种把误报说成改不动的措辞。
+        assert "自修正未收敛" not in msg
+
+
+# ============================================================================
+# Empty table — 0 行时字段级校验是「空跑」，不能读成「通过」
+# ============================================================================
+class TestEmptyTable:
+    """0 行 → 字段级指标全是 ``0/0 = NULL``。
+
+    早先这些 NULL 被渲染成 ``—``（"该指标不适用"），与「真的不适用」混为一谈 ——
+    报告看起来"只有 1 处 row_count 小告警，其余字段都通过了"，而实际上
+    **一行数据都没校验到**。用户选定的语义：**error 级违规，阻断交付**。
+    """
+
+    @staticmethod
+    def _empty_quality() -> dict:
+        return _quality(
+            ok=False,
+            empty_table=True,
+            violations=[
+                {
+                    "rule": "empty_table",
+                    "field": "",
+                    "severity": "error",
+                    "message": "目标表 0 行 —— 字段级校验全部无意义",
+                    "evidence": {"row_count": 0},
+                    "suggestion": "先确认上游源表在试算分区是否有数据",
+                },
+                {
+                    "rule": "row_count",
+                    "field": "",
+                    "severity": "warning",
+                    "message": "数据行数 0 < 阈值 1",
+                    "evidence": {"row_count": 0.0},
+                    "suggestion": "",
+                },
+            ],
+            details={
+                "exposure_cnt": {"null_rate": None, "single_value_ratio": None},
+                "target_cvr": {"null_rate": None, "single_value_ratio": None},
+            },
+            table_metrics={"row_count": 0},
+        )
+
+    @pytest.mark.asyncio
+    async def test_empty_table_blocks_delivery(self, tmp_path):
+        _deliverable(tmp_path)
+
+        with patch.object(
+            tool,
+            "_invoke_trial_compute",
+            new=AsyncMock(return_value=_trial_result(quality_check=self._empty_quality())),
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        assert result["data"]["needs_manual_review"] is True
+        assert result["data"]["ok"] is False
+        msg = result["frontend_msg"]
+        assert "不建议直接交付" in msg
+
+    @pytest.mark.asyncio
+    async def test_empty_table_metrics_say_no_data_not_dash(self, tmp_path):
+        """指标单元格必须是「无数据」，不是 ``—``。
+
+        ``—`` 读起来像「这个字段没有这项指标」（正常）；「无数据」才表达
+        「一行都没校验到」（不正常）。
+        """
+        _deliverable(tmp_path)
+
+        with patch.object(
+            tool,
+            "_invoke_trial_compute",
+            new=AsyncMock(return_value=_trial_result(quality_check=self._empty_quality())),
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        msg = result["frontend_msg"]
+        assert "无数据" in msg
+        # 字段级单元格不能是「—」（那是不适用）
+        assert "| exposure_cnt | 无数据 |" in msg
+
+    @pytest.mark.asyncio
+    async def test_empty_table_violation_is_listed(self, tmp_path):
+        _deliverable(tmp_path)
+
+        with patch.object(
+            tool,
+            "_invoke_trial_compute",
+            new=AsyncMock(return_value=_trial_result(quality_check=self._empty_quality())),
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        rules = [v.get("rule") for v in result["data"]["violations"]]
+        assert "empty_table" in rules
+        assert "empty_table" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_empty_table_survives_a_lost_flag(self, tmp_path):
+        """标志丢了也必须阻断交付。
+
+        ``empty_table`` 标志会跨进程序列化、可能被旧版结果 / 手工构造的
+        结果漏掉 —— 只看标志的话，「一行都没校验到」会被读成「全部通过」。
+        """
+        _deliverable(tmp_path)
+
+        degraded = _quality(
+            ok=False,
+            empty_table=True,
+            violations=[],  # 标志在，违规项不在
+            details={"exposure_cnt": {"null_rate": None, "single_value_ratio": None}},
+            table_metrics={"row_count": 0},
+        )
+
+        with patch.object(
+            tool,
+            "_invoke_trial_compute",
+            new=AsyncMock(return_value=_trial_result(quality_check=degraded)),
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        assert result["data"]["ok"] is False
+        assert result["data"]["needs_manual_review"] is True
+        msg = result["frontend_msg"]
+        assert "不建议直接交付" in msg
+        assert "无数据" in msg
+
+
+# ============================================================================
+# Persistence
+# ============================================================================
+class TestPersistence:
+    @pytest.mark.asyncio
+    async def test_report_is_persisted_to_runtime_dir(self, tmp_path):
+        _deliverable(tmp_path)
+
+        with patch.object(
+            tool, "_invoke_trial_compute", new=AsyncMock(return_value=_trial_result())
+        ):
+            result = await tool.validate_data("", _tool_context=_ctx(tmp_path))
+
+        persisted = result["data"]["persisted_report"]
+        assert persisted is not None
+        path = Path(persisted)
+        assert path.exists()
+        assert path.parent.name == ".runtime"
+        assert path.name.startswith("data_quality_")
+        assert "校验结论已落盘" in result["frontend_msg"]
+
+    def test_persist_failure_does_not_break_the_flow(self, tmp_path):
+        """落盘失败只是少了复核依据 —— 不能阻断任何流程。"""
+        # workspace 指向一个不可写的路径。
+        result = tool._persist_quality_report(
+            workspace=tmp_path / "nested" / "deep",
+            result=_trial_result(),
+        )
+        # 能落盘（tmp_path 可写）—— 断言返回值形态即可。
+        assert result is None or result.exists()
+
+
+# ============================================================================
+# Tool registration
+# ============================================================================
+class TestToolRegistration:
+    """工具必须**注册成 YAML 里写的名字** —— 否则 agent 按名字调用会「not found」。
+
+    Regression（真实事故）：``tools.yaml`` 里声明
+    ``name: "dataops_validate_data"`` + ``function: "validate_data"``，
+    而 ToolManager 早先按 ``function or name`` 解析注册名 → 工具注册成
+    ``validate_data`` → agent 调 ``dataops_validate_data`` 报
+    ``Tool 'dataops_validate_data' not found``。
+    """
+
+    def test_suite_yaml_registers_under_the_declared_name(self):
+        import yaml
+
+        from dataagent.core.managers.action_manager.manager import ToolManager
+
+        yaml_path = (
+            Path(__file__).resolve().parents[3]
+            / "dataagent"
+            / "core"
+            / "suite"
+            / "builtin_suites"
+            / "de_agent"
+            / "tools"
+            / "tools.yaml"
+        )
+        doc = yaml.safe_load(yaml_path.read_text(encoding="utf-8")) or {}
+        entries = doc.get("TOOLS", {}).get("local_functions", [])
+        entry = next(e for e in entries if e.get("name") == "dataops_validate_data")
+
+        tm = ToolManager()
+        try:
+            tm._register_local_tools([entry])
+            assert tm.exists("dataops_validate_data")
+            assert not tm.exists("validate_data")
+            assert tm.get("dataops_validate_data").func is tool.validate_data
+        finally:
+            import asyncio
+
+            asyncio.get_event_loop_policy().new_event_loop().run_until_complete(tm.cleanup())

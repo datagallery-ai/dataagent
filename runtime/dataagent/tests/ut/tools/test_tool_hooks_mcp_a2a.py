@@ -229,7 +229,7 @@ def test_local_function_hooks_from_config(monkeypatch: pytest.MonkeyPatch) -> No
         },
     }
     tool_manager = _init_tool_manager(config, monkeypatch, discover_impl=_noop_discover_all)
-    # ``function`` wins over YAML ``name`` in ToolManager._register_local_tools
-    tool = tool_manager.get("noop_probe_tool")
+    # YAML ``name`` **覆盖**注册名（``function`` 只是模块里的属性名）。
+    tool = tool_manager.get("noop_probe_with_hooks")
     assert tool.pre_hooks[0] is example_hooks.audit_pre
     assert tool.post_hooks[0] is example_hooks.audit_post

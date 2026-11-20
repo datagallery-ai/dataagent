@@ -65,7 +65,9 @@ def validate_data_task_ir_hooks(config: Mapping[str, Any]) -> bool:
         for entry in entries:
             if not isinstance(entry, Mapping) or not entry.get("module"):
                 continue
-            name = entry.get("function") or entry.get("name")
+            # 键用**注册名**（``name`` 覆盖 ``function``）—— 与 ToolManager 的
+            # 注册规则一致，否则同一条目会被算成两个工具。
+            name = entry.get("name") or entry.get("function")
             if not name or (section == "builtin" and name in replaces):
                 continue
             effective_tools[str(name)] = entry

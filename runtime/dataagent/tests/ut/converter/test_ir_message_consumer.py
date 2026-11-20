@@ -34,6 +34,7 @@ from dataagent.utils.converter.ir_message_consumer import (
     build_ir_candidate,
     format_data_lineage,
     get_recent_read_files,
+    parse_read_continuation,
     render_ir_summary,
     should_replace,
     try_replace_with_ir,
@@ -473,6 +474,70 @@ def test_ir_summary_uses_configured_budget():
     assert "first 512 of" in summary.content
     assert "/workspace/output.txt" in summary.content
     assert len(summary.content) < 2000
+
+
+# ── read_file 分页续读：模型必须看得到"下一段从哪读" ──────────────
+
+
+class TestReadContinuationSurfaced:
+    """大文件 read_file 的续读提示位于原文末尾，而 IR 预览只保留开头。
+
+    若不把状态提到摘要顶部，模型既拿不到内容也拿不到下一段的起始行，
+    会被写死的 offset=1 引导语反复引回文件开头，形成死循环。
+    """
+
+    @staticmethod
+    def _read_file_output(start: int, end: int, next_offset: int, body: str = "x" * 10000) -> str:
+        """构造与 read_file 一致的返回文本（状态提示在末尾）。"""
+        return f"{body}\n[Read lines {start}-{end}. More content is available; continue with offset={next_offset}.]"
+
+    def test_continuation_is_parsed(self):
+        continuation = parse_read_continuation(self._read_file_output(start=1641, end=3269, next_offset=3270))
+        assert continuation is not None
+        assert continuation.start_line == 1641
+        assert continuation.end_line == 3269
+        assert continuation.next_offset == 3270
+
+    def test_no_continuation_when_not_truncated(self):
+        """读到文件末尾时没有状态提示，不应凭空造一个。"""
+        assert parse_read_continuation("1\tfoo\n2\tbar") is None
+        assert parse_read_continuation("") is None
+
+    def test_continuation_survives_ir_replacement(self):
+        """整文件读取触发 IR 替换后，续读状态仍须出现在模型可见内容里。"""
+        node = _FakeFileNode(label="f1", description=None, path="/workspace/big.sql")
+        ctx = _make_mock_context({"Action(tc_read)": [node]})
+        content = self._read_file_output(start=1, end=1640, next_offset=1641)
+        msg = ToolMessage(content=content, tool_call_id="tc_read", name="read_file")
+
+        summary = try_replace_with_ir(msg, ctx, max_tool_result_length=4096).content
+
+        assert "Read continuation" in summary
+        assert "offset=1641" in summary
+        # 状态提示位于原文末尾 —— 预览只保留开头，所以它必须被单独提到顶部。
+        assert summary.index("Read continuation") < summary.index("Tool output preview")
+
+    def test_continuation_offset_points_forward(self):
+        """分页读取时引导语必须指向真实的下一段，而不是写死的第 1 行。"""
+        node = _FakeFileNode(label="f1", description=None, path="/workspace/big.sql")
+        ctx = _make_mock_context({"Action(tc_read)": [node]})
+        content = self._read_file_output(start=1641, end=3269, next_offset=3270)
+        msg = ToolMessage(content=content, tool_call_id="tc_read", name="read_file")
+
+        summary = try_replace_with_ir(msg, ctx, max_tool_result_length=4096).content
+
+        assert "continue from offset=3270" in summary
+
+    def test_fresh_read_keeps_generic_example(self):
+        """没有续读状态时（首次读取），保留通用的 offset=1 示例。"""
+        node = _FakeFileNode(label="f1", description=None, path="/workspace/big.sql")
+        ctx = _make_mock_context({"Action(tc_read)": [node]})
+        msg = ToolMessage(content="x" * 10000, tool_call_id="tc_read", name="read_file")
+
+        summary = try_replace_with_ir(msg, ctx, max_tool_result_length=4096).content
+
+        assert "offset=1, limit=20" in summary
+        assert "continue from offset=" not in summary
 
 
 # ── P1: per-session IR summary cache ──────────────────────────────

@@ -120,6 +120,16 @@ ALTER TABLE {db}.{table_name} ADD COLUMNS (
 **新增内容**：{描述每个表修改了哪些 CTE / SELECT / JOIN}
 ```
 
+### Step 10: 交付提示
+
+在回复的最后一句加上（原样）：
+
+`如需校验数据质量，请输入"执行数据校验"。`
+
+> 数据正确性校验**不再在交付后自动执行**（试算要连 DataOps 跑一遍，会拖住
+> 每一轮交付）。用户输入「执行数据校验」后，调用 `dataops_validate_data`
+> 工具走同一条试算 + 校验 + 自修正链路。
+
 ## 降级：目标表不存在时回退新建表流程
 
 当 Step 2 中使用 `check_table_existence` 校验目标表时，如果返回 `exists=False`（表不存在）：
