@@ -19,6 +19,51 @@ env:
   SKIP_POSTINSTALL_BUILD: "1"
 
 jobs:
+  python-package:
+    name: Python SDK and Installed Package
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Install uv
+        run: python -m pip install uv
+      - name: Install locked dependencies
+        run: uv sync --locked
+      - name: Run Python and isolated wheel tests
+        run: uv run --no-sync pytest -q
+
+  tui-system:
+    name: TUI System Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+      - name: Setup Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - name: Setup Node.js
+        uses: actions/setup-node@v5
+        with:
+          node-version: "22"
+          cache: npm
+      - name: Install Python test dependencies
+        run: |
+          python -m pip install uv
+          uv sync --locked
+      - name: Install Node dependencies
+        run: npm ci --ignore-scripts
+      - name: Build TUI
+        run: npm run build:tui
+      - name: Run TUI system tests
+        run: uv run --no-sync pytest -q -m 'tui and not live'
+
   build-and-web-tests:
     name: Build and Web Tests
     if: github.repository == 'datagallery-lab/datafoundry'
@@ -106,4 +151,7 @@ jobs:
         run: npm run smoke:docs
 
       - name: Build documentation in strict mode
-        run: npm run docs:build
+        run: |
+          npm run docs:build
+          grep -Fq 'href="https://gitcode.com/datagallery/dataagent/blob/main/pyproject.toml"' \
+            site/development/package-distribution/index.html

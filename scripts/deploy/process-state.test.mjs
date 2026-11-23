@@ -25,7 +25,7 @@ test("managed startup launches Web and API without preparing missing artifacts",
   });
   const repository = fileURLToPath(new URL("../../", import.meta.url));
   for (const file of ["scripts/start.mjs", "scripts/stack-runner.mjs", "scripts/stack-runtime-config.mjs",
-    "scripts/server-listen.mjs", "scripts/lib/config-yaml.mjs", "scripts/lib/config-env.mjs", "scripts/python-environment.mjs", "scripts/lib/logging.mjs", "scripts/lib/log-redaction.mjs"]) {
+    "ui/shared/server-listen.mjs", "ui/shared/config-yaml.mjs", "ui/shared/config-env.mjs", "ui/shared/python-environment.mjs", "ui/shared/logging.mjs", "ui/shared/log-redaction.mjs"]) {
     await mkdir(path.dirname(path.join(root, file)), { recursive: true });
     await copyFile(path.join(repository, file), path.join(root, file));
   }
@@ -35,7 +35,7 @@ test("managed startup launches Web and API without preparing missing artifacts",
   await writeFile(path.join(root, "home/config.yaml"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
   const log = path.join(root, "commands.jsonl");
   for (const command of ["python", "npm"]) {
-    const location = command === "python" ? path.join(root, "runtime/agentkit/.venv/bin/python") : path.join(root, "bin", command);
+    const location = command === "python" ? path.join(root, ".venv/bin/python") : path.join(root, "bin", command);
     await mkdir(path.dirname(location), { recursive: true });
     await writeFile(location, `#!/usr/bin/env node
 const fs = require('node:fs');

@@ -6,7 +6,7 @@ import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { captureOutput, createLogger } from "../lib/logging.mjs";
+import { captureOutput, createLogger } from "../../ui/shared/logging.mjs";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const FIXTURE_SECRET = "fixture-deploy-secret-at-least-32-chars";
@@ -61,7 +61,7 @@ function shouldCopy(source) {
     "coverage"
   ]);
   if (parts.some((part) => blocked.has(part))) return false;
-  if (relative === ".env" || relative === path.join("apps", "web", ".env.local")) return false;
+  if (relative === ".env" || relative === path.join("ui", "web", ".env.local")) return false;
   // Stale tsbuildinfo from the source tree can make tsc skip emit in the temp checkout (no dist/).
   if (path.basename(source).endsWith(".tsbuildinfo")) return false;
   return true;
@@ -99,7 +99,7 @@ async function main() {
   for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) {
     delete env[key];
   }
-  env.UV_PROJECT_ENVIRONMENT = path.join(tempRoot, "runtime/agentkit/.venv");
+  env.UV_PROJECT_ENVIRONMENT = path.join(tempRoot, ".venv");
 
   try {
     console.log(`[smoke:native-deploy] checkout=${tempRoot}`);
@@ -107,7 +107,7 @@ async function main() {
     await copyCheckout(tempRoot);
     const home = path.join(tempRoot, "dataagent-home");
     await mkdir(home, { recursive: true });
-    const template = parse(await readFile(path.join(tempRoot, "runtime/agentkit/dataagent/bootstrap/templates/config.yaml"), "utf8"));
+    const template = parse(await readFile(path.join(tempRoot, "dataagent/bootstrap/templates/config.yaml"), "utf8"));
     template.server = { host: "127.0.0.1", port: apiPort };
     await writeFile(
       path.join(home, "config.yaml"),
@@ -141,7 +141,7 @@ async function main() {
       timeout: 25 * 60_000
     });
 
-    run("uv", ["run", "--no-sync", "--project", path.join(tempRoot, "runtime/agentkit"),
+    run("uv", ["run", "--no-sync", "--project", path.join(tempRoot, "."),
       "python", "-c", "import importlib.util; import pymysql, psycopg2, av, PIL; assert all(importlib.util.find_spec(name) is None for name in ('pytest', 'pyspark'))"],
     { cwd: tempRoot, env });
 

@@ -16,7 +16,7 @@ const FORBIDDEN = [
   "--demo",
 ];
 
-const CODE_ROOTS = ["apps", "scripts"];
+const CODE_ROOTS = ["ui", "scripts"];
 const CODE_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".mjs", ".cjs", ".json"]);
 const ENV_FILES = [".env.example"];
 
@@ -39,7 +39,7 @@ function isAllowlistedSource(relativePath) {
   if (normalized === "scripts/deploy/cli.test.mjs") return true;
   if (normalized === "scripts/deploy/config.test.mjs") return true;
   if (normalized === "scripts/deploy/config.mjs") return true;
-  if (normalized === "apps/tui/src/no-bare-fetch.guard.test.ts") return true;
+  if (normalized === "ui/tui/src/no-bare-fetch.guard.test.ts") return true;
   if (normalized.startsWith("docs/")) return true;
   if (normalized === "README.md" || normalized === "README_zh.md") return true;
   return false;

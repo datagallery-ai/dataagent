@@ -4,7 +4,8 @@ import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { venvPython, syncPythonEnvironment } from "./python-environment.mjs";
+import { syncPythonEnvironment } from "./python-environment.mjs";
+import { venvPython } from "../ui/shared/python-environment.mjs";
 
 for (const dev of [true, false]) {
   test(`native preparation ${dev ? "uses default groups" : "excludes development dependencies"}`, async () => {
@@ -16,9 +17,9 @@ for (const dev of [true, false]) {
       assert.equal(options.cwd, root);
       assert.equal(options.env, env);
     } });
-    assert.deepEqual(calls, [["sync", "--project", path.join(root, "runtime/agentkit"),
+    assert.deepEqual(calls, [["sync", "--project", path.join(root, "."),
       ...(dev ? [] : ["--no-dev"]), "--extra", "spark", "--extra", "video"]]);
-    assert.equal(venvPython(path.join(root, "runtime/agentkit"), env, "win32"), path.join(root, "runtime/agentkit/custom env/Scripts/python.exe"));
+    assert.equal(venvPython(path.join(root, "."), env, "win32"), path.join(root, "custom env/Scripts/python.exe"));
   });
 }
 

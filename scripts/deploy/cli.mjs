@@ -1,3 +1,4 @@
+import { writeServerListen } from "./server-config.mjs";
 import { execFile, spawn } from "node:child_process";
 import { createRequire } from "node:module";
 import { promisify } from "node:util";
@@ -8,9 +9,9 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { httpOrigin, readServerListen, writeServerListen } from "../server-listen.mjs";
-import { venvPython } from "../python-environment.mjs";
-import { captureOutput, createLogger, logPath } from "../lib/logging.mjs";
+import { httpOrigin, readServerListen } from "../../ui/shared/server-listen.mjs";
+import { venvPython } from "../../ui/shared/python-environment.mjs";
+import { captureOutput, createLogger, logPath } from "../../ui/shared/logging.mjs";
 import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 import {
   deploymentConfigGaps,
@@ -36,7 +37,7 @@ import {
   writeDeploymentState
 } from "./process-state.mjs";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
-const TUI_ENTRY = "apps/tui/dist/index.js";
+const TUI_ENTRY = "ui/tui/dist/index.js";
 
 /** Host and port recorded when the stack started. An incomplete record has no snapshot. */
 export function apiListenFromState(state) {
@@ -297,10 +298,10 @@ export function formatStartBlocked(gaps, missingFiles = []) {
 export async function prepareStartEnvironment(root, diskEnv = {}) {
   const gaps = deploymentConfigGaps(diskEnv);
   const missingFiles = [];
-  if (!existsSync(path.join(root, "apps/web/.next/BUILD_ID"))) {
-    missingFiles.push("apps/web/.next/BUILD_ID");
+  if (!existsSync(path.join(root, "ui/web/.next/BUILD_ID"))) {
+    missingFiles.push("ui/web/.next/BUILD_ID");
   }
-  const interpreter = venvPython(path.join(root, "runtime/agentkit"), { ...diskEnv, ...process.env });
+  const interpreter = venvPython(path.join(root, "."), { ...diskEnv, ...process.env });
   if (!existsSync(interpreter)) missingFiles.push(interpreter);
   if (gaps.length > 0 || missingFiles.length > 0) {
     throw new Error(formatStartBlocked(gaps, missingFiles));

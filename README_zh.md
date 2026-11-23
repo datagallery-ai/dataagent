@@ -1,6 +1,6 @@
 # DataAgent
 
-基于 Python AgentKit / Deep Agents 的本地数据 Agent，提供 Web、TUI、REST、A2A 和 Python SDK。主代理可以委派本地 nl2sql 等插件，按会话保存对话状态、结果文件和 Trace。
+基于 Python 和 Deep Agents 的本地数据 Agent，提供 Web、TUI、REST、A2A 和 Python SDK。主代理可以委派本地 nl2sql 等插件，按会话保存对话状态、结果文件和 Trace。
 
 [English](README.md) · [中文文档](docs/zh/README.md) · [快速开始](docs/zh/quick-start.md)
 
@@ -81,7 +81,7 @@ npm run start:tui
 
 ## 配置与独立启动
 
-使用 `npm run package:agentkit`（或 `make package`）生成独立的 AgentKit 后端包。安装与 Web/TUI 连接步骤见 [AgentKit 包部署](docs/zh/guides/agentkit-package.md)，可用 `npm run smoke:agentkit-package` 验证包与前端配合。
+使用 `npm run package:agentkit`（或 `make package`）生成 DataAgent 的 Python 安装包。安装与 Web/TUI 连接步骤见 [Python 包部署](docs/zh/guides/agentkit-package.md)，可用 `npm run smoke:agentkit-package` 验证包与前端配合。
 
 Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI 首次启动会初始化缺少的配置模板。
 
@@ -97,17 +97,17 @@ Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI
 
 ```bash
 # 只启动后端；也提供 A2A 路由
-uv run --no-sync --project runtime/agentkit dataagent serve
+uv run --no-sync dataagent serve
 
 # 只启动 A2A。与 serve 二选一，同一 Home 不能并行启动两个后端
-uv run --no-sync --project runtime/agentkit dataagent serve-a2a
+uv run --no-sync dataagent serve-a2a
 ```
 
 `serve` 提供 `/healthz`、`/ready`、`/api/v1/runs`、会话和产物接口。`serve-a2a` 不提供这些 REST/健康接口。SDK 可通过 `prepare_runtime`、`create_agent` 和 `ainvoke` 直接调用；其 checkpointer、异常处理和日志配置由调用方宿主管理。
 
 ## A2A 调用
 
-服务提供 `GET /.well-known/agent-card.json` 与 `POST /a2a/jsonrpc`。请求必须带 `A2A-Version: 1.0`；支持默认等待结果和 `returnImmediately: true` 的异步任务查询，不支持 A2A 流式响应；[参数与调用方式](runtime/agentkit/docs/reference/a2a.md#等待结果与异步任务) 见详细示例。
+服务提供 `GET /.well-known/agent-card.json` 与 `POST /a2a/jsonrpc`。请求必须带 `A2A-Version: 1.0`；支持默认等待结果和 `returnImmediately: true` 的异步任务查询，不支持 A2A 流式响应；[参数与调用方式](docs/reference/a2a.md#等待结果与异步任务) 见详细示例。
 
 ```bash
 curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
@@ -142,7 +142,7 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 - [快速开始](docs/zh/quick-start.md)：部署、模型配置、启停与排查。
 - [架构概览](docs/zh/architecture/overview.md)：控制面、Web/TUI 与 A2A 的关系。
 - [配置](docs/zh/reference/configuration-api.md)、[API](docs/zh/reference/rest-api.md)：集成时的现行契约。
-- [贡献指南](CONTRIBUTING.md)。运行时、插件与 SDK 的技术文档位于仓库 `runtime/agentkit/docs/`。
+- [贡献指南](CONTRIBUTING.md)。运行时、插件与 SDK 的技术文档位于仓库 `docs/`。
 - [v0.2.0 历史发布说明](docs/zh/releases/v0.2.0.md)：记录当时的产品设计与能力，不作为当前重构后的验收清单。
 
 ```bash
@@ -154,4 +154,4 @@ npm run test:product
 
 Apache-2.0，见 [LICENSE](LICENSE)。
 
-配置文件使用 YAML 1.2（`config.yaml`、`.plugin.yaml`、`.mcp.yaml`）。用 `uv run --project runtime/agentkit dataagent config migrate` 预览旧 JSON 迁移，确认计划后加 `--apply`。源文件保留；迁移后重启应用。
+配置文件使用 YAML 1.2（`config.yaml`、`.plugin.yaml`、`.mcp.yaml`）。

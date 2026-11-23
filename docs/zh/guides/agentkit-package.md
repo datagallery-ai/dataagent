@@ -1,6 +1,6 @@
-# AgentKit 包部署
+# Python 包部署
 
-AgentKit 沿用 Python 发行包名 `datagallery-dataagent`，导入名为 `dataagent`，CLI 为 `dataagent`。可构建为 wheel 和源码包，包含 API、A2A、SDK、Home 模板、提示词与内置插件。后端运行需要 Python 3.12。Web/TUI 使用 Node.js ≥22.12.0，通过现有 HTTP 接口连接；它们目前仍从前端源码构建，不包含在 Python 包中。
+DataAgent 的 Python 发行包名为 `datagallery-dataagent`，导入名和命令名都是 `dataagent`。可构建为 wheel 和源码包，包含 API、A2A、SDK、Home 模板、提示词与内置插件。后端运行需要 Python 3.12。Web/TUI 使用 Node.js ≥22.12.0，通过现有 HTTP 接口连接；它们目前仍从前端源码构建，不包含在 Python 包中。
 
 ## 构建
 
@@ -15,12 +15,12 @@ npm run package:agentkit
 不使用 npm / Make 封装时，可直接执行相同的 uv 命令；此路径只需 uv 和 Python 3.12，无需 Node.js：
 
 ```bash
-uv build --project runtime/agentkit --out-dir dist/agentkit
-uv export --project runtime/agentkit --no-dev --all-extras \
+uv build --out-dir dist/agentkit
+uv export --no-dev --all-extras \
   --no-emit-project --no-hashes --output-file dist/agentkit/constraints.txt
 ```
 
-默认输出到 `dist/agentkit/`，当前生成 `datagallery_dataagent-0.1.0-py3-none-any.whl`、`datagallery_dataagent-0.1.0.tar.gz` 和 `constraints.txt`。版本来自 `runtime/agentkit/pyproject.toml`。构建器先生成源码包，再从源码包构建 wheel。导出的约束固定运行依赖及全部 extras 的版本，不包含开发测试依赖或依赖包本身；约束不会主动安装可选包。`constraints.txt` 仅固定版本，不包含哈希；它是本次出包的版本快照，不是带哈希的完整性清单。安装时从配置的索引下载，镜像设置沿用 uv/pip 的配置。
+默认输出到 `dist/agentkit/`，当前生成 `datagallery_dataagent-0.1.0-py3-none-any.whl`、`datagallery_dataagent-0.1.0.tar.gz` 和 `constraints.txt`。版本来自 `pyproject.toml`。构建器先生成源码包，再从源码包构建 wheel。导出的约束固定运行依赖及全部 extras 的版本，不包含开发测试依赖或依赖包本身；约束不会主动安装可选包。`constraints.txt` 仅固定版本，不包含哈希；它是本次出包的版本快照，不是带哈希的完整性清单。安装时从配置的索引下载，镜像设置沿用 uv/pip 的配置。
 
 包安装可用 `UV_DEFAULT_INDEX`（uv）或 `--index-url`（pip）指定索引。约束文件不携带源码锁文件的制品 URL，因此包安装不需要改写锁文件或执行 `sed`。
 
@@ -52,7 +52,7 @@ export LLM_API_KEY=replace-with-your-key
 
 ## 可选能力依赖
 
-默认安装包含服务启动、模型对话、SQL 解析及 SQLite、MySQL、PostgreSQL 驱动。MySQL 的 `PyMySQL[rsa]` 包含 SHA-2 认证支持；PostgreSQL 使用 `psycopg2-binary`，导入名为 `psycopg2`，当前执行引擎名为 `gaussvector`，SQL 方言使用 `postgres`，完整配置见 [nl2sql 的 GV 示例](https://gitcode.com/datagallery/dataagent/blob/deepagents_refactor_new/runtime/agentkit/builtin-plugins/nl2sql/README.md#gaussvector-配置)。这些基础数据依赖随普通安装和 `uv sync` 安装，无需选择 extra。
+默认安装包含服务启动、模型对话、SQL 解析及 SQLite、MySQL、PostgreSQL 驱动。MySQL 的 `PyMySQL[rsa]` 包含 SHA-2 认证支持；PostgreSQL 使用 `psycopg2-binary`，导入名为 `psycopg2`，当前执行引擎名为 `gaussvector`，SQL 方言使用 `postgres`，完整配置见 [nl2sql 的 GV 示例](https://gitcode.com/datagallery/dataagent/blob/deepagents_refactor_new/dataagent/plugins/nl2sql/README.md#gaussvector-配置)。这些基础数据依赖随普通安装和 `uv sync` 安装，无需选择 extra。
 
 选择 `psycopg2-binary` 是为了减少部署所需的编译环境；它自带 libpq、OpenSSL 等库，应随驱动包发布维护更新，不能仅依赖系统库升级。`PyMySQL[rsa]` 会同时安装 SHA-2 认证所需的 cryptography。
 
@@ -129,14 +129,14 @@ PowerShell 使用 `$env:NAME="value"` 设置对应进程变量。前端和后端
 现有流水线可继续按下面的接口调用：
 
 ```bash
-make prepare PYTHON_VERSION=3.12
-make build PYTHON_VERSION=3.12
-make package PYTHON_VERSION=3.12
-make ut PYTHON_VERSION=3.12
-make st PYTHON_VERSION=3.12
+make prepare UV_PYTHON=3.12
+make build UV_PYTHON=3.12
+make package UV_PYTHON=3.12
+make ut UV_PYTHON=3.12
+make st UV_PYTHON=3.12
 ```
 
-`PYTHON_VERSION`、`PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL`、`PIP_FIND_LINKS` 和 `NPM_REGISTRY` 保持 Make 参数兼容，已有 npm/uv 原生配置优先。安装及测试通过共享入口执行原生 `uv sync`，使用配置的索引，不要求流水线手动改写 `uv.lock`。仓库保留解析快照，但不强制冻结版本。
+安装及测试通过共享入口执行原生 `uv sync`，使用配置的索引，不要求流水线手动改写 `uv.lock`。仓库保留解析快照，但不强制冻结版本。
 
 `build` 编译 Web/TUI；`package` 生成 Python 安装包，两个阶段不会重复编译前端。若需归档 Python 包，将 `dist/agentkit/` 中的 wheel、源码包和 `constraints.txt` 纳入产物收集；已有前端构建产物目录不变。`ut/st` 自动准备开发测试工具，不需要流水线新增安装命令。部署所需 extras 在部署阶段按需选择。
 

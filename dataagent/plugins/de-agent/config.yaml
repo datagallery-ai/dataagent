@@ -1,0 +1,78 @@
+plugins:
+  config:
+    de-agent:
+      allowed_databases: []
+      model: primary
+      word_roots:
+        english_name_column: 词根英文名
+        chinese_name_column: 词根中文名
+        description_column: 描述
+        type_column: 词根类型
+        regex_column: 特殊词根规则
+        special_type_value: 特殊词根
+        llm_model: primary
+      data_task_ir:
+        enabled: false
+        model: primary
+        refresh_policy: eager
+        max_concurrency: 8
+        completion_batch_size: 1
+        concise_rationale: false
+        compact_json: false
+        field_order: template
+        semantic_field_reuse: false
+      dataops:
+        enabled: true
+        model: primary
+        timeout_s: 3600
+        poll_interval_ms: 30000
+        drop_before_create: true
+        auto_trial_compute: true
+        quality_check:
+          enabled: true
+          checks:
+          - null_rate
+          - single_value_ratio
+          - outlier_ratio
+          - row_count
+          sample_size: 10000
+          thresholds:
+            null_rate_threshold: 0.8
+            single_value_threshold: 0.95
+            outlier_ratio_threshold: 0.0
+            row_count_threshold: 1
+          ratio_field_patterns:
+          - ratio
+        enable_thinking: false
+      sql_checkers:
+        model: primary
+        max_model_calls: 6
+        repair_attempts: 2
+        timeout_seconds: 600
+        disabled_rules: []
+        dataops_validation_enabled: true
+        enable_thinking: false
+      history_sql:
+        enabled: false
+        corpus_path: null
+    nl2sql:
+      model: primary
+      database:
+        dialect: hive
+      nodes:
+      - perceptor
+      - generator
+      - validator
+      - reflector
+      generator:
+        strategies:
+        - prompt
+      validator:
+        read_only: false
+        db_explain: false
+        sql_security_enabled: false
+      run_hooks:
+        before_run:
+        - entrypoint: hooks/nl2sql.py:prepare_input
+        after_run:
+        - entrypoint: hooks/nl2sql.py:finish_output

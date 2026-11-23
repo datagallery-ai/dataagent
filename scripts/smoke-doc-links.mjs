@@ -1,7 +1,7 @@
 import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { dirname, join, normalize, relative } from "node:path";
 
-const roots = ["README.md", "README_zh.md", "CONTRIBUTING.md", "docs", "apps/web/README.md", "apps/tui/README.md"].filter(existsSync);
+const roots = ["README.md", "README_zh.md", "CONTRIBUTING.md", "docs", "ui/web/README.md", "ui/tui/README.md"].filter(existsSync);
 const files = roots.flatMap((root) => collectDocFiles(root)).sort();
 
 const brokenLinks = [];
@@ -11,7 +11,8 @@ const markdownLinkPattern = /\[[^\]]*]\(([^)]+)\)/g;
 
 for (const file of files) {
   const text = readFileSync(file, "utf8");
-  scanLinks(file, text);
+  // Archived designs describe historical files, not the current checkout.
+  if (!file.startsWith("docs/archive/")) scanLinks(file, text);
   scanSensitiveContent(file, text);
 }
 
@@ -112,7 +113,7 @@ function scanSensitiveContent(file, text) {
 }
 
 function isPublicDoc(file) {
-  return file === "README.md" || file === "README_zh.md" || file.startsWith(`docs${"/"}`);
+  return file === "README.md" || file === "README_zh.md" || file.startsWith("docs/en/") || file.startsWith("docs/zh/");
 }
 
 function pointsToInternalDocs(path) {

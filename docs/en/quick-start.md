@@ -130,7 +130,7 @@ The install hook delegates to native `uv sync`, resolving and installing depende
 npm install
 ```
 
-The `postinstall` hook also syncs the control-plane Python dependencies into `runtime/agentkit/.venv`. Continue after the entire command exits successfully, including Python sync. Timing depends on your machine and download sources.
+The `postinstall` hook also syncs the control-plane Python dependencies into `.venv`. Continue after the entire command exits successfully, including Python sync. Timing depends on your machine and download sources.
 
 For separate frontend installation, Python preparation, and build stages, see [staged installation and native commands](guides/mirror-deployment.md#staged-installation).
 

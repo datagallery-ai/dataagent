@@ -33,7 +33,12 @@ jobs:
         run: python -m pip install -r requirements-docs.txt
 
       - name: Build docs
-        run: python -m mkdocs build --strict
+        env:
+          DATAAGENT_DOCS_SOURCE_TREE_URL: ${{ github.server_url }}/${{ github.repository }}/blob/${{ github.sha }}
+        run: |
+          python -m mkdocs build --strict
+          grep -Fq "href=\"$DATAAGENT_DOCS_SOURCE_TREE_URL/pyproject.toml\"" \
+            site/development/package-distribution/index.html
 
       - name: Configure Pages
         uses: actions/configure-pages@v6

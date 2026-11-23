@@ -13,7 +13,7 @@
  *   --config <path>
  */
 import { runStack } from "./stack-runner.mjs";
-import { createLogger, redactLogText } from "./lib/logging.mjs";
+import { createLogger, redactLogText } from "../ui/shared/logging.mjs";
 
 try {
   await runStack({ args: process.argv.slice(2) });

@@ -1,0 +1,53 @@
+# Licensed under the Apache License, Version 2.0 (the "License");
+# you may not use this file except in compliance with the License.
+# You may obtain a copy of the License at
+#
+# http://www.apache.org/licenses/LICENSE-2.0
+#
+# Unless required by applicable law or agreed to in writing, software
+# distributed under the License is distributed on an "AS IS" BASIS,
+# WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+# See the License for the specific language governing permissions and
+# limitations under the License.
+# ============================================================================
+"""business_twin business-ID catalog: packaged schemas, routing rules, ignore lists."""
+
+import json
+from pathlib import Path
+from typing import Any
+
+_CATALOG_PATH = Path(__file__).resolve().parent / "business_twin_business_id_catalog.json"
+
+
+def _load_catalog() -> dict[str, Any]:
+    """Load and validate the packaged business-twin table-selection catalog."""
+    payload = json.loads(_CATALOG_PATH.read_text(encoding="utf-8"))
+    if not isinstance(payload, dict) or payload.get("version") != 1:
+        raise ValueError("unsupported business-twin business ID catalog version")
+    for field in (
+        "ignored_temporal_fields",
+        "business_schemas",
+        "business_rules",
+    ):
+        if field not in payload:
+            raise ValueError(f"business-twin business ID catalog is missing {field!r}")
+    return payload
+
+
+_CATALOG = _load_catalog()
+IGNORED_TEMPORAL_FIELDS = frozenset(_CATALOG["ignored_temporal_fields"])
+BUSINESS_SCHEMAS = {
+    business_id: {
+        "metrics": frozenset(schema["metrics"]),
+        "dimensions": frozenset(schema["dimensions"]),
+    }
+    for business_id, schema in _CATALOG["business_schemas"].items()
+}
+METRIC_FIELDS = frozenset(
+    field for schema in BUSINESS_SCHEMAS.values() for field in schema["metrics"]
+)
+DIMENSION_FIELDS = frozenset(
+    field for schema in BUSINESS_SCHEMAS.values() for field in schema["dimensions"]
+)
+BUSINESS_RULES = dict(_CATALOG["business_rules"])
+del _CATALOG

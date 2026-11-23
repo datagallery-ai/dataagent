@@ -1,6 +1,6 @@
 # DataAgent
 
-A local data agent built on Python AgentKit / Deep Agents, with Web, TUI, REST, A2A, and Python SDK entry points. The main agent can delegate to local plugins such as nl2sql and preserve conversation state, result files, and traces by session.
+A local data agent built with Python and Deep Agents, with Web, TUI, REST, A2A, and Python SDK entry points. The main agent can delegate to local plugins such as nl2sql and preserve conversation state, result files, and traces by session.
 
 [简体中文](README_zh.md) · [Documentation](docs/en/README.md) · [Quick start](docs/en/quick-start.md)
 
@@ -81,7 +81,7 @@ A 200 from `/healthz` means the control plane is live; a 200 from `/ready` means
 
 ## Configuration and independent services
 
-Build a separate AgentKit backend package with `npm run package:agentkit` (or `make package`). See [AgentKit package deployment](docs/en/guides/agentkit-package.md) for installation and Web/TUI connection; `npm run smoke:agentkit-package` verifies the package and frontend integration.
+Build the DataAgent Python package with `npm run package:agentkit` (or `make package`). See [Python package deployment](docs/en/guides/agentkit-package.md) for installation and Web/TUI connection; `npm run smoke:agentkit-package` verifies the package and frontend integration.
 
 Home defaults to `~/.dataagent`; set `DATAAGENT_HOME` in the process environment to change it. The CLI initializes missing configuration templates on first startup.
 
@@ -97,17 +97,17 @@ Prepare the source environment with the required extras first; the commands belo
 
 ```bash
 # Backend, including A2A routes
-uv run --no-sync --project runtime/agentkit dataagent serve
+uv run --no-sync dataagent serve
 
 # A2A only: choose this OR serve, since one Home supports one backend
-uv run --no-sync --project runtime/agentkit dataagent serve-a2a
+uv run --no-sync dataagent serve-a2a
 ```
 
 `serve` provides `/healthz`, `/ready`, `/api/v1/runs`, sessions, and outputs. `serve-a2a` has none of those REST/health routes. SDK callers can use `prepare_runtime`, `create_agent`, and `ainvoke` directly; their host manages the checkpointer, exception handling, and logging configuration.
 
 ## A2A calls
 
-The service exposes `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc`. Requests must include `A2A-Version: 1.0`. Calls can wait for the final result or use `returnImmediately: true` to obtain a Task for polling. A2A streaming is not supported; see [call modes and examples](runtime/agentkit/docs/reference/a2a.md#等待结果与异步任务).
+The service exposes `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc`. Requests must include `A2A-Version: 1.0`. Calls can wait for the final result or use `returnImmediately: true` to obtain a Task for polling. A2A streaming is not supported; see [call modes and examples](docs/reference/a2a.md#等待结果与异步任务).
 
 ```bash
 curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
@@ -142,7 +142,7 @@ See [Security](docs/en/security.md) and [Supported inputs](docs/en/reference/sup
 - [Quick start](docs/en/quick-start.md): deployment, models, lifecycle, and troubleshooting.
 - [Architecture](docs/en/architecture/overview.md): the control plane, Web/TUI, and A2A.
 - [Configuration](docs/en/reference/configuration-api.md) and [API](docs/en/reference/rest-api.md): current integration contracts.
-- [Contributing](CONTRIBUTING.md). Runtime, plugin, and SDK technical docs are under `runtime/agentkit/docs/` in this repository.
+- [Contributing](CONTRIBUTING.md). Runtime, plugin, and SDK technical docs are under `docs/` in this repository.
 - [Historical v0.2.0 release notes](docs/en/releases/v0.2.0.md): product design and capabilities at that time, rather than an acceptance checklist for the current refactored runtime.
 
 ```bash
@@ -154,4 +154,4 @@ npm run test:product
 
 Apache-2.0; see [LICENSE](LICENSE).
 
-Configuration files use YAML 1.2 (`config.yaml`, `.plugin.yaml`, `.mcp.yaml`). Preview legacy JSON migration with `uv run --project runtime/agentkit dataagent config migrate`; add `--apply` after reviewing the plan. Sources are retained; restart after migration.
+Configuration files use YAML 1.2 (`config.yaml`, `.plugin.yaml`, `.mcp.yaml`).

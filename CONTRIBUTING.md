@@ -10,7 +10,7 @@ Thanks for helping improve this project.
 
 ## Local Setup
 
-Node.js 22+ and uv are required. `npm install` syncs the AgentKit Python environment. `npm run build` compiles the web app and TUI.
+Node.js 22+ and uv are required. `npm install` syncs the Python environment at the repository root by default. `npm run build` compiles the web app and TUI.
 
 ```bash
 npm install

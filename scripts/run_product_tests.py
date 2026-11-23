@@ -45,10 +45,10 @@ COMPONENTS = ("agentkit", "api", "web", "tui", "deploy")
 DEFAULT_COMPONENTS = ("agentkit", "api", "web", "tui")
 TIERS = ("ut", "st", "test")
 ST_FILES = (
-    ROOT / "runtime" / "agentkit" / "tests" / "test_a2a_e2e.py",
-    ROOT / "runtime" / "agentkit" / "tests" / "test_product_e2e.py",
-    ROOT / "runtime" / "agentkit" / "tests" / "test_home_startup.py",
-    ROOT / "runtime" / "agentkit" / "tests" / "test_tui_cursor.py",
+    ROOT / "tests" / "test_a2a_e2e.py",
+    ROOT / "tests" / "test_product_e2e.py",
+    ROOT / "tests" / "test_home_startup.py",
+    ROOT / "tests" / "test_tui_cursor.py",
 )
 
 
@@ -90,7 +90,9 @@ def main(argv: Sequence[str] | None = None) -> int:
         node = shutil.which("node")
         if node is None:
             raise SystemExit("node is not on PATH (required to prepare Python dependencies)")
-        prepared = _run("python-prepare", (node, str(ROOT / "scripts/python-environment.mjs"), "--dev"))
+        prepared = _run(
+            "python-prepare", (node, str(ROOT / "scripts/python-environment.mjs"), "--dev")
+        )
         if prepared.exit_code != 0:
             _write_summary([prepared])
             _print_summary([prepared])
@@ -133,7 +135,9 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         action="store_true",
         help="Skip Python dependency preparation. Use an already prepared environment.",
     )
-    parser.add_argument("--fail-fast", action="store_true", help="Stop after the first failing suite.")
+    parser.add_argument(
+        "--fail-fast", action="store_true", help="Stop after the first failing suite."
+    )
     parser.add_argument("--list", action="store_true", help="Print the selected commands and exit.")
     parser.add_argument("--dry-run", action="store_true", help="Same as --list.")
     parser.add_argument(
@@ -187,36 +191,43 @@ def _split_extra(raw: str, label: str) -> tuple[str, ...]:
 
 
 # Pytest options that consume the next token, so a following -n is a value, not xdist.
-_TAKES_VALUE = frozenset({
-    "-k", "--keyword",
-    "-m", "--markers",
-    "-p",
-    "-o", "--override-ini",
-    "-c", "--config-file",
-    "--tb",
-    "--maxfail",
-    "--durations",
-    "--durations-min",
-    "--dist",
-    "--tx",
-    "--ignore",
-    "--ignore-glob",
-    "--deselect",
-    "--junitxml",
-    "--rootdir",
-    "--confcutdir",
-    "--basetemp",
-    "--log-level",
-    "--log-file",
-    "--log-file-level",
-    "--log-format",
-    "--log-date-format",
-    "-W", "--pythonwarnings",
-    "--pdbcls",
-    "--import-mode",
-    "--assert",
-    "--capture",
-})
+_TAKES_VALUE = frozenset(
+    {
+        "-k",
+        "--keyword",
+        "-m",
+        "--markers",
+        "-p",
+        "-o",
+        "--override-ini",
+        "-c",
+        "--config-file",
+        "--tb",
+        "--maxfail",
+        "--durations",
+        "--durations-min",
+        "--dist",
+        "--tx",
+        "--ignore",
+        "--ignore-glob",
+        "--deselect",
+        "--junitxml",
+        "--rootdir",
+        "--confcutdir",
+        "--basetemp",
+        "--log-level",
+        "--log-file",
+        "--log-file-level",
+        "--log-format",
+        "--log-date-format",
+        "-W",
+        "--pythonwarnings",
+        "--pdbcls",
+        "--import-mode",
+        "--assert",
+        "--capture",
+    }
+)
 
 
 def _is_attached_xdist(token: str) -> bool:
@@ -276,11 +287,11 @@ def _command(
 ) -> tuple[str, ...]:
     uv = ["uv", "run", *(("--no-sync",) if no_sync else ())]
     if name == "agentkit-ut":
-        tests = ROOT / "runtime" / "agentkit" / "tests"
+        tests = ROOT / "tests"
         command = [
             *uv,
             "--project",
-            str(ROOT / "runtime" / "agentkit"),
+            str(ROOT),
             "pytest",
             str(tests),
             "-q",
@@ -288,7 +299,7 @@ def _command(
             "not live",
             f"--junitxml={ARTIFACTS / 'agentkit-ut-junit.xml'}",
         ]
-        for path in (*ST_FILES, ROOT / "runtime" / "agentkit" / "tests" / "test_product_api.py"):
+        for path in (*ST_FILES, ROOT / "tests" / "test_product_api.py"):
             command.extend(["--ignore", str(path)])
         command.extend(pytest_args)
         return tuple(command)
@@ -296,7 +307,7 @@ def _command(
         command = [
             *uv,
             "--project",
-            str(ROOT / "runtime" / "agentkit"),
+            str(ROOT),
             "pytest",
             *(str(path) for path in ST_FILES),
             "-q",
@@ -310,9 +321,9 @@ def _command(
         command = [
             *uv,
             "--project",
-            str(ROOT / "runtime" / "agentkit"),
+            str(ROOT),
             "pytest",
-            str(ROOT / "runtime" / "agentkit" / "tests" / "test_product_api.py"),
+            str(ROOT / "tests" / "test_product_api.py"),
             "-q",
         ]
         command.extend(pytest_args)
@@ -328,7 +339,9 @@ def _command(
     raise SystemExit(f"unknown suite: {name}")
 
 
-def _with_node_args(command: list[str], node_args: tuple[str, ...], *, separators: int) -> tuple[str, ...]:
+def _with_node_args(
+    command: list[str], node_args: tuple[str, ...], *, separators: int
+) -> tuple[str, ...]:
     if not node_args:
         return tuple(command)
     command.extend(["--"] * separators)

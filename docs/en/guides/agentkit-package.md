@@ -1,6 +1,6 @@
-# AgentKit package deployment
+# Python package deployment
 
-AgentKit retains the Python distribution name `datagallery-dataagent`, import name `dataagent`, and CLI `dataagent`. It builds into a wheel and source distribution containing the API, A2A, SDK, Home templates, prompts, and builtin plugins. The backend requires Python 3.12. Web/TUI require Node.js ≥22.12.0 and connect over HTTP; they are still built from frontend sources and are not part of the Python package.
+DataAgent ships as the Python distribution `datagallery-dataagent`. Its import name and command are both `dataagent`. It builds into a wheel and source distribution containing the API, A2A, SDK, Home templates, prompts, and builtin plugins. The backend requires Python 3.12. Web/TUI require Node.js ≥22.12.0 and connect over HTTP; they are still built from frontend sources and are not part of the Python package.
 
 ## Build
 
@@ -15,12 +15,12 @@ npm run package:agentkit
 To build without the npm / Make wrapper, run the same native uv commands. This path requires uv and Python 3.12, without Node.js:
 
 ```bash
-uv build --project runtime/agentkit --out-dir dist/agentkit
-uv export --project runtime/agentkit --no-dev --all-extras \
+uv build --out-dir dist/agentkit
+uv export --no-dev --all-extras \
   --no-emit-project --no-hashes --output-file dist/agentkit/constraints.txt
 ```
 
-The default output directory is `dist/agentkit/`, containing `datagallery_dataagent-0.1.0-py3-none-any.whl`, `datagallery_dataagent-0.1.0.tar.gz`, and `constraints.txt`. The version comes from `runtime/agentkit/pyproject.toml`. The builder creates the source distribution first, then builds the wheel from it. Exported constraints pin runtime dependencies and all extras, excluding development dependencies and dependency files. Constraints do not install optional packages. `constraints.txt` pins versions without hashes; it is a version snapshot for this build, not a hashed integrity manifest. Dependencies are downloaded from the configured index during installation. Reuse uv/pip mirror configuration.
+The default output directory is `dist/agentkit/`, containing `datagallery_dataagent-0.1.0-py3-none-any.whl`, `datagallery_dataagent-0.1.0.tar.gz`, and `constraints.txt`. The version comes from `pyproject.toml`. The builder creates the source distribution first, then builds the wheel from it. Exported constraints pin runtime dependencies and all extras, excluding development dependencies and dependency files. Constraints do not install optional packages. `constraints.txt` pins versions without hashes; it is a version snapshot for this build, not a hashed integrity manifest. Dependencies are downloaded from the configured index during installation. Reuse uv/pip mirror configuration.
 
 Set `UV_DEFAULT_INDEX` for uv or `--index-url` for pip to select the installation index. Constraints do not carry source lockfile artifact URLs, so package installation does not require rewriting the lockfile or running a `sed` command.
 
@@ -52,7 +52,7 @@ First startup creates missing templates in Home (`~/.dataagent`, or process vari
 
 ## Optional dependencies
 
-The default installation includes service startup, model conversations, SQL parsing, and SQLite, MySQL, and PostgreSQL drivers. MySQL uses `PyMySQL[rsa]` with SHA-2 authentication support; PostgreSQL uses `psycopg2-binary`, imported as `psycopg2`, with execution engine `gaussvector` and SQL dialect `postgres`; see the [nl2sql GV configuration](https://gitcode.com/datagallery/dataagent/blob/deepagents_refactor_new/runtime/agentkit/builtin-plugins/nl2sql/README.md#gaussvector-配置). These base data dependencies are installed by regular installation and `uv sync` without selecting an extra.
+The default installation includes service startup, model conversations, SQL parsing, and SQLite, MySQL, and PostgreSQL drivers. MySQL uses `PyMySQL[rsa]` with SHA-2 authentication support; PostgreSQL uses `psycopg2-binary`, imported as `psycopg2`, with execution engine `gaussvector` and SQL dialect `postgres`; see the [nl2sql GV configuration](https://gitcode.com/datagallery/dataagent/blob/deepagents_refactor_new/dataagent/plugins/nl2sql/README.md#gaussvector-配置). These base data dependencies are installed by regular installation and `uv sync` without selecting an extra.
 
 `psycopg2-binary` reduces deployment build prerequisites but bundles libraries such as libpq and OpenSSL. Maintain these through driver package updates; system library upgrades alone do not update them. `PyMySQL[rsa]` also installs cryptography for SHA-2 authentication.
 
@@ -127,14 +127,14 @@ These frontend commands attach to the package service. `npm run start`, `npm run
 Existing pipelines can keep these commands:
 
 ```bash
-make prepare PYTHON_VERSION=3.12
-make build PYTHON_VERSION=3.12
-make package PYTHON_VERSION=3.12
-make ut PYTHON_VERSION=3.12
-make st PYTHON_VERSION=3.12
+make prepare UV_PYTHON=3.12
+make build UV_PYTHON=3.12
+make package UV_PYTHON=3.12
+make ut UV_PYTHON=3.12
+make st UV_PYTHON=3.12
 ```
 
-`PYTHON_VERSION`, `PIP_INDEX_URL`, `PIP_EXTRA_INDEX_URL`, `PIP_FIND_LINKS`, and `NPM_REGISTRY` remain compatible Make arguments; native npm/uv settings take precedence. Installation and tests use native `uv sync` through the shared preparation entrypoint and the configured index, without manual `uv.lock` rewrites. The repository retains a resolution snapshot without forcing frozen versions.
+Installation and tests use native `uv sync` through the shared preparation entrypoint and the configured index, without manual `uv.lock` rewrites. The repository retains a resolution snapshot without forcing frozen versions.
 
 `build` compiles Web/TUI; `package` produces Python distributions without compiling the frontends again. To archive Python artifacts, collect the wheel, source distribution, and `constraints.txt` from `dist/agentkit/`; frontend artifact directories remain the same. `ut/st` prepare development/test tools automatically, requiring no additional pipeline install command. Select deployment extras during deployment.
 

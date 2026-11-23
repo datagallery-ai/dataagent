@@ -7,27 +7,11 @@
 # make st 与 make test 的系统测试不能带 -n/--numprocesses（含 -n4、--numprocesses=4）：st 直接失败，test 去掉后仍串行，单元测试可以带。
 # PYTEST_ARGS 里的 $ 用单引号：make ut PYTEST_ARGS='-k $HOME'。不要写成 $$。make test 时 -k 同时过滤 ut 和 st。
 # NODE_TEST_ARGS 不能一次混给 vitest（api/web）和 node --test（tui）：make ut SCOPE=api NODE_TEST_ARGS='--maxWorkers 2'。
-# 例：make prepare PYTHON_VERSION=3.12 PIP_INDEX_URL=https://pypi.tuna.tsinghua.edu.cn/simple NPM_REGISTRY=https://registry.npmmirror.com
+# 例：make prepare UV_PYTHON=3.12 UV_DEFAULT_INDEX=https://pypi.tuna.tsinghua.edu.cn/simple npm_config_registry=https://registry.npmmirror.com
 
 PROJECT_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
-# agentkit 要求 3.12，也可用 UV_PYTHON。
-export UV_PYTHON ?= $(or $(PYTHON_VERSION),3.12)
-
-# 不设则用 PyPI。
-ifdef PIP_INDEX_URL
-export UV_DEFAULT_INDEX ?= $(or $(UV_INDEX_URL),$(PIP_INDEX_URL))
-endif
-ifdef PIP_EXTRA_INDEX_URL
-export UV_INDEX ?= $(or $(UV_EXTRA_INDEX_URL),$(PIP_EXTRA_INDEX_URL))
-endif
-ifdef PIP_FIND_LINKS
-export UV_FIND_LINKS ?= $(PIP_FIND_LINKS)
-endif
-
-ifdef NPM_REGISTRY
-export npm_config_registry ?= $(or $(NPM_CONFIG_REGISTRY),$(NPM_REGISTRY))
-endif
+export UV_PYTHON ?= 3.12
 
 ifeq ($(OS),Windows_NT)
     SHELL := bash.exe

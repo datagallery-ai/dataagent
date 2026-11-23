@@ -3,7 +3,7 @@ import { randomBytes } from "node:crypto";
 import { mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 
-import { createLogger, logPath } from "../lib/logging.mjs";
+import { createLogger, logPath } from "../../ui/shared/logging.mjs";
 
 const SENSITIVE_KEY = /KEY|SECRET|TOKEN|PASSWORD|COOKIE|AUTHORIZATION/i;
 

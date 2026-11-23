@@ -1,7 +1,7 @@
 {
-  "name": "datagallery",
+  "name": "dataagent-workspace",
   "version": "0.2.0",
-  "description": "Open-source enterprise Data Agent workbench for trustworthy, auditable data analysis.",
+  "description": "Development workspace for DataAgent and its optional UI",
   "license": "Apache-2.0",
   "private": true,
   "type": "module",
@@ -29,8 +29,8 @@
     "node": ">=22.12.0"
   },
   "workspaces": [
-    "apps/web",
-    "apps/tui"
+    "ui/web",
+    "ui/tui"
   ],
   "scripts": {
     "postinstall": "node scripts/postinstall.mjs",
@@ -42,17 +42,18 @@
     "start:api": "node scripts/start.mjs --api",
     "start:web": "node scripts/start.mjs --web",
     "start": "node scripts/start.mjs",
-    "test:deploy": "node --test scripts/lib/logging.test.mjs scripts/deploy/*.test.mjs scripts/python-environment.test.mjs scripts/makefile.test.mjs scripts/stack-runtime-config.test.mjs scripts/password-only-cutover.test.mjs",
+    "test:deploy": "node --test ui/shared/logging.test.mjs scripts/deploy/*.test.mjs scripts/python-environment.test.mjs scripts/makefile.test.mjs scripts/stack-runtime-config.test.mjs scripts/password-only-cutover.test.mjs",
     "smoke:native-deploy": "node scripts/deploy/smoke-native-deploy.mjs",
     "smoke:agentkit-package": "node scripts/smoke-agentkit-package.mjs",
     "test:web": "npm --workspace @datagallery/web run test",
     "test:tui": "npm --workspace @datagallery/tui run test",
     "test:product": "uv run --no-project --no-sync python scripts/run_product_tests.py",
-    "start:tui": "node -- apps/tui/dist/index.js",
+    "start:tui": "node -- ui/tui/dist/index.js",
     "docs:dev": "python -m mkdocs serve -a 127.0.0.1:8000",
     "docs:build": "python -m mkdocs build --strict",
     "smoke:docs": "node scripts/smoke-doc-links.mjs",
-    "test:yaml": "node --test scripts/lib/config-yaml.test.mjs scripts/server-listen.test.mjs"
+    "test:yaml": "node --test ui/shared/config-yaml.test.mjs scripts/server-listen.test.mjs",
+    "test:shared": "node --test ui/shared/*.test.mjs"
   },
   "overrides": {
     "@ag-ui/client": "^0.0.57",
