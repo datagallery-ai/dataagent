@@ -22,7 +22,7 @@ function runner(map) {
 test("all workspace manifests and lock metadata declare the same Node minimum", () => {
   assert.equal(MIN_NODE_VERSION, "22.12.0");
   const lock = JSON.parse(readFileSync(new URL("../../package-lock.json", import.meta.url), "utf8"));
-  for (const member of ["", "apps/tui", "apps/web"]) {
+  for (const member of ["", "ui/tui", "ui/web"]) {
     const manifest = JSON.parse(readFileSync(new URL(`../../${member ? member + "/" : ""}package.json`, import.meta.url), "utf8"));
     assert.equal(manifest.engines.node, `>=${MIN_NODE_VERSION}`);
     assert.equal(lock.packages[member].engines.node, manifest.engines.node);

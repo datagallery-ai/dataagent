@@ -1,4 +1,4 @@
-import { logPath as resolveLogPath } from "../lib/logging.mjs";
+import { logPath as resolveLogPath } from "../../ui/shared/logging.mjs";
 import { deploymentHelp } from "./args.mjs";
 
 export function createDeploymentController(deps) {

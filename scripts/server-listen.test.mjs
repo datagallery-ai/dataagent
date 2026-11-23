@@ -1,3 +1,4 @@
+import { writeServerListen } from "./deploy/server-config.mjs";
 import { parse } from "yaml";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
@@ -6,9 +7,9 @@ import { homedir, tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { readServerListen, resolveHome, writeServerListen } from "./server-listen.mjs";
+import { readServerListen, resolveHome } from "../ui/shared/server-listen.mjs";
 
-const agentkit = fileURLToPath(new URL("../runtime/agentkit", import.meta.url));
+const agentkit = fileURLToPath(new URL("../.", import.meta.url));
 
 function tempHome() {
   return mkdtempSync(join(tmpdir(), "dataagent-listen-"));
@@ -191,10 +192,21 @@ test('server env uses Home dotenv and nonempty process values with explicit yml'
     writeFileSync(file, 'server:\n  host: $env{BIND_HOST}\n  port: $env{BIND_PORT}\nmodels:\n  unused:\n    api_key: $env{ABSENT}\n');
     writeFileSync(join(home, '.env'), 'BIND_HOST=127.0.0.2\nBIND_PORT=8813\n');
     assert.deepEqual(readServerListen({ DATAAGENT_HOME: home, BIND_HOST: '', BIND_PORT: '8814' }, file), { host: '127.0.0.2', port: '8814' });
-    writeFileSync(join(home, 'config.json'), '{}');
-    assert.throws(() => readServerListen({ DATAAGENT_HOME: home }), /migrate/);
-    assert.throws(() => writeServerListen({ DATAAGENT_HOME: home }, { host: 'localhost', port: 1 }), /migrate/);
-    assert.throws(() => readServerListen({ DATAAGENT_HOME: home }, join(home, 'config.json')), /migrate/);
+  } finally { rmSync(home, { recursive: true, force: true }); }
+});
+
+test('Home configuration reads and writes only YAML', () => {
+  const home = tempHome();
+  const env = { DATAAGENT_HOME: home };
+  const json = join(home, 'config.json');
+  try {
+    writeFileSync(json, '{"server":{"port":9999}}');
+    assert.deepEqual(readServerListen(env), { host: '127.0.0.1', port: '8790' });
+    assert.throws(() => readServerListen(env, json), /YAML extension required/);
+    const listen = { host: 'localhost', port: '8813' };
+    writeServerListen(env, listen);
+    assert.deepEqual(readServerListen(env), listen);
+    assert.equal(readFileSync(json, 'utf8'), '{"server":{"port":9999}}');
   } finally { rmSync(home, { recursive: true, force: true }); }
 });
 
@@ -208,7 +220,7 @@ const dotenvCases = [
   { name: 'quotes comments multiline and export', text: '\uFEFFexport BASE_PORT=8819 # comment\nAPI_PORT="${BASE_PORT}"\n\'KEY\'=\'中文\nline\'\nESCAPED="a\\nb\\tend"\nHASH=value#kept\n' },
 ];
 for (const item of dotenvCases) test(`Python/Node dotenv parity: ${item.name}`, async () => {
-  const { effectiveEnvironment } = await import('./lib/config-env.mjs');
+  const { effectiveEnvironment } = await import('../ui/shared/config-env.mjs');
   const home = tempHome();
   try {
     const config = join(home, 'config.yaml');

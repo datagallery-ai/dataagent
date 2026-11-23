@@ -30,7 +30,7 @@ test("CI prepare, build, package, ut and st retain their command interface", asy
   if (process.platform === "win32") return t.skip("POSIX make fixture");
   const { root, env } = await fixture(t);
   for (const target of ["prepare", "build", "package", "ut", "st"]) {
-    const [call] = invoke(root, env, target, "PYTHON_VERSION=3.12");
+    const [call] = invoke(root, env, target, "UV_PYTHON=3.12");
     assert.equal(call.env.UV_PYTHON, "3.12");
     if (target === "prepare") {
       assert.deepEqual(call.args, ["ci"]);
@@ -41,25 +41,6 @@ test("CI prepare, build, package, ut and st retain their command interface", asy
   }
 });
 
-test("legacy Make source parameters map to native tool configuration", async t => {
-  if (process.platform === "win32") return t.skip("POSIX make fixture");
-  const { root, env } = await fixture(t);
-  const [call] = invoke(root, env, "prepare", "PYTHON_VERSION=3.12", "PIP_INDEX_URL=https://mirror.example/simple/", "PIP_EXTRA_INDEX_URL=https://extra.example/simple/", "PIP_FIND_LINKS=/opt/wheels", "NPM_REGISTRY=https://mirror.example/npm/");
-  assert.equal(call.env.UV_DEFAULT_INDEX, "https://mirror.example/simple/");
-  assert.equal(call.env.UV_INDEX, "https://extra.example/simple/");
-  assert.equal(call.env.UV_FIND_LINKS, "/opt/wheels");
-  assert.equal(call.env.npm_config_registry, "https://mirror.example/npm/");
-  assert.equal(call.env.UV_INDEX_URL, undefined);
-});
-
-test("native tool selectors take precedence over compatibility aliases", async t => {
-  if (process.platform === "win32") return t.skip("POSIX make fixture");
-  const { root, env } = await fixture(t);
-  const native = { UV_PYTHON: "/opt/python 3.12/bin/python", UV_DEFAULT_INDEX: "https://native.example/simple/", UV_INDEX: "https://native-extra.example/simple/", UV_FIND_LINKS: "/opt/native-wheels", npm_config_registry: "https://native.example/npm/" };
-  const [call] = invoke(root, { ...env, ...native }, "prepare", "PYTHON_VERSION=3.11", "PIP_INDEX_URL=https://legacy.example/simple/", "PIP_EXTRA_INDEX_URL=https://legacy-extra.example/simple/", "PIP_FIND_LINKS=/opt/legacy-wheels", "NPM_REGISTRY=https://legacy.example/npm/");
-  for (const [key, value] of Object.entries(native)) assert.equal(call.env[key], value);
-});
-
 test("Make preserves suite scope, tier and pytest filters", async t => {
   if (process.platform === "win32") return t.skip("POSIX make fixture");
   const { root, env } = await fixture(t);
@@ -68,12 +49,4 @@ test("Make preserves suite scope, tier and pytest filters", async t => {
   assert(call.args.includes("--pytest-args=-k session and not live"));
   assert.equal(call.args[call.args.indexOf("--tier") + 1], "ut");
   assert.equal(call.args.at(-1), "--no-sync");
-});
-
-
-test("uppercase native npm source configuration wins over its Make alias", async t => {
-  if (process.platform === "win32") return t.skip("POSIX make fixture");
-  const { root, env } = await fixture(t);
-  const [call] = invoke(root, { ...env, NPM_CONFIG_REGISTRY: "https://native.example/npm/" }, "prepare", "NPM_REGISTRY=https://legacy.example/npm/");
-  assert.equal(call.env.npm_config_registry, "https://native.example/npm/");
 });

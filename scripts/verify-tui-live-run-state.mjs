@@ -4,9 +4,9 @@ import assert from "node:assert/strict";
 const {
   createInitialLiveRun,
   reduceLiveRunEvent,
-} = await import("../apps/tui/dist/state/live-run-state.js");
-const { store } = await import("../apps/tui/dist/state/store.js");
-const { buildChatLines } = await import("../apps/tui/dist/ui/transcript-lines.js");
+} = await import("../ui/tui/dist/state/live-run-state.js");
+const { store } = await import("../ui/tui/dist/state/store.js");
+const { buildChatLines } = await import("../ui/tui/dist/ui/transcript-lines.js");
 
 function collectRenderedToolCalls(lines) {
   const toolCalls = [];

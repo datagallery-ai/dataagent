@@ -5,10 +5,10 @@
 ## 一个服务，两种展示
 
 ```text
-浏览器 apps/web
+浏览器 ui/web
   -> Next 同源转发 /api/v1/runs 与 /api/v1/*
   -> dataagent serve（config.yaml 的 server.host:server.port，默认 127.0.0.1:8790）
-  <- apps/tui 直接请求同一进程
+  <- ui/tui 直接请求同一进程
 ```
 
 | 展示 | 启动 | 打开方式 |
@@ -22,10 +22,11 @@ Python SDK 可以不经 HTTP，直接准备同一份运行时。Web/TUI 的对�
 
 | 模块 | 职责 |
 | --- | --- |
-| `apps/web` | 浏览器展示。把对话和 `/api/v1/*` 转到控制面。 |
-| `apps/tui` | 终端展示。连接控制面，用 slash 命令看会话和产物。 |
-| `runtime/agentkit/serve` | 唯一的 HTTP 控制面：健康检查、会话、事件流、A2A。 |
-| `runtime/agentkit` | 读配置、装配模型和插件、执行一轮对话。 |
+| `ui/web` | 浏览器展示。把对话和 `/api/v1/*` 转到控制面。 |
+| `ui/tui` | 终端展示。连接控制面，用 slash 命令看会话和产物。 |
+| `dataagent/server/` | 提供健康检查、会话和 AG-UI 事件流。A2A 服务位于 `dataagent/server/a2a/`。 |
+| `dataagent/` | 提供 Python SDK。包内的 `bootstrap/` 准备运行环境，`assembly/graph.py` 装配执行图。 |
+| `dataagent/assembly/prompts/` | 渲染主 Agent、子 Agent 和文件系统说明的宿主模板。插件自己的提示词放在各自的插件目录中。 |
 | Home `~/.dataagent` | 配置、Skill、插件和全部会话状态。 |
 | `dataagent.workspaces` | 进程启动时绑定的只读输入目录，不在 Home 里面。 |
 

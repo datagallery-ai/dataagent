@@ -3,9 +3,9 @@ import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSy
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { readServerListen } from "./server-listen.mjs";
+import { readServerListen } from "../ui/shared/server-listen.mjs";
 import { controlPlaneIsRunning, ensurePythonEnvironment } from "./stack-runner.mjs";
-import { venvPython } from "./python-environment.mjs";
+import { venvPython } from "../ui/shared/python-environment.mjs";
 import {
   formatStackEndpoints,
   pythonControlPlaneLaunch,
@@ -24,8 +24,8 @@ test("uses native deployment defaults", () => {
 test("startup uses the selected interpreter without exporting a synchronization policy", () => {
   const env = { UV_PROJECT_ENVIRONMENT: "custom env" };
   const launch = pythonControlPlaneLaunch("/project", env);
-  assert.equal(launch.command, venvPython("/project/runtime/agentkit", env));
-  assert.deepEqual(launch.args, ["-m", "serve", "serve"]);
+  assert.equal(launch.command, venvPython("/project/.", env));
+  assert.deepEqual(launch.args, ["-m", "dataagent", "serve"]);
   assert.equal(launch.env, env);
   assert.equal(launch.env.UV_NO_SYNC, undefined);
 });
@@ -35,7 +35,7 @@ test("web launch passes host and port only as next arguments", () => {
   const launch = webLaunch(config, { PATH: "/usr/bin", HOSTNAME: "10.0.0.8", PORT: "9" });
   assert.equal(launch.command, "npm");
   assert.deepEqual(launch.args, [
-    "--prefix", "apps/web", "run", "start", "--",
+    "--prefix", "ui/web", "run", "start", "--",
     "--hostname", "127.0.0.2",
     "--port", "3310",
   ]);
@@ -105,7 +105,7 @@ test("one click syncs the python environment only when it is missing", async () 
   const calls = [];
   try {
     assert.equal(await ensurePythonEnvironment(rootDir, (...command) => calls.push(command)), true);
-    const python = venvPython(join(rootDir, "runtime/agentkit"));
+    const python = venvPython(join(rootDir, "."));
     mkdirSync(join(python, ".."), { recursive: true });
     writeFileSync(python, "fixture");
     assert.equal(await ensurePythonEnvironment(rootDir, (command) => calls.push(command)), false);
@@ -129,7 +129,7 @@ test("api and web scripts use the same stack entry as one-click start", () => {
   assert.equal(scripts["start:api"], "node scripts/start.mjs --api");
   assert.equal(scripts["start:web"], "node scripts/start.mjs --web");
   assert.equal(scripts.start, "node scripts/start.mjs");
-  assert.equal(scripts["start:tui"], "node -- apps/tui/dist/index.js");
+  assert.equal(scripts["start:tui"], "node -- ui/tui/dist/index.js");
   assert.equal(scripts.dev, undefined);
   assert.equal(scripts["dev:api"], undefined);
   assert.equal(scripts["dev:web"], undefined);
@@ -141,10 +141,10 @@ test("dev and start:api both default the API to loopback", () => {
   const startApi = pythonControlPlaneLaunch("/repo", env);
   assert.equal(dev.apiHost, "127.0.0.1");
   assert.equal(startApi.env, env);
-  assert.deepEqual(startApi.args.slice(-2), ["serve", "serve"]);
+  assert.deepEqual(startApi.args.slice(-2), ["dataagent", "serve"]);
   const manualReload = pythonControlPlaneLaunch("/repo", env, true);
   assert.equal(manualReload.env, env);
-  assert.deepEqual(manualReload.args.slice(-3), ["serve", "serve", "--reload"]);
+  assert.deepEqual(manualReload.args.slice(-3), ["dataagent", "serve", "--reload"]);
 });
 
 test("--config replaces Home server and is passed to dataagent serve", () => {
@@ -162,7 +162,7 @@ test("--config replaces Home server and is passed to dataagent serve", () => {
     const startApi = pythonControlPlaneLaunch("/repo", env, false, config.configPath);
     assert.equal(config.apiHost, "0.0.0.0");
     assert.equal(config.apiPort, "8877");
-    assert.deepEqual(startApi.args.slice(-4), ["serve", "serve", "--config", selected]);
+    assert.deepEqual(startApi.args.slice(-4), ["dataagent", "serve", "--config", selected]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }
@@ -213,7 +213,7 @@ test("server.host and server.port come from config.yaml", () => {
     assert.equal(webLaunch(ipv6).env.API_PROXY_TARGET, "http://[::]:8877");
     assert.match(formatStackEndpoints(ipv6, { startApi: true, startWeb: false, tuiReady: false }), /http:\/\/\[::\]:8877/);
     assert.equal(startApi.env, env);
-    assert.deepEqual(startApi.args.slice(-2), ["serve", "serve"]);
+    assert.deepEqual(startApi.args.slice(-2), ["dataagent", "serve"]);
   } finally {
     rmSync(home, { recursive: true, force: true });
   }

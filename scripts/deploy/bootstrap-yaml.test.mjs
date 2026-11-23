@@ -13,6 +13,7 @@ for (const existingConfig of [false, true, 'install-completes']) test(`deploymen
   t.after(() => rmSync(root, { recursive: true, force: true }));
   const source = fileURLToPath(new URL('../../', import.meta.url));
   cpSync(join(source, 'scripts'), join(root, 'scripts'), { recursive: true });
+  cpSync(join(source, 'ui/shared'), join(root, 'ui/shared'), { recursive: true });
   cpSync(join(source, 'deploy.sh'), join(root, 'deploy.sh'));
   writeFileSync(join(root, 'package.json'), '{"type":"module"}');
   mkdirSync(join(root, 'home'));

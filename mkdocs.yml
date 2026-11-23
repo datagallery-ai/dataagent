@@ -6,14 +6,24 @@ repo_url: https://github.com/datagallery-lab/datafoundry
 edit_uri: edit/main/docs/
 
 exclude_docs: |
+  archive/
   README.md
   assets/readme/tui-demo.mp4
   en/README.md
   zh/README.md
 
 not_in_nav: |
+  development/*.md
+  architecture/*.md
+  extensions/*.md
+  guides/*.md
+  reference/*.md
+  de-agent-migration.md
   zh/*.md
   zh/**/*.md
+
+hooks:
+  - scripts/dev/docs_hooks.py
 
 theme:
   name: material
@@ -42,6 +52,7 @@ extra_javascript:
   - javascripts/language-switcher.js
 
 extra:
+  source_tree_url: !ENV [DATAAGENT_DOCS_SOURCE_TREE_URL, "https://gitcode.com/datagallery/dataagent/blob/main"]
   social:
     - icon: fontawesome/brands/github
       link: https://github.com/datagallery-lab/datafoundry
@@ -75,9 +86,13 @@ nav:
           - Custom mirrors: en/guides/mirror-deployment.md
           - Web workbench: en/guides/web-workbench.md
           - TUI: en/guides/tui.md
-          - AgentKit packages: en/guides/agentkit-package.md
+          - Python package deployment: en/guides/agentkit-package.md
           - Where data comes from: en/guides/data-sources.md
   - Developer Guide:
+      - Python SDK and extensions: python-guide.md
+      - Development setup: development/setup.md
+      - Package layout: development/package-distribution.md
+      - Package build runbook: development/package-build-runbook.md
       - Architecture:
           - Overview: en/architecture/overview.md
       - Security: en/security.md

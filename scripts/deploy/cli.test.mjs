@@ -5,7 +5,7 @@ import { mkdtemp, readdir, readFile, writeFile, mkdir, rm } from "node:fs/promis
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
-import { readServerListen } from "../server-listen.mjs";
+import { readServerListen } from "../../ui/shared/server-listen.mjs";
 import { pythonControlPlaneLaunch, resolveStackRuntimeConfig } from "../stack-runtime-config.mjs";
 import { parseDeployArgs } from "./args.mjs";
 import {
@@ -165,7 +165,7 @@ test("deploy start uses the same web host and port flags as npm run start", () =
 test("first run selects Web and API ports with defaults", async () => {
   const lines = [];
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const result = await configureDeploymentInteractively({
     root,
     sourceText: "",
@@ -182,7 +182,7 @@ test("first run selects Web and API ports with defaults", async () => {
 
 test("existing complete config skips prompts unless reconfigure", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
   let asked = 0;
   const result = await configureDeploymentInteractively({
@@ -204,7 +204,7 @@ test("existing complete config skips prompts unless reconfigure", async () => {
 
 test("an existing env file skips prompts and keeps its lines", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-kept-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const source = "NOTE=left-alone\n";
   let asked = 0;
   const result = await configureDeploymentInteractively({
@@ -226,7 +226,7 @@ test("an existing env file skips prompts and keeps its lines", async () => {
 
 test("partial .env is not treated as complete before fill and still prompts", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-partial-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   let asked = 0;
   const result = await configureDeploymentInteractively({
     root,
@@ -245,7 +245,7 @@ test("partial .env is not treated as complete before fill and still prompts", as
 
 test("non-interactive never calls ask and uses loopback defaults", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const result = await configureDeploymentInteractively({
     root,
     sourceText: "",
@@ -262,7 +262,7 @@ test("non-interactive never calls ask and uses loopback defaults", async () => {
 
 test("non-interactive does not copy process env into .env", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const result = await configureDeploymentInteractively({
     root,
     sourceText: "",
@@ -280,7 +280,7 @@ test("non-interactive does not copy process env into .env", async () => {
 test("port menu rejects n with explicit hint", async () => {
   const lines = [];
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const ask = createAsk(["n", "1", "1", ""]);
   await configureDeploymentInteractively({
     root,
@@ -296,7 +296,7 @@ test("port menu rejects n with explicit hint", async () => {
 
 test("port menu aborts after too many invalid choices", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   await assert.rejects(
     () =>
       configureDeploymentInteractively({
@@ -314,7 +314,7 @@ test("port menu aborts after too many invalid choices", async () => {
 
 test("reconfigure creates backup and keeps secrets", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
   await writeFile(path.join(root, ".env"), `${source}\n`);
   const result = await configureDeploymentInteractively({
@@ -385,7 +385,7 @@ test("collectManagedPorts marks state ports only when pid is alive and launchId 
 
 test("non-interactive fails when ports are occupied without a running managed state", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-occupied-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
 
   await assert.rejects(
@@ -406,7 +406,7 @@ test("non-interactive fails when ports are occupied without a running managed st
 test("reconfigure reuses managed listening ports only for a verified running stack", async () => {
   const probes = [];
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   await mkdir(path.join(root, "storage/run"), { recursive: true });
   const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
   const home = path.join(root, "dataagent-home");
@@ -480,7 +480,7 @@ test("deploy --config takes the API listen from that file", async () => {
 
 test("reconfigure leaves an existing public URL line unchanged", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "apps/web"), { recursive: true });
+  await mkdir(path.join(root, "ui/web"), { recursive: true });
   const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
   const result = await configureDeploymentInteractively({
     root,
@@ -725,40 +725,40 @@ const COMPLETE_ENV = {
 async function preparePython(root) {
   const directory = process.platform === "win32" ? "Scripts" : "bin";
   const python = process.platform === "win32" ? "python.exe" : "python";
-  const location = path.join(root, "runtime/agentkit/.venv", directory);
+  const location = path.join(root, ".venv", directory);
   await mkdir(location, { recursive: true });
   await writeFile(path.join(location, python), "fixture");
 }
 
 test("start names missing .env variables and does not write .env.local", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
-  await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
-  await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
+  await mkdir(path.join(root, "ui/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "ui/web/.next/BUILD_ID"), "test");
   await preparePython(root);
   await prepareStartEnvironment(root, {});
   assert.equal(
-    formatStartBlocked(["EXAMPLE"], ["apps/web/.next/BUILD_ID"]),
-    "缺少合法完整的 .env 配置，缺：EXAMPLE；缺少文件：apps/web/.next/BUILD_ID。请先运行 ./deploy.sh deploy"
+    formatStartBlocked(["EXAMPLE"], ["ui/web/.next/BUILD_ID"]),
+    "缺少合法完整的 .env 配置，缺：EXAMPLE；缺少文件：ui/web/.next/BUILD_ID。请先运行 ./deploy.sh deploy"
   );
 });
 
 test("start with a complete .env does not write a web env file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
-  await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
-  await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "test");
+  await mkdir(path.join(root, "ui/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "ui/web/.next/BUILD_ID"), "test");
   await preparePython(root);
   await prepareStartEnvironment(root, COMPLETE_ENV);
-  assert.equal(existsSync(path.join(root, "apps/web/.env.local")), false);
+  assert.equal(existsSync(path.join(root, "ui/web/.env.local")), false);
   assert.equal(existsSync(path.join(root, ".env")), false);
 });
 
 test("start refuses a missing Python environment instead of preparing it", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-python-"));
   try {
-    await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
-    await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "fixture");
+    await mkdir(path.join(root, "ui/web/.next"), { recursive: true });
+    await writeFile(path.join(root, "ui/web/.next/BUILD_ID"), "fixture");
     await assert.rejects(() => prepareStartEnvironment(root, {}), /\.venv.*python.*deploy/);
-    assert.equal(existsSync(path.join(root, "runtime/agentkit/.venv")), false);
+    assert.equal(existsSync(path.join(root, ".venv")), false);
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
@@ -772,10 +772,10 @@ test("start preflight gives process environment precedence over the project env 
     if (previous === undefined) delete process.env.UV_PROJECT_ENVIRONMENT;
     else process.env.UV_PROJECT_ENVIRONMENT = previous;
   });
-  await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
-  await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "fixture");
+  await mkdir(path.join(root, "ui/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "ui/web/.next/BUILD_ID"), "fixture");
   await preparePython(root);
-  process.env.UV_PROJECT_ENVIRONMENT = path.join(root, "runtime/agentkit/.venv");
+  process.env.UV_PROJECT_ENVIRONMENT = path.join(root, ".venv");
   await prepareStartEnvironment(root, { UV_PROJECT_ENVIRONMENT: path.join(root, "missing-disk-env") });
 });
 
@@ -784,8 +784,8 @@ test("start reports missing dependencies without entering the installer", async 
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-dependencies-"));
   t.after(() => rmSync(root, { recursive: true, force: true }));
   await preparePython(root);
-  await mkdir(path.join(root, "apps/web/.next"), { recursive: true });
-  await writeFile(path.join(root, "apps/web/.next/BUILD_ID"), "fixture");
+  await mkdir(path.join(root, "ui/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "ui/web/.next/BUILD_ID"), "fixture");
   await mkdir(path.join(root, "bin"));
   await writeFile(path.join(root, "bin/npm"), "#!/bin/bash\nexit 1\n", { mode: 0o755 });
   await writeFile(path.join(root, "bin/uv"), "#!/bin/bash\necho 'uv 0.8.0'\n", { mode: 0o755 });

@@ -93,3 +93,11 @@ certs/
 opencode.jsonc
 run_logs/
 AGENT.md
+
+# Python project configuration and local workspaces
+config.yaml
+!dataagent/bootstrap/templates/config.yaml
+!examples/config.yaml
+.dataagent_v2/
+workspace/
+!dataagent/plugins/de-agent/config.yaml

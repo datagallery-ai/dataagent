@@ -1,21 +1,21 @@
 {
-  "venvPath": "runtime/agentkit",
+  "venvPath": ".",
   "venv": ".venv",
   "pythonVersion": "3.12",
   "include": [
-    "runtime/agentkit"
+    "."
   ],
   "exclude": [
     "**/node_modules",
     "**/__pycache__",
     "**/.venv",
-    "apps/web",
+    "ui/web",
     "docs"
   ],
   "executionEnvironments": [
     {
-      "root": "runtime/agentkit",
-      "extraPaths": ["runtime/agentkit"],
+      "root": ".",
+      "extraPaths": ["."],
       "pythonVersion": "3.12"
     }
   ]

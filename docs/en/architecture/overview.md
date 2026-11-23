@@ -5,10 +5,10 @@ The product is one local control plane and two presentations. Web and TUI both t
 ## One service, two presentations
 
 ```text
-Browser apps/web
+Browser ui/web
   -> Next same-origin proxy for /api/v1/runs and /api/v1/*
   -> dataagent serve (config.yaml server.host:server.port, default 127.0.0.1:8790)
-  <- apps/tui calls that same process directly
+  <- ui/tui calls that same process directly
 ```
 
 | Presentation | Start | Open |
@@ -22,10 +22,11 @@ The Python SDK can skip HTTP and prepare the same runtime in process. Web/TUI us
 
 | Module | Responsibility |
 | --- | --- |
-| `apps/web` | Browser presentation. Proxies conversation and `/api/v1/*` to the control plane. |
-| `apps/tui` | Terminal presentation. Connects to the control plane and uses slash commands for sessions and outputs. |
-| `runtime/agentkit/serve` | The only HTTP control plane: health, sessions, the event stream, and A2A. |
-| `runtime/agentkit` | Loads configuration, assembles models and plugins, and runs one turn. |
+| `ui/web` | Browser presentation. Proxies conversation and `/api/v1/*` to the control plane. |
+| `ui/tui` | Terminal presentation. Connects to the control plane and uses slash commands for sessions and outputs. |
+| `dataagent/server/` | Serves health checks, sessions and the AG-UI event stream. The A2A service lives in `dataagent/server/a2a/`. |
+| `dataagent/` | Exposes the Python SDK. `bootstrap/` prepares the runtime and `assembly/graph.py` builds the agent graph. |
+| `dataagent/assembly/prompts/` | Renders the host templates for the main agent, subagents and filesystem instructions. Plugins keep their own prompts in their plugin directories. |
 | Home `~/.dataagent` | Configuration, Skills, plugins, and all session state. |
 | `dataagent.workspaces` | Read-only input directories bound when the process starts. They are not inside Home. |
 

@@ -1,6 +1,6 @@
 import { join, resolve } from "node:path";
-import { httpOrigin, readServerListen } from "./server-listen.mjs";
-import { venvPython } from "./python-environment.mjs";
+import { httpOrigin, readServerListen } from "../ui/shared/server-listen.mjs";
+import { venvPython } from "../ui/shared/python-environment.mjs";
 
 function port(value, fallback, name) {
   const parsed = Number(value ?? fallback);
@@ -73,9 +73,9 @@ function webListen(args) {
 
 export function pythonControlPlaneLaunch(root, env, reload = false, configPath) {
   return {
-    command: venvPython(join(root, "runtime/agentkit"), env),
+    command: venvPython(join(root, "."), env),
     args: [
-      "-m", "serve", "serve",
+      "-m", "dataagent", "serve",
       ...(configPath ? ["--config", configPath] : []),
       ...(reload ? ["--reload"] : []),
     ],
@@ -89,7 +89,7 @@ export function webLaunch(config, env = {}) {
   return {
     command: "npm",
     args: [
-      "--prefix", "apps/web", "run", "start", "--",
+      "--prefix", "ui/web", "run", "start", "--",
       "--hostname", config.webHost,
       "--port", config.webPort,
     ],

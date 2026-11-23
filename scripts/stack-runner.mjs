@@ -3,8 +3,8 @@ import { existsSync } from "node:fs";
 import { loadEnvFile } from "node:process";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { captureOutput, createLogger } from "./lib/logging.mjs";
-import { venvPython } from "./python-environment.mjs";
+import { captureOutput, createLogger } from "../ui/shared/logging.mjs";
+import { venvPython } from "../ui/shared/python-environment.mjs";
 
 import {
   formatStackEndpoints,
@@ -90,7 +90,7 @@ export async function runStack({ args = [] }) {
 }
 
 export async function ensurePythonEnvironment(rootDir = root, run = runInherited) {
-  if (existsSync(venvPython(join(rootDir, "runtime/agentkit")))) return false;
+  if (existsSync(venvPython(join(rootDir, ".")))) return false;
   await run(process.execPath, ["scripts/python-environment.mjs", "--no-dev"]);
   return true;
 }
@@ -101,8 +101,8 @@ function runInherited(command, args) {
 
 async function ensureArtifact(kind) {
   const ready = kind === "web"
-    ? existsSync(join(root, "apps/web/.next/BUILD_ID"))
-    : existsSync(join(root, "apps/tui/dist/index.js"));
+    ? existsSync(join(root, "ui/web/.next/BUILD_ID"))
+    : existsSync(join(root, "ui/tui/dist/index.js"));
   if (ready) return;
   await runPreparation(`npm run build:${kind}`, kind, "build");
 }

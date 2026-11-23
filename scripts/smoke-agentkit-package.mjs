@@ -11,7 +11,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
-const { HttpAgent } = createRequire(new URL("../apps/web/package.json", import.meta.url))("@ag-ui/client");
+const { HttpAgent } = createRequire(new URL("../ui/web/package.json", import.meta.url))("@ag-ui/client");
 
 const ROOT = fileURLToPath(new URL("../", import.meta.url));
 const exec = promisify(execFile);
@@ -103,7 +103,7 @@ function checkEvents(events, fails) {
 }
 
 async function main() {
-  for (const file of ["apps/web/.next/BUILD_ID", "apps/tui/dist/index.js"]) {
+  for (const file of ["ui/web/.next/BUILD_ID", "ui/tui/dist/index.js"]) {
     assert(existsSync(path.join(ROOT, file)), `Run npm run build first: missing ${file}`);
   }
   const temporary = await mkdtemp(path.join(os.tmpdir(), "dataagent-package-"));
@@ -140,7 +140,7 @@ async function main() {
     await run(python, ["-I", "-c", `
 import json, yaml, os, sys
 from pathlib import Path
-import dataagent, serve.app, a2a_server
+import dataagent, dataagent.server.app, dataagent.server.a2a
 import pymysql, psycopg2, cryptography
 from importlib.util import find_spec
 from importlib.metadata import version
@@ -189,8 +189,8 @@ asyncio.run(main())
     assert.equal((await a2a.json()).result.task.status.state, "TASK_STATE_COMPLETED");
     const webPort = await reservePort();
     const browser = `http://127.0.0.1:${webPort}`;
-    web = service(process.execPath, [path.join(ROOT, "apps/web/start.mjs"), "start", "--hostname", "127.0.0.1", "--port", String(webPort)], {
-      cwd: path.join(ROOT, "apps/web"), env: { ...env, API_PROXY_TARGET: api },
+    web = service(process.execPath, [path.join(ROOT, "ui/web/start.mjs"), "start", "--hostname", "127.0.0.1", "--port", String(webPort)], {
+      cwd: path.join(ROOT, "ui/web"), env: { ...env, API_PROXY_TARGET: api },
     });
     await waitFor(browser + "/data-tasks", web);
     console.log("[smoke:agentkit-package] Web proxy: real AG-UI success and provider error");
@@ -204,7 +204,7 @@ asyncio.run(main())
       catch (error) { if (!fails) throw error; }
       checkEvents(events, fails);
     }
-    const { runTui } = await import("../apps/tui/dist/index.js");
+    const { runTui } = await import("../ui/tui/dist/index.js");
     let sourceStarted = false;
     const startBackend = async () => {
       sourceStarted = true;

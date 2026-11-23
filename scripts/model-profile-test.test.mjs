@@ -4,7 +4,7 @@ import {
   isRevisionConflictError,
   modelProfileTestFailureMessage,
   modelProfileTestSuccessReason
-} from "../apps/api/src/model-profile-test.ts";
+} from "../ui/api/src/model-profile-test.ts";
 
 test("modelProfileTestFailureMessage keeps PROVIDER_CONFIG_MISSING", () => {
   assert.equal(

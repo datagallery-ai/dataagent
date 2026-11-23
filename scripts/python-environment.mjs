@@ -7,11 +7,6 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "..");
 
-export function venvPython(project, env = process.env, platform = process.platform) {
-  const environment = path.resolve(project, env.UV_PROJECT_ENVIRONMENT || ".venv");
-  return path.join(environment, platform === "win32" ? "Scripts/python.exe" : "bin/python");
-}
-
 function runUv(args, options) {
   return new Promise((resolve, reject) => {
     const child = spawn("uv", args, { ...options, stdio: "inherit" });
@@ -22,7 +17,7 @@ function runUv(args, options) {
 
 /** Delegate dependency selection, resolution and environment management to uv. */
 export function syncPythonEnvironment({ root = ROOT, env = process.env, dev = true, extras = [], run = runUv } = {}) {
-  return run(["sync", "--project", path.join(root, "runtime/agentkit"),
+  return run(["sync", "--project", path.join(root, "."),
     ...(dev ? [] : ["--no-dev"]), ...extras.flatMap(extra => ["--extra", extra])], { cwd: root, env });
 }
 

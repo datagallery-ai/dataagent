@@ -26,10 +26,10 @@ This directory contains the public documentation source for the DataAgent GitHub
 
 | Tree | Reader | Put here | Leave out |
 | --- | --- | --- | --- |
-| `docs/` | Someone deploying or trying Web and TUI, or calling the HTTP API | Product shape, deploy and first question, what each UI can do, the external request and response contract, local security expectations | Plugin schemas, SDK lifecycle, hook order, bootstrap steps, file modes, `dataagent/core` maintenance |
-| `runtime/agentkit/docs/` | Someone changing configuration fields, extensions, or the runtime | Field table, Home layout, SDK, plugins, HTTP details used to change `serve/`, architecture and tests | `deploy.sh` lifecycle, bilingual product tour, Web page layout |
+| `docs/en/`, `docs/zh/` | Someone deploying or trying Web and TUI, or calling the HTTP API | Product shape, deploy and first question, what each UI can do, the external request and response contract, local security expectations | Plugin schemas, SDK lifecycle, hook order, bootstrap steps, file modes, `dataagent/core` maintenance |
+| `docs/guides/`, `docs/reference/`, `docs/extensions/`, `docs/architecture/`, `docs/development/` | Someone changing configuration fields, extensions, or the runtime | Field table, Home layout, SDK, plugins, HTTP details used to change `dataagent/server/`, architecture and tests | `deploy.sh` lifecycle, bilingual product tour, Web page layout |
 
-The public configuration page keeps only the files a deployer edits and the minimum model. The field table is `runtime/agentkit/docs/reference/configuration.md`.
+The public configuration page keeps only the files a deployer edits and the minimum model. The field table is `docs/reference/configuration.md`.
 
 When a public page and a runtime page both describe an HTTP path or a deployer-facing default, change them together. They must not disagree.
 
@@ -39,7 +39,7 @@ When a public page and a runtime page both describe an HTTP path or a deployer-f
 
 ## Maintenance rules
 
-- Public docs must not link into `runtime/agentkit/docs/`.
+- Product and Python technical guides share this documentation tree; link to the relevant guide rather than duplicating it.
 - When adding an external-facing capability, update both `en/` and `zh/`.
 - Example credentials must use placeholder values such as `replace-with-your-key`.
 - Do not retain source-sensitive narrative.

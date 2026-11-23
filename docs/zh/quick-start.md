@@ -132,7 +132,7 @@ PowerShell 使用 `$env:NAME="value"` 设置对应变量，解释器路径例如
 npm install
 ```
 
-安装尾部的 `postinstall` 会自动同步控制面的 Python 依赖到 `runtime/agentkit/.venv`。需要拆分前端安装、Python 准备和构建时，见 [分阶段安装与原生命令](guides/mirror-deployment.md#staged-installation)。确认整个命令成功退出、Python 同步完成后再继续；耗时取决于机器和下载源。
+安装尾部的 `postinstall` 会自动同步控制面的 Python 依赖到 `.venv`。需要拆分前端安装、Python 准备和构建时，见 [分阶段安装与原生命令](guides/mirror-deployment.md#staged-installation)。确认整个命令成功退出、Python 同步完成后再继续；耗时取决于机器和下载源。
 
 ### 3. 配置模型服务
 

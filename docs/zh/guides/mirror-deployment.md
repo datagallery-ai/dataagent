@@ -8,7 +8,7 @@
 
 - **Node**：优先由运维预装。如需脚本安装，导出 `DATAAGENT_NODE_PACKAGE_URL`，指向匹配系统和架构、包含 Node 与 npm 的 `.deb` 或 `.rpm` 文件。脚本用现有包管理器安装该文件，不配置 NodeSource；包的系统依赖仍由系统仓库提供。不设置时沿用公网 NodeSource。官方 tar 包应预先解压并加入 `PATH`。
 - **uv**：保持预装方式，不增加自动安装链路。可以从自定义镜像下载匹配平台的官方 uv 压缩包，解压后将 `uv`（以及可选的 `uvx`）安装到用户的 `PATH`。例如把解压目录中的文件安装到 `$HOME/.local/bin/uv`，再 `export PATH="$HOME/.local/bin:$PATH"`。也可使用 PyPI 镜像上的 uv 包，按 [uv 安装说明](https://docs.astral.sh/uv/getting-started/installation/) 安装。下载器、安装脚本及其后续制品都应来自可达的下载源。
-- **Python**：已有 Python 3.12 时导出 `UV_PYTHON=/opt/python3.12/bin/python3.12`。也支持 `UV_PYTHON=3.12`，由 uv 发现本地解释器；Makefile 继续兼容 `PYTHON_VERSION=3.12` 参数。不另写解释器搜索逻辑。
+- **Python**：已有 Python 3.12 时导出 `UV_PYTHON=/opt/python3.12/bin/python3.12`。也支持 `UV_PYTHON=3.12`，由 uv 发现本地解释器。不另写解释器搜索逻辑。
 
 使用已有解释器时，建议显式关闭 Python 下载，缺失即报错：
 
@@ -39,20 +39,20 @@ Node 的启动前安装和 npm 下载源通过**进程环境变量**或工具原
 
 安装钩子直接执行原生 `uv sync`，按 `pyproject.toml` 的版本约束使用 uv 的标准索引解析和安装。仓库保留 `uv.lock` 作为解析快照，避免首次解析未选装的 Spark 时额外下载大型源码包；安装不使用 `--frozen` 或 `--locked`。不会再导出临时清单、手动改写锁文件或复制项目。切换索引后正常同步即可，由 uv 更新快照。更换索引可能重新解析全部可选依赖，即使没有选装；相应元数据和制品也需要可达。镜像需提供满足项目约束的包和构建工具，不要求不同环境的全部传递依赖版本一致。
 
-默认环境为 `runtime/agentkit/.venv`。如已设置 uv 原生的 `UV_PROJECT_ENVIRONMENT`，安装与启动会使用同一路径；相对路径以 `runtime/agentkit` 为基准。原生工具的认证、CA、代理配置继续生效。
+默认环境为 `.venv`。如已设置 uv 原生的 `UV_PROJECT_ENVIRONMENT`，安装与启动会使用同一路径；相对路径以 `.` 为基准。原生工具的认证、CA、代理配置继续生效。
 
 Python 准备采用 `uv sync` 的精确同步语义：按本次选择安装依赖，移除未选中的包；默认包含开发组，不默认启用 extras。
 
 | 用途 | 项目入口 | 对应的原生选择 |
 | --- | --- | --- |
-| 默认开发环境 | `npm run prepare:python` | `uv sync --project runtime/agentkit` |
-| 仅运行依赖 | `npm run prepare:python -- --no-dev` | `uv sync --project runtime/agentkit --no-dev` |
+| 默认开发环境 | `npm run prepare:python` | `uv sync --project .` |
+| 仅运行依赖 | `npm run prepare:python -- --no-dev` | `uv sync --no-dev` |
 
 对于项目已声明的可选能力，`--extra <name>` 可以重复传入。每次同步都要显式传入所需 extras；不再选择时，其依赖会被移除。`npm install` / `npm ci` 的安装钩子，以及手动 `npm start` 对缺失环境的准备，显式选择 `--no-dev` 且不启用 extras；需要可选能力时，在安装完成后显式传入项目声明的 extras，再启动服务。运行和测试默认共用项目环境，测试准备包含开发组；切换依赖选择会改变同一环境。
 
 启动入口使用已准备的解释器。直接用 uv 启动时添加 `--no-sync`，依赖变更后先按所需选择重新准备环境。
 
-Makefile 继续兼容流水线中的 `PYTHON_VERSION`、`PIP_INDEX_URL`、`PIP_EXTRA_INDEX_URL`、`PIP_FIND_LINKS` 和 `NPM_REGISTRY`，仅将它们映射为工具原生配置。已有原生配置优先，不会被兼容参数覆盖。`make prepare`、`make build`、`make ut`、`make st` 的调用方式不变；测试阶段通过共享入口准备开发依赖，各套件不再重复隐式同步。环境已准备好时使用 `make ut UV_RUN_OPTS=--no-sync` 或 `npm run test:product -- --no-sync` 跳过准备；同样适用于 `make st`。
+`make prepare`、`make build`、`make ut`、`make st` 的调用方式不变；测试阶段通过共享入口准备开发依赖，各套件不再重复隐式同步。环境已准备好时使用 `make ut UV_RUN_OPTS=--no-sync` 或 `npm run test:product -- --no-sync` 跳过准备；同样适用于 `make st`。
 
 <a id="staged-installation"></a>
 
@@ -63,7 +63,7 @@ Makefile 继续兼容流水线中的 `PYTHON_VERSION`、`PIP_INDEX_URL`、`PIP_E
 ```bash
 # 跳过根安装钩子的 Python 准备，单独观察每一阶段。
 SKIP_POSTINSTALL_BUILD=1 npm ci
-uv sync --project runtime/agentkit --no-dev
+uv sync --no-dev
 npm run build
 ```
 
@@ -72,7 +72,7 @@ npm run build
 然后按 [配置说明](../quick-start.md) 在仓库根目录创建并填写 `.env`，启动时显式选择这份文件：
 
 ```bash
-uv run --no-sync --project runtime/agentkit dataagent serve --env-file .env
+uv run --no-sync dataagent serve --env-file .env
 ```
 
 若改用 Home `.env` 或进程环境提供模型配置，省略 `--env-file .env`。只提供 A2A 时将 `serve` 换成 `serve-a2a`；仅运行后端可跳过 npm 安装和前端构建。`serve-a2a` 没有 REST 健康、会话和产物接口。需要前端时，连接已有后端的命令见 [Web/TUI 连接](agentkit-package.md#connect-web-and-tui)。
