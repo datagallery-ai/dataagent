@@ -246,6 +246,14 @@ def test_parse_args_and_main_publish_the_route_table(tmp_path: Path, monkeypatch
     assert set(table.routes) == {"business_twin", "traffic_insight"}
 
 
+def test_parse_args_accepts_process_type_flag(monkeypatch: pytest.MonkeyPatch) -> None:
+    """REST 命令行带单横线 -processType：argparse 只解析、不修改 sys.argv，原值留给内部包扫描消费。"""
+    monkeypatch.setattr(sys, "argv", ["dataagent", "--config", "x.yaml", "-processType", "custom"])
+    args = parse_args()
+    assert args.process_type == "custom"
+    assert sys.argv == ["dataagent", "--config", "x.yaml", "-processType", "custom"]
+
+
 def test_main_omits_uvicorn_server_header(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     """The REST process must not advertise its ASGI server name."""
     from dataagent.interface.rest_api.start_service import _ZeroingCertConfig
