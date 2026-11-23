@@ -59,6 +59,7 @@ def install_fake_internal_cert(monkeypatch, password: str = "internal-secret"):
 )
 def test_encrypted_default_or_true_fills_both_passwords(monkeypatch, certificate):
     calls = install_fake_internal_cert(monkeypatch, "from-om")
+    monkeypatch.delenv("DATAAGENT_PROCESS_TYPE", raising=False)
     original_argv = list(sys.argv)
     passwords = resolve_cert_key_passwords(certificate)
     assert passwords["inbound"].as_bytes() == b"from-om"
@@ -110,6 +111,34 @@ def test_empty_internal_password_raises_value_error(monkeypatch):
 
 def test_existing_process_type_argv_not_extended(monkeypatch):
     calls = install_fake_internal_cert(monkeypatch, "from-om")
+    monkeypatch.delenv("DATAAGENT_PROCESS_TYPE", raising=False)
+    monkeypatch.setattr(sys, "argv", ["prog", "-processType", "KEEP"])
+    resolve_cert_key_passwords()
+    assert calls["argv"] == ["prog", "-processType", "KEEP"]
+    assert sys.argv == ["prog", "-processType", "KEEP"]
+
+
+def test_env_var_overrides_default_process_type(monkeypatch):
+    """环境变量 DATAAGENT_PROCESS_TYPE 覆盖默认 processType（环境占用时免改代码换值）。"""
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    monkeypatch.setenv("DATAAGENT_PROCESS_TYPE", "custom-process")
+    resolve_cert_key_passwords()
+    assert calls["argv"][-2:] == ["-processType", "custom-process"]
+    assert "-processType" not in sys.argv
+
+
+def test_empty_env_var_falls_back_to_default_process_type(monkeypatch):
+    """环境变量为空串视为未设置，回退默认 processType。"""
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    monkeypatch.setenv("DATAAGENT_PROCESS_TYPE", "")
+    resolve_cert_key_passwords()
+    assert calls["argv"][-2:] == ["-processType", "datagallery-dataagent"]
+
+
+def test_env_var_ignored_when_argv_already_has_process_type(monkeypatch):
+    """优先级：sys.argv 已带 -processType 时环境变量不生效（尊重框架启动器注入）。"""
+    calls = install_fake_internal_cert(monkeypatch, "from-om")
+    monkeypatch.setenv("DATAAGENT_PROCESS_TYPE", "custom-process")
     monkeypatch.setattr(sys, "argv", ["prog", "-processType", "KEEP"])
     resolve_cert_key_passwords()
     assert calls["argv"] == ["prog", "-processType", "KEEP"]

@@ -10,6 +10,7 @@
 # ============================================================================
 from __future__ import annotations
 
+import os
 import sys
 from collections.abc import Mapping
 
@@ -104,7 +105,8 @@ def require_internal_cert_password() -> SecurePassword:
 
     original_argv = sys.argv[:]
     if "-processType" not in original_argv:
-        sys.argv.extend(["-processType", "datagallery-dataagent"])
+        process_type = os.environ.get("DATAAGENT_PROCESS_TYPE") or "datagallery-dataagent"
+        sys.argv.extend(["-processType", process_type])
     try:
         FrameworkStarter.init_framework()
     finally:
