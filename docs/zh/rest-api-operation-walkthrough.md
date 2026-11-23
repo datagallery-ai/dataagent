@@ -115,7 +115,7 @@ certificate:
 
 两份按同一套材料共用。`DataAgent.from_config` 把 `certificate` 交给 `apply_certificate_config`，写成进程环境变量 `DATAAGENT_OUTBOUND_CA_FILE`、`DATAAGENT_OUTBOUND_CLIENT_CERT`、`DATAAGENT_OUTBOUND_CLIENT_KEY`、`DATAAGENT_OUTBOUND_CIPHERS`、`DATAAGENT_OUTBOUND_MODE`、`DATAAGENT_OUTBOUND_SSL_SERVICES`。缺省也相同：`outbound_enabled` 开启，`outbound_ssl_services` 是 `llm,semantic_layer,cloud_core`，`outbound_certificate_mode` 是 3。后加载再写一遍这些变量，写进去的仍是这一套。
 
-私钥口令走内部包时，框架启动参数 `-processType` 的取值顺序：命令行已带则保持不动，否则取环境变量 `DATAAGENT_PROCESS_TYPE`，未设置用默认 `datagallery-dataagent`。
+私钥口令走内部包时，框架启动参数 `-processType` 的取值顺序：命令行已带则保持不动，否则取环境变量 `DATAAGENT_PROCESS_TYPE`，未设置用默认 `datagallery-dataagent`。`start_service` 命令行可直接带 `-processType <值>`（单横线，argparse 注册后原样保留在 argv，由内部包扫描消费）。
 
 模型按文件写。两份 yaml 的 `MODEL` 段名都是 `chat_model`，都没有单独的 `name`。`model_type` 都是 `chat`，`provider` 都是 `bailian`，`params.model` 都是 `qwen3-30b-a3b`，`temperature` 都是 `0.0`。
 
