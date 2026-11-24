@@ -2,8 +2,17 @@ import type { Message, RunAgentInput } from "@ag-ui/core";
 
 export const STREAM_RUNTIME_PATH = "/api/v1/runs";
 
-/** Body accepted by `POST /api/v1/runs`: one new user text, no client-owned fields. */
-export function toStreamRunInput(input: RunAgentInput): RunAgentInput {
+/** Send one new user text or HITL answers; the server owns conversation state. */
+export function toStreamRunInput(input: RunAgentInput): RunAgentInput & { answers?: Record<string, string> } {
+  const answers = input.forwardedProps?.hitlAnswers;
+  if (answers !== undefined) {
+    if (!answers || typeof answers !== "object" || Array.isArray(answers)
+      || !Object.keys(answers).length || Object.values(answers).some(v => typeof v !== "string")) {
+      throw new Error("Invalid HITL answers");
+    }
+    return { threadId: input.threadId, runId: input.runId, messages: [],
+      answers: answers as Record<string, string>, tools: [], context: [], state: {}, forwardedProps: {} };
+  }
   const user = [...(input.messages ?? [])].reverse().find((message) => message.role === "user");
   if (!user || typeof user.id !== "string" || user.id.length === 0) {
     throw new Error("A new user message is required");

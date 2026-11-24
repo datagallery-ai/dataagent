@@ -10,12 +10,30 @@
 
 1. `RUN_STARTED`，带 `threadId` 和 `runId`
 2. 适配器的中间事件，例如文本和工具调用
-3. `MESSAGES_SNAPSHOT`，内容是图结束后的消息
-4. `RUN_FINISHED`，`metadata.durationMs` 是服务端单调时钟从开始到结束的毫秒数
+3. `CUSTOM`，`name="human_feedback"`，`value=[]`，清除已解决的交互
+4. `MESSAGES_SNAPSHOT`，内容是图结束后的消息
+5. `RUN_FINISHED`，`metadata.status="completed"`，`metadata.durationMs` 是服务端单调时钟从开始到结束的毫秒数
 
-结束前会检查图没有未完成的 `next`。若图停在未完成的节点，该轮以 `RUN_ERROR` 结束。
+结束前会检查图没有未完成的 `next`。HITL 等待按下文结束本轮 HTTP 流；其他未完成节点仍以 `RUN_ERROR` 结束。
 
 上游必须正好有一个终止事件，且后面不能再有事件。否则服务视为不完整流。
+
+## 等待用户回答
+
+HITL 暂停也用 `RUN_FINISHED` 结束本轮流，但 `metadata.status="waiting_for_input"`，
+表示等待回答。最终消息快照前的 `CUSTOM name="human_feedback"` 携带当前全部待回答项：
+
+```json
+{"type":"CUSTOM","name":"human_feedback","value":[
+  {"type":"human_feedback","interruptId":"<id>","message":"请选择身份字段","options":["user_id","device_id"]}
+]}
+```
+
+`options` 供展示，用户也可以输入文本；回答无效时附带可选的 `validationError`。
+客户端用这份数组替换当前待回答项，通过 `POST /api/v1/runs` 的 `answers` 提交，
+保持 `threadId`、使用新 `runId`。多个并行交互可分批回答。刷新页面或重启后从
+`GET /api/v1/sessions/{threadId}` 的 `pendingInteractions` 恢复。
+用户思考期间没有活动 HTTP 流，不计入单轮执行超时。
 
 ## 失败
 
@@ -44,6 +62,7 @@
 | 终止 | 会话状态 | 客户端 |
 | --- | --- | --- |
 | `RUN_FINISHED` | `completed`，并记下新的 Checkpoint | 用最后的 `MESSAGES_SNAPSHOT` 作为该轮消息。可以显示 `durationMs` |
+| `RUN_FINISHED`，`metadata.status` 为 `waiting_for_input` | `waiting_for_input`，保存暂停点 | 展示待回答项；保持未完成工具，提交回答后继续 |
 | `RUN_ERROR` | `error`。图里已经有消息时，索引指向这一轮到达的 Checkpoint | 保留已显示的部分输出和错误码。不要用同一个 `runId` 重放。下一轮留在同一线程 |
 | `RUN_ERROR`，`code` 为 `CANCELLED` | `interrupted` | 显式取消。按“已停止”显示，不按失败显示。有 Checkpoint 就从它继续，否则读该线程最新图状态。不新开线程 |
 | 连接断开，没有终止事件 | `interrupted` | 存储结果和取消相同 |
@@ -64,7 +83,7 @@ TUI 把这三种结果画成完成、失败或 `Interrupted — continue this co
 | `STEP_STARTED` / `STEP_FINISHED` | 通过 `subagentRunId` 和 `stepName` 展示该子代理的图节点进度 |
 | `SUBAGENT_FINISHED` / `SUBAGENT_ERROR` | 结束子代理的进度。它们不代表外层工具或根运行已经完成 |
 
-根运行的其他事件按 AG-UI 原样转发：`TEXT_MESSAGE_*`、`TOOL_CALL_*`、`REASONING_*`、根图的 `STEP_STARTED` / `STEP_FINISHED`，以及适配器或工具发出的 `CUSTOM` 事件。服务端自己不定义 `CUSTOM` 名字；客户端应忽略不认识的 `CUSTOM`。服务端丢弃上游的 `RUN_STARTED`、`MESSAGES_SNAPSHOT` 和 `STATE_SNAPSHOT`，自己发出一次 `RUN_STARTED`，并在成功时发出最终的 `MESSAGES_SNAPSHOT`。
+根运行的其他事件按 AG-UI 原样转发：`TEXT_MESSAGE_*`、`TOOL_CALL_*`、`REASONING_*`、根图的 `STEP_STARTED` / `STEP_FINISHED`，以及适配器或工具发出的 `CUSTOM` 事件。服务端定义 `human_feedback` 交互事件；客户端应忽略不认识的 `CUSTOM`。服务端丢弃上游的 `RUN_STARTED`、`MESSAGES_SNAPSHOT` 和 `STATE_SNAPSHOT`，自己发出一次 `RUN_STARTED`，并在成功时发出最终的 `MESSAGES_SNAPSHOT`。
 
 子代理文本、内部工具和状态事件不进入父对话流。最终消息快照仍取自根图。子代理错误消息与根错误一样经过脱敏。产物通过会话的 `outputs/` 目录读取，见 [HTTP 接口](rest-api.md)。`after_model` 在每次模型调用返回后于服务内执行，不对应逐 token 的 AG-UI 事件。
 

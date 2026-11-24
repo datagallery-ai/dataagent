@@ -53,6 +53,29 @@ def workspace_lock(state_dir: Path):
             _release_workspace_lock(handle)
 
 
+def pending_interactions(snapshot):
+    pending = []
+    for task in snapshot.tasks:
+        # A completed parallel task retains its earlier interrupt write until
+        # the whole superstep commits. A resume-only write yields {}, so it is
+        # not a completed result (e.g. an invalid answer that interrupts again).
+        if task.result:
+            continue
+        for item in task.interrupts:
+            value = item.value
+            if not isinstance(value, dict) or value.get("type") != "human_feedback":
+                continue
+            if not isinstance(value.get("message"), str):
+                continue
+            entry = {"type": "human_feedback", "interruptId": item.id, "message": value["message"]}
+            if value.get("options"):
+                entry["options"] = value["options"]
+            if value.get("validation_error"):
+                entry["validationError"] = value["validation_error"]
+            pending.append(entry)
+    return pending
+
+
 class Sessions:
     def __init__(self, path: Path):
         self.path = path
@@ -70,6 +93,9 @@ class Sessions:
                     PRIMARY KEY (user_id, thread_id), UNIQUE (thread_id)
                 )
             """)
+            await self.db.execute(
+                "CREATE TABLE IF NOT EXISTS submitted_runs (thread_id TEXT, run_id TEXT, PRIMARY KEY(thread_id, run_id))"
+            )
             await self.db.execute("UPDATE sessions SET status='interrupted' WHERE status='running'")
             # Rows written before the status was renamed; one value, one meaning.
             await self.db.execute("UPDATE sessions SET status='completed' WHERE status='complete'")
@@ -110,6 +136,9 @@ class Sessions:
         async with self._write_lock:
             try:
                 await self.db.execute(
+                    "INSERT INTO submitted_runs VALUES (?, ?)", (thread_id, run_id)
+                )
+                await self.db.execute(
                     """
                     INSERT INTO sessions VALUES (?, ?, ?, ?, ?, 'running', NULL, ?)
                     ON CONFLICT(user_id, thread_id) DO UPDATE SET
@@ -121,7 +150,7 @@ class Sessions:
             except sqlite3.IntegrityError:
                 await self.db.rollback()
                 raise ValueError(
-                    f"Session {thread_id} does not belong to user {user_id}. "
+                    f"Run was already submitted or session {thread_id} does not belong to user {user_id}. "
                     "Choose one of this user's sessions or start a new one."
                 ) from None
 
@@ -169,13 +198,18 @@ class SessionTurn:
     async def settle(self, graph, *, complete: bool = False):
         """Point the session row at the checkpoint this turn reached.
 
-        ``complete`` is a successful end: a graph with pending work is an error.
+        ``complete`` accepts a completed graph or a supported HITL pause.
+        Other pending work is an error.
         A turn that stored no messages leaves the previous checkpoint in place.
         """
         latest = await graph.aget_state({"configurable": {"thread_id": self.thread_id}})
         configurable = (latest.config or {}).get("configurable") or {}
         checkpoint_id = configurable.get("checkpoint_id")
         if complete:
+            if pending_interactions(latest):
+                self.status = "waiting_for_input"
+                await self.sessions.finish(self.user_id, self.thread_id, self.status, checkpoint_id)
+                return latest
             if latest.next:
                 raise RuntimeError("Agent stopped with unfinished work or an unsupported interrupt")
             await self.complete(latest.config["configurable"]["checkpoint_id"])

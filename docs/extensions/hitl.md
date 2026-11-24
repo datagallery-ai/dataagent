@@ -22,6 +22,12 @@
 HITL 配置统一声明在插件 `.plugin.yaml` 的 hitl 字段，guard 不从主配置的
 plugins.config 读取交互参数。自动应答和交互超时尚未接入。
 
+Web 与 TUI 已支持通过 HTTP 暂停和恢复：Web 展示问题、候选项和文本输入；TUI
+显示问题后，将下一次手动输入作为回答，排队中的任务会继续等待。刷新 Web 或通过
+TUI `/resume <threadId>` 可恢复待回答项。公开协议只返回 `type`、`interruptId`、
+`message` 以及可选 `options`、`validationError`；策略内部信息仍保留在 checkpoint。
+详见 [HTTP 接口](../reference/rest-api.md) 与 [事件](../reference/events.md)。
+
 ## 启用和交互提示词
 
 ```yaml

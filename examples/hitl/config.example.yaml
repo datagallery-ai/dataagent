@@ -1,0 +1,14 @@
+# 在包含 UI 适配的版本中，从仓库根目录启动：
+# npm run start:tui -- --config examples/hitl/config.example.yaml
+# 测试输入：请使用 execute 执行 printf 'HITL test\n'。
+schema_version: 4
+models:
+  primary:
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+plugins:
+  enabled:
+  - hitl
+  paths:
+  - .

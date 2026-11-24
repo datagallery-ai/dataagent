@@ -2,6 +2,7 @@ import React from 'react';
 import assert from 'node:assert/strict';
 import { PassThrough } from 'node:stream';
 import { afterEach, describe, it } from 'node:test';
+import { stripVTControlCharacters } from 'node:util';
 import chalk from 'chalk';
 import { Box, render } from 'ink';
 import { CommandHistory } from '../keybindings.js';
@@ -14,6 +15,103 @@ import { selectionColors } from '../theme.js';
 import { EnhancedInputBox, inputLineFragments } from './EnhancedInputBox.js';
 
 const waitForInput = () => new Promise<void>((resolve) => setImmediate(resolve));
+
+it('lists HITL choices vertically and selects with up/down before Enter', async () => {
+  const submissions: string[] = [];
+  const view = renderInputBox(<EnhancedInputBox
+    choices={{ id: 'ask-1', options: ['允许执行', '拒绝执行', '重新规划'] }}
+    onChange={() => {}} onSubmit={value => submissions.push(value)} />);
+  await waitForInput();
+  const rows = stripVTControlCharacters(view.output.at(-1)!).split('\n');
+  const first = rows.findIndex(row => row.includes('[允许执行]'));
+  assert.equal(rows.findIndex(row => row.includes('[拒绝执行]')), first + 1);
+  assert.equal(rows.findIndex(row => row.includes('[重新规划]')), first + 2);
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.deepEqual(submissions, [], 'Enter alone must not authorize a command');
+  view.stdin.write('\x1b[C');
+  await waitForInput();
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.deepEqual(submissions, [], 'left/right must not select a candidate');
+  view.stdin.write('\x1b[B');
+  await waitForInput();
+  assert.match(view.output.at(-1)!, /› \[允许执行\]/);
+  view.stdin.write('\x1b[B');
+  await waitForInput();
+  assert.match(view.output.at(-1)!, /› \[拒绝执行\]/);
+  view.stdin.write('\x1b[A');
+  await waitForInput();
+  assert.match(view.output.at(-1)!, /› \[允许执行\]/);
+  view.stdin.write('\x1b[B');
+  await waitForInput();
+  view.stdin.write('\r');
+  await waitForInput();
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.deepEqual(submissions, ['拒绝执行'], 'repeated Enter must not submit another answer');
+});
+
+it('keeps free-text editing available alongside HITL choices', async () => {
+  const submissions: string[] = [];
+  const view = renderInputBox(<EnhancedInputBox
+    choices={{ id: 'ask-1', options: ['允许执行', '拒绝执行'] }}
+    onChange={() => {}} onSubmit={value => submissions.push(value)} />);
+  await waitForInput();
+  view.stdin.write('\x1b[B');
+  await waitForInput();
+  view.stdin.write('custom');
+  await waitForInput();
+  view.stdin.write('\x1b[D');
+  await waitForInput();
+  view.stdin.write('!');
+  await waitForInput();
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.deepEqual(submissions, ['custo!m']);
+});
+
+it('resets candidate selection for a new interaction and keeps long selected labels visible', async () => {
+  const submissions: string[] = [];
+  const input = (id: string, options: string[]) => <EnhancedInputBox
+    choices={{ id, options }} onChange={() => {}} onSubmit={value => submissions.push(value)} />;
+  const long = 'A very long candidate '.repeat(12);
+  const view = renderInputBox(input('ask-1', [long, 'Visible choice']));
+  await waitForInput();
+  view.stdin.write('\x1b[A');
+  await waitForInput();
+  assert.match(view.output.at(-1)!, /› \[Visible choice\]/);
+  view.rerender(input('ask-2', ['New choice']));
+  await waitForInput();
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.deepEqual(submissions, []);
+  view.stdin.write('\x1b[A');
+  await waitForInput();
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.deepEqual(submissions, ['New choice']);
+});
+
+it('scrolls a long candidate list while keeping the composer height bounded', async () => {
+  const submissions: string[] = [];
+  const layoutRows: number[] = [];
+  const view = renderInputBox(<EnhancedInputBox
+    choices={{ id: 'many', options: Array.from({ length: 20 }, (_, i) => `Option ${i}`) }}
+    onChange={() => {}} onSubmit={value => submissions.push(value)}
+    onLayoutChange={rows => layoutRows.push(rows)} />);
+  await waitForInput();
+  const height = layoutRows.at(-1)!;
+  assert.ok(height <= 8);
+  assert.doesNotMatch(view.output.at(-1)!, /\[Option 19\]/);
+  view.stdin.write('\x1b[A');
+  await waitForInput();
+  assert.match(view.output.at(-1)!, /› \[Option 19\]/);
+  assert.equal(layoutRows.at(-1), height);
+  view.stdin.write('\r');
+  await waitForInput();
+  assert.deepEqual(submissions, ['Option 19']);
+});
 
 type TestInput = PassThrough & {
   isTTY: boolean;
@@ -633,6 +731,21 @@ it('prioritizes exit reminder over command notice and completion without metadat
   await waitForInput();
   assert.match(view.output.at(-1)!, /Press Ctrl\+C again/);
   assert.doesNotMatch(view.output.at(-1)!, /Command notice|ANALYZE|LOCAL AGENT|Ready/);
+});
+
+it('keeps multiline notices within the single reserved hint row', async () => {
+  const layoutRows: number[] = [];
+  const view = renderInputBox(<EnhancedInputBox
+    notice={{ kind: 'info', message: 'Question\nCandidate A\nCandidate B\nReply below' }}
+    modelName="test-model" onChange={() => {}} onSubmit={() => {}}
+    onLayoutChange={rows => layoutRows.push(rows)}
+  />);
+  await waitForInput();
+  const output = view.output.at(-1)!;
+  assert.match(output, /Question Candidate A Candidate B Reply below/);
+  assert.match(output, /›/);
+  assert.equal(layoutRows.at(-1), 5);
+  assert.equal(output.trimEnd().split('\n').length, 5);
 });
 
 it('places connection failure beside a cell-truncated model and hides optional datasource first', async () => {

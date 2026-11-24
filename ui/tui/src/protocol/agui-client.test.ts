@@ -52,6 +52,15 @@ function stream(events: object[], byteByByte = false) {
 }
 
 describe("Direct AG-UI transport", () => {
+  it("sends HITL answers without requiring or replaying a user message", async () => {
+    let payload: unknown;
+    const client = new AguiClient("http://127.0.0.1/api/v1/runs", async (_url, init) => {
+      payload = JSON.parse(String(init?.body));
+      return stream([started, finished]);
+    });
+    for await (const _event of client.runAgent({ ...input, messages: [], answers: { ask: 'user_id' } })) { /* drain */ }
+    assert.deepEqual(payload, { threadId: 'thread', runId: 'run', messages: [], answers: { ask: 'user_id' }, tools: [], context: [], state: {}, forwardedProps: {} });
+  });
   it("sends only the newest user message and handles split UTF-8 / CRLF", async () => {
     let payload: unknown;
     const client = new AguiClient("http://127.0.0.1:8787/api/v1/runs", async (_url, init) => {

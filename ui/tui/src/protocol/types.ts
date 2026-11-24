@@ -11,6 +11,7 @@ export type AgentContext = Context;
 export type CopilotKitEvent = AgentEvent;
 
 export interface RunAgentInput {
+  answers?: Record<string, string> | undefined;
   threadId: string;
   runId: string;
   parentRunId?: string | undefined;

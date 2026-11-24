@@ -50,6 +50,15 @@ class _ContextAgent(LangGraphAgent):
                 async for event in stream:
                     yield event
 
+    def _build_command_from_agui_resume(self, entries, *, open_interrupts=None):
+        from langgraph.types import Command
+
+        if any(entry.status != "resolved" for entry in entries):
+            return super()._build_command_from_agui_resume(entries, open_interrupts=open_interrupts)
+        # Native defaults unwrap a single answer, losing the target of a
+        # partial parallel resume. LangGraph accepts the interrupt-ID map.
+        return Command(resume={entry.interrupt_id: entry.payload for entry in entries})
+
     def get_schema_keys(self, config):
         # Explicit inspection selects a thread too; merely constructing an adapter
         # must not open the default session or run plugin factories.

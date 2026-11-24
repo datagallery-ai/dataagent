@@ -428,6 +428,9 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
         runStartedAt: Date.now(),
       };
     case "RUN_FINISHED":
+      if ((event.metadata as Record<string, unknown> | undefined)?.status === "waiting_for_input") {
+        return { ...state, runStatus: "suspended", runFinishedAt: Date.now() };
+      }
       if (state.runStatus === "completed" || state.runStatus === "canceled") {
         // STATE_DELTA may mark the run completed before RUN_FINISHED; still finalize
         // any tool calls left at "running" (e.g. TOOL_CALL_END without RESULT).

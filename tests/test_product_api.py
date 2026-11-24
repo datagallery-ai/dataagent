@@ -54,7 +54,6 @@ async def test_ready_returns_control_plane_status(client) -> None:
 async def test_config_and_auth_routes_are_absent(client) -> None:
     for path in (
         "/api/v1/auth/status",
-        "/api/v1/capabilities",
         "/api/v1/workspace-config",
         "/api/v1/run-defaults",
         "/api/v1/datasource-types",
@@ -255,8 +254,9 @@ async def test_same_app_registers_control_plane_and_conversation_routes(client) 
     assert isinstance(body["data"]["conversation"]["plugins"], list)
     me = await client.get("/api/v1/me")
     assert me.json()["success"] is True
-    missing = await client.get("/api/v1/capabilities")
-    assert missing.status_code == 404
+    capabilities = await client.get("/api/v1/capabilities")
+    assert capabilities.status_code == 200
+    assert capabilities.json()["data"]["interaction.resume"] is True
     removed = await client.get("/api/copilotkit/info")
     assert removed.status_code == 404
 

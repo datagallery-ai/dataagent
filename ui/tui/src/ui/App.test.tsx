@@ -808,3 +808,201 @@ it('low-height fallback remains usable at 60 columns and allows exit', async () 
   current.stdin.write('\x03');
   await current.waitUntilExit();
 });
+
+for (const selected of ['拒绝执行', '/tmp/data']) it(`Ink submits the selected HITL button ${selected} using arrows and Enter`, async () => {
+  const requests: RunAgentInput[] = [];
+  const current = view({ async *runAgent(input) {
+    requests.push(input);
+    yield { type: 'RUN_STARTED', threadId: input.threadId, runId: input.runId } as BaseEvent;
+    yield { type: 'CUSTOM', name: 'human_feedback', value: input.answers ? [] : [{
+      type: 'human_feedback', interruptId: 'approve', message: 'Authorize this command?',
+      options: ['允许执行', selected, '重新规划'],
+    }] } as BaseEvent;
+    yield { type: 'RUN_FINISHED', threadId: input.threadId, runId: input.runId,
+      metadata: { status: input.answers ? 'completed' : 'waiting_for_input' } } as BaseEvent;
+  } });
+  await tick();
+  await submit(current, 'Run the command');
+  await until(() => store.getState().runStatus === 'suspended');
+  current.stdin.write('\r');
+  await tick();
+  assert.equal(requests.length, 1);
+  current.stdin.write('\x1b[B');
+  await tick();
+  current.stdin.write('\x1b[B');
+  await tick();
+  current.stdin.write('\r');
+  await until(() => requests.length === 2 && store.getState().runStatus === 'completed');
+  assert.deepEqual(requests[1]?.answers, { approve: selected });
+  assert.deepEqual(requests[1]?.messages, []);
+  assert.equal(requests[1]?.threadId, requests[0]?.threadId);
+  assert.match(current.frames.join(''), /上下键选择/);
+});
+
+it('Ink answers HITL in the same thread without sending a new user message', async () => {
+  const requests: RunAgentInput[] = [];
+  const client: AgentClient = {
+    async *runAgent(input) {
+      requests.push(input);
+      yield { type: 'RUN_STARTED', threadId: input.threadId, runId: input.runId } as BaseEvent;
+      if (!input.answers) {
+        yield { type: 'CUSTOM', name: 'human_feedback', value: [{ type: 'human_feedback', interruptId: 'ask-1', message: 'Which identity?', options: ['user_id'] }] } as BaseEvent;
+        yield { type: 'RUN_FINISHED', threadId: input.threadId, runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+      } else {
+        yield { type: 'CUSTOM', name: 'human_feedback', value: [] } as BaseEvent;
+        yield { type: 'TEXT_MESSAGE_CONTENT', messageId: 'answer', delta: 'SQL ready' } as BaseEvent;
+        yield { type: 'TEXT_MESSAGE_END', messageId: 'answer' } as BaseEvent;
+        yield { type: 'RUN_FINISHED', threadId: input.threadId, runId: input.runId, metadata: { status: 'completed' } } as BaseEvent;
+      }
+    },
+  };
+  const current = view(client);
+  await tick(); current.stdin.write('SQL'); await tick(); current.stdin.write('\r');
+  await until(() => store.getState().runStatus === 'suspended');
+  current.stdin.write('user_id'); await tick(); current.stdin.write('\r');
+  await until(() => requests.length === 2 && store.getState().runStatus === 'completed');
+  assert.deepEqual(requests[1]?.answers, { 'ask-1': 'user_id' });
+  assert.deepEqual(requests[1]?.messages, []);
+  assert.equal(requests[0]?.threadId, requests[1]?.threadId);
+});
+
+for (const [columns, rows] of [[60, 19], [80, 24]] as const) it(`long HITL questions stay scrollable without squeezing the composer at ${columns}x${rows}`, async () => {
+  const question = Array.from({ length: 12 }, (_, i) => `问题第 ${i + 1} 项：请确认统计口径和字段的选择。`).join('\n');
+  const current = view({ async *runAgent(input) {
+    yield { type: 'TEXT_MESSAGE_CONTENT', messageId: 'before-question', delta: '请先确认以下统计口径。' } as BaseEvent;
+    yield { type: 'CUSTOM', name: 'human_feedback', value: [{
+      type: 'human_feedback', interruptId: 'long-question', message: question,
+      options: ['user_id', 'device_id', 'account_id'],
+    }] } as BaseEvent;
+    yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+  } }, columns, rows);
+  const frame = () => stripVTControlCharacters(current.frames.filter(value => value.includes('GLM-5.2')).at(-1) ?? '');
+  await tick();
+  await submit(current, 'Ask me a detailed question');
+  await until(() => store.getState().runStatus === 'suspended');
+  await tick(); await tick();
+  assert.ok(transcript().includes(question), 'the complete question belongs in the scrollable conversation');
+  assert.equal(transcript().match(/请先确认以下统计口径。/g)?.length, 1, 'buffered model text must not overwrite the question');
+  assert.match(transcript(), /user_id.*device_id.*account_id/);
+  current.stdin.write('\x1b[200~第一行\n第二行\n第三行\x1b[201~');
+  await tick(); await tick();
+  const lines = frame().trimEnd().split('\n');
+  assert.equal(lines.length, rows);
+  assert.match(lines.at(-1)!, /GLM-5.2/);
+  assert.match(frame(), /› 第一行/);
+  assert.match(frame(), /第二行/);
+  assert.match(frame(), /第三行/);
+  assert.match(frame(), /请回答上方问题/);
+});
+
+for (const emitResult of [true, false]) it(`HITL resume completes the original inline tool and stops its timer (result event=${emitResult})`, async () => {
+  let finish!: () => void;
+  const finishGate = new Promise<void>(resolve => { finish = resolve; });
+  let snapshotSeen = false;
+  let savedMessages: unknown[] = [];
+  const current = view({ async *runAgent(input) {
+    if (!input.answers) {
+      savedMessages = [...input.messages, { id: 'ask-message', role: 'assistant', toolCalls: [{
+        id: 'ask-tool', type: 'function', function: { name: 'request_human_feedback', arguments: '{"question":"Which ID?"}' },
+      }] }];
+      yield { type: 'TOOL_CALL_START', toolCallId: 'ask-tool', toolCallName: 'request_human_feedback' } as BaseEvent;
+      yield { type: 'TOOL_CALL_END', toolCallId: 'ask-tool' } as BaseEvent;
+      yield { type: 'CUSTOM', name: 'human_feedback', value: [{ type: 'human_feedback', interruptId: 'ask', message: 'Which ID?' }] } as BaseEvent;
+      yield { type: 'MESSAGES_SNAPSHOT', messages: savedMessages } as unknown as BaseEvent;
+      yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+    } else {
+      if (emitResult) yield { type: 'TOOL_CALL_RESULT', toolCallId: 'ask-tool', messageId: 'reply', content: 'user_id' } as BaseEvent;
+      yield { type: 'CUSTOM', name: 'human_feedback', value: [] } as BaseEvent;
+      yield { type: 'MESSAGES_SNAPSHOT', messages: [...savedMessages,
+        { id: 'reply', role: 'tool', toolCallId: 'ask-tool', content: 'user_id' },
+      ] } as unknown as BaseEvent;
+      snapshotSeen = true;
+      await finishGate;
+      yield { type: 'RUN_FINISHED', runId: input.runId } as BaseEvent;
+    }
+  } });
+  const inlineTools = () => store.getState().messages.flatMap(message => message.elements)
+    .flatMap(element => element.type === 'tool_call' && element.toolCallId === 'ask-tool' ? [element] : []);
+  await tick();
+  await submit(current, 'Ask me');
+  await until(() => store.getState().runStatus === 'suspended');
+  const startedAt = inlineTools()[0]?.toolCall?.startedAtMs;
+  try {
+    await submit(current, 'user_id');
+    await until(() => snapshotSeen);
+    assert.equal(inlineTools().length, 1, 'resume must update the original tool instead of adding another badge');
+    const completed = inlineTools()[0]!.toolCall!;
+    assert.equal(completed.name, 'request_human_feedback');
+    assert.equal(completed.status, 'success');
+    assert.equal(completed.result, 'user_id');
+    assert.equal(completed.startedAtMs, startedAt);
+    assert.ok(completed.finishedAtMs !== undefined && completed.finishedAtMs >= startedAt!);
+    const stoppedAt = completed.finishedAtMs;
+    finish();
+    await until(() => store.getState().runStatus === 'completed');
+    assert.equal(inlineTools()[0]?.toolCall?.finishedAtMs, stoppedAt, 'later completion must not restart the tool clock');
+  } finally {
+    finish();
+  }
+});
+
+it('queued prompts wait for an explicit HITL reply and resume afterwards', async () => {
+  let release!: () => void;
+  const gate = new Promise<void>(resolve => { release = resolve; });
+  const requests: RunAgentInput[] = [];
+  const current = view({ async *runAgent(input) {
+    requests.push(input);
+    if (requests.length === 1) {
+      await gate;
+      yield { type: 'CUSTOM', name: 'human_feedback', value: [{ type: 'human_feedback', interruptId: 'approval', message: 'Approve?' }] } as BaseEvent;
+      yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+    } else {
+      yield { type: 'CUSTOM', name: 'human_feedback', value: [] } as BaseEvent;
+      yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'completed' } } as BaseEvent;
+    }
+  } });
+  await tick();
+  await submit(current, 'First task');
+  await submit(current, 'Queued task');
+  release();
+  await until(() => store.getState().runStatus === 'suspended');
+  await tick(); await tick();
+  assert.equal(requests.length, 1);
+  await submit(current, 'yes');
+  await until(() => requests.length === 3 && store.getState().runStatus === 'completed');
+  assert.deepEqual(requests[1]?.answers, { approval: 'yes' });
+  assert.equal(requests[2]?.answers, undefined);
+  assert.equal(requests[2]?.messages[0]?.content, 'Queued task');
+});
+
+it('/resume restores HITL and renders all new snapshot replies exactly once', async () => {
+  const saved = [
+    { id: 'old-user', role: 'user', content: 'SQL' },
+    { id: 'old-assistant', role: 'assistant', content: 'Saved analysis' },
+  ];
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () => ok({
+    threadId: 'saved-hitl', title: 'SQL', createdAt: '', updatedAt: '',
+    status: 'waiting_for_input', hasCheckpoint: true, notice: null, messages: saved,
+    pendingInteractions: [{ type: 'human_feedback', interruptId: 'saved-ask', message: 'Which ID?' }],
+  }));
+  let request: RunAgentInput | undefined;
+  const current = view({ async *runAgent(input) {
+    request = input;
+    yield { type: 'CUSTOM', name: 'human_feedback', value: [] } as BaseEvent;
+    yield { type: 'MESSAGES_SNAPSHOT', messages: [...saved,
+      { id: 'new-first', role: 'assistant', content: 'Fresh analysis' },
+      { id: 'new-last', role: 'assistant', content: 'Final SQL' },
+    ] } as unknown as BaseEvent;
+    yield { type: 'RUN_FINISHED', runId: input.runId } as BaseEvent;
+  } }, 80, 24, sessions);
+  await tick();
+  await submit(current, '/resume saved-hitl');
+  await until(() => store.getState().runStatus === 'suspended');
+  await submit(current, 'user_id');
+  await until(() => store.getState().runStatus === 'completed');
+  assert.equal(request?.threadId, 'saved-hitl');
+  assert.deepEqual(request?.answers, { 'saved-ask': 'user_id' });
+  assert.equal(transcript().match(/Saved analysis/g)?.length, 1);
+  assert.equal(transcript().match(/Fresh analysis/g)?.length, 1);
+  assert.equal(transcript().match(/Final SQL/g)?.length, 1);
+});

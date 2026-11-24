@@ -9,6 +9,7 @@ from uuid import uuid4
 
 import anyio
 from ag_ui.core import (
+    CustomEvent,
     EventType,
     MessagesSnapshotEvent,
     RunAgentInput,
@@ -37,6 +38,7 @@ from dataagent.server.sessions import (
     Sessions,
     SessionTurn,
     continuation_configurable,
+    pending_interactions,
     public_session,
     workspace_lock,
 )
@@ -123,6 +125,7 @@ class DisconnectAwareResponse(StreamingResponse):
 
 
 class QueryInput(RunAgentInput):
+    answers: dict[str, str] | None = None
     model_config = ConfigDict(extra="forbid", populate_by_name=True, hide_input_in_errors=True)
 
     @model_validator(mode="after")
@@ -131,6 +134,19 @@ class QueryInput(RunAgentInput):
             not re.fullmatch(OPAQUE_ID_PATTERN, value) for value in (self.thread_id, self.run_id)
         ):
             raise ValueError("threadId and runId must be safe opaque IDs of at most 128 characters")
+        if self.answers is not None:
+            if not self.answers or self.messages:
+                raise ValueError("Resume requires answers and no new messages")
+            if (
+                self.state not in (None, {})
+                or self.tools
+                or self.context
+                or self.forwarded_props
+                or self.resume
+                or self.parent_run_id
+            ):
+                raise ValueError("Resume cannot inject client state or replay a run")
+            return self
         if len(self.messages) != 1 or self.messages[0].role != "user":
             raise ValueError(
                 "Send exactly one new user message; the server owns conversation history"
@@ -366,6 +382,7 @@ async def load_session_checkpoint(app, user_id: str, thread_id: str):
         message.model_dump(by_alias=True)
         for message in langchain_messages_to_agui(state.values.get("messages", []))
     ]
+    row["pendingInteractions"] = pending_interactions(state)
     return row, messages
 
 
@@ -375,6 +392,7 @@ def session_detail(row: dict, messages: list) -> dict:
     return {
         **public_session(row),
         "messages": messages,
+        "pendingInteractions": row.get("pendingInteractions", []),
         "notice": (
             None
             if not incomplete
@@ -538,12 +556,25 @@ def register_conversation_routes(
                 # comes from continuation_configurable.
                 config["configurable"] = continuation_configurable(thread_id, row)
                 state = await graph.aget_state({"configurable": config["configurable"]})
-                if any(
+                pending = pending_interactions(state)
+                if body.answers is not None:
+                    if not set(body.answers).issubset({item["interruptId"] for item in pending}):
+                        raise HTTPException(409, "Interaction is no longer pending")
+                elif pending:
+                    raise HTTPException(
+                        409, "Answer the pending interaction before sending a new message"
+                    )
+                if body.answers is None and any(
                     message.id == body.messages[0].id
                     for message in state.values.get("messages", [])
                 ):
                     raise HTTPException(409, "Message replay or editing is not supported")
-            await turn.start(body.run_id, _turn_text(body.messages))
+            if body.answers is not None and not row:
+                raise HTTPException(409, "Session has no pending interaction")
+            await turn.start(
+                body.run_id,
+                "Human feedback" if body.answers is not None else _turn_text(body.messages),
+            )
         except HTTPException:
             busy.discard((user_id, thread_id))
             _unregister_run(app, body.run_id, handle)
@@ -582,7 +613,20 @@ def register_conversation_routes(
             try:
                 yield encoder.encode(RunStartedEvent(thread_id=thread_id, run_id=body.run_id))
                 async with asyncio.timeout(run_runtime.timeout_seconds):
-                    upstream = adapter.run(body)
+                    if body.answers is not None:
+                        from ag_ui.core import ResumeEntry
+
+                        body_input = body.model_copy(
+                            update={
+                                "resume": [
+                                    ResumeEntry(interrupt_id=key, status="resolved", payload=answer)
+                                    for key, answer in body.answers.items()
+                                ]
+                            }
+                        )
+                    else:
+                        body_input = body
+                    upstream = adapter.run(body_input)
                     terminal = None
                     async for event in _iter_until_cancelled(upstream, handle):
                         if event is None:
@@ -643,6 +687,8 @@ def register_conversation_routes(
                         yield encoder.encode(public)
                         return
                     latest = await turn.settle(graph, complete=True)
+                    pending = pending_interactions(latest)
+                    yield encoder.encode(CustomEvent(name="human_feedback", value=pending))
                     yield encoder.encode(
                         MessagesSnapshotEvent(
                             messages=langchain_messages_to_agui(latest.values.get("messages", [])),
@@ -652,7 +698,10 @@ def register_conversation_routes(
                         RunFinishedEvent(
                             thread_id=thread_id,
                             run_id=body.run_id,
-                            metadata={"durationMs": round((time.monotonic() - started) * 1000)},
+                            metadata={
+                                "durationMs": round((time.monotonic() - started) * 1000),
+                                "status": turn.status,
+                            },
                         )
                     )
             except _RunCancelled:

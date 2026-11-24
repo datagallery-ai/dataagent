@@ -9,9 +9,15 @@ import { AguiClientError } from "./agui-client.js";
 
 const summary = z.object({
   threadId: z.string(), title: z.string(), createdAt: z.string(), updatedAt: z.string(),
-  status: z.enum(["running", "completed", "error", "interrupted"]), hasCheckpoint: z.boolean(),
+  status: z.enum(["running", "completed", "error", "interrupted", "waiting_for_input"]), hasCheckpoint: z.boolean(),
 });
+export const interaction = z.object({
+  type: z.literal("human_feedback"), interruptId: z.string(), message: z.string(),
+  options: z.array(z.string()).optional(), validationError: z.string().optional(),
+});
+export type PendingInteraction = z.infer<typeof interaction>;
 const session = summary.extend({
+  pendingInteractions: z.array(interaction).default([]),
   messages: z.array(z.unknown().transform((value) => MessageSchema.parse(value))),
   notice: z.string().nullable(),
 });

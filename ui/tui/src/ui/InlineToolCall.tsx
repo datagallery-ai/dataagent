@@ -102,8 +102,11 @@ export const InlineToolCall: React.FC<InlineToolCallProps> = ({
   const color = getStatusColor(toolCall.status);
   const duration = getDuration();
   const summary = toolSummary(toolCall);
+  const waitingForFeedback = toolCall.name === 'request_human_feedback'
+    && (toolCall.status === 'pending' || toolCall.status === 'running');
   const status = toolCall.status === 'failed' ? 'Failed · '
     : toolCall.status === 'cancelled' ? 'Cancelled · '
+      : waitingForFeedback ? 'Waiting for input · '
       : toolCall.status === 'pending' ? 'Queued · ' : '';
   const width = Math.max(1, (maxWidth ?? 1000) - textWidth(icon) - 1);
   const suffix = duration ? ` · ${duration}` : '';

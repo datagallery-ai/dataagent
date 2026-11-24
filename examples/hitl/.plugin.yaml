@@ -1,0 +1,9 @@
+schema_version: 3
+id: hitl
+hitl:
+  enabled: true
+  policies:
+  - id: execute-approval
+    at: before_tool
+    matcher: execute
+    handler: bash_approval.py:BashApprovalHandler
