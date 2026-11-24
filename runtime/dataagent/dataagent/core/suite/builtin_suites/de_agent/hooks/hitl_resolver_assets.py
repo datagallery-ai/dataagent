@@ -10,11 +10,10 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""de_agent suite HITL auto-resolver 的纯数据资产（prompt/关键词表/口径语义表）。
+"""de_agent suite HITL auto-resolver 的纯数据资产（prompt/关键词表/口径语义表），场景常量与逻辑解耦。
 
-从原 flex hooks 目录下的 hitl_auto_resolver hook 原样迁出的场景常量，与逻辑解耦：
-改关键词表/口径语义/prompt 需过 ``v36_campaign/replay_check.py`` 回放门
-（182 问分布 TABLE_CONFIRM 50 / AMBIGUITY 47 / OUTPUT 82 / UNA 3）。
+改关键词表/口径语义/prompt 会改变问答路由行为，需过回放回归门
+（182 问分布 TABLE_CONFIRM 51 / AMBIGUITY_CLARIFY 46 / OUTPUT_SCHEMA_PREVIEW 82 / UNA 3）。
 
 本模块经包路径 import；与 hook 文件的单文件直载通道（suite-root 隔离加载）
 无关，同样禁止模块级 mutable 状态（纯常量与推导表除外）。
@@ -132,19 +131,18 @@ HITL_ACTION_KEYWORDS = {
 
 # 分类器注册表与缺省类别：顺序即关键词匹配优先级，必须与 HITL_ACTION_KEYWORDS
 # 的定义序一致（OUTPUT_SCHEMA_PREVIEW → TABLE_CONFIRM → AMBIGUITY_CLARIFY，
-# 回放门 182 问分布的行为等价前提）；UNA 无关键词，作 default_action。
+# 分类行为等价的前提）；UNA 无关键词，作 default_action。
 HITL_DEFAULT_ACTION = "UNA"
 HITL_ACTION_SPECS: tuple[HitlActionSpec, ...] = tuple(
     HitlActionSpec(name=name, keywords=tuple(keywords))
     for name, keywords in HITL_ACTION_KEYWORDS.items()
 )
 
-# v46 口径缺口问型标记（query 缺口分析六模式的提问措辞）：这些业务口径问题
+# 口径缺口问型标记（query 缺口分析六模式的提问措辞）：这些业务口径问题
 # （序列去重 / 指标产生机制 / 名称映射字典 / 业务词取值 / 明细还是聚合取用层级）
 # 无关键词命中时会被 default 判成 UNA 拒答——agent 按纪律 13 提问却拿不到答复，
-# 白耗交互预算。仅对 base=UNA 的问题做改判（_caliber_gap_override），已分类为
-# TABLE_CONFIRM/OUTPUT/AMBIGUITY 的问题不受影响（回放门 182 问零回归的前提：
-# 历史仅 3 问为 UNA 且不含以下标记，实测验证）。
+# 白耗交互预算。仅对 base=UNA 的问题做改判（_caliber_gap_override），
+# 已分类为 TABLE_CONFIRM/OUTPUT/AMBIGUITY 的问题不受影响。
 _CALIBER_GAP_ASK_MARKERS: tuple[str, ...] = (
     "去重",        # 序列键值对是否去重（"去重口径"已走 AMBIGUITY 关键词，此条兜底其余措辞）
     "产生机制",     # 预估/评分类指标的产生机制
@@ -187,30 +185,28 @@ _IR_CALIBER_REVIEW_MARKERS: tuple[str, ...] = (
     "口径最终检视",
 )
 
-# 追问式改判信号（_mixed_question_override 的口径信号扩展专用）：裸"去重"在
-# 历史语料以陈述形出现（q01"维度去重两个口径问题"、q67"取最新一条去重后
-# 聚合序列"），直接用会把 2 个历史 TABLE_CONFIRM 问改判（回放门 50/47/82/3
-# 破防）；追问语境只认疑问形。其余标记历史零碰撞，原样复用。
+# 追问式改判信号（_mixed_question_override 的口径信号扩展专用）：裸"去重"常
+# 以陈述形出现（如"维度去重两个口径问题""取最新一条去重后聚合序列"），
+# 直接用会把陈述形 TABLE_CONFIRM 问改判；追问语境只认疑问形。
 _DEDUP_ASK_RE = re.compile(r"是否.{0,8}去重|去重吗|要不要去重|需要去重|去重还是保留|保留还是去重")
 _CALIBER_GAP_FOLLOWUP_MARKERS = tuple(m for m in _CALIBER_GAP_ASK_MARKERS if m != "去重")
 
-# v47 列构成确认标记（_schema_derivation_una_override 专用）：agent 推导出列构成
-# 方案后向用户确认的问型。v46_test13q q47 Q4 实证：此类问型含"输出schema"（无
-# 空格）与"列构成"——OUTPUT 关键词表是"输出 schema"（带空格）与"列结构"，
-# 双双近失配落 UNA 被拒答，恰好挡住最需要"期望输出 N 列"确认的问型。
-# 仅对 base=UNA 改判（历史回放 3 UNA 问不含以下标记，回放门验证）。
+# 列构成确认标记（_schema_derivation_una_override 专用）：agent 推导出列构成
+# 方案后向用户确认的问型。此类问型常含"输出schema"（无空格）与"列构成"——
+# 与 OUTPUT 关键词表的"输出 schema"（带空格）/"列结构"近失配落 UNA 被拒答，
+# 恰好挡住最需要"期望输出 N 列"确认的问型。仅对 base=UNA 改判。
 _SCHEMA_DERIVATION_MARKERS: tuple[str, ...] = (
     "列构成",
     "列方案",
     "输出schema",  # 无空格变体（"输出 schema"带空格已走 OUTPUT 关键词）
 )
 
-# v47 收敛确认标记（_table_proposal_una_override 专用）：检索上限后向用户收敛
-# 确认最接近候选表的问型（v46_test13q q55 Q3 铁例："候选池中最接近的表…请您
-# 确认是否接受"——"候选池"与 TABLE_CONFIRM 关键词"候选表"子串差一字不匹配，
-# 零命中落 UNA 白耗一轮）。刻意窄于 _TABLE_PROPOSAL_RE：后者含"我倾向"等宽
-# 信号，会把 q64 型"我倾向于理解为…请确认这个理解是否正确"的口径歧义问
-# 误改判（回放门实证 50→51），收敛确认的签名=表为确认对象。
+# 收敛确认标记（_table_proposal_una_override 专用）：检索上限后向用户收敛
+# 确认最接近候选表的问型（"候选池中最接近的表…请您确认是否接受"——
+# "候选池"与 TABLE_CONFIRM 关键词"候选表"子串差一字不匹配，零命中落 UNA
+# 白耗一轮）。刻意窄于 _TABLE_PROPOSAL_RE：后者含"我倾向"等宽信号，会把
+# "我倾向于理解为…请确认这个理解是否正确"的口径歧义问误改判；
+# 收敛确认的签名=表为确认对象。
 _TABLE_CONVERGENCE_MARKERS: tuple[str, ...] = (
     "最接近的表",
     "候选池",
@@ -244,40 +240,64 @@ _HITL_AUTO_RESOLVER_PROMPT = """你是任务提出方（客户）。用户正在
 # 现在确认标识/时间口径"）。这类表名是上下文引用而非新候选提案，不能据此判 TABLE_CONFIRM。
 _CONFIRMED_REFERENCE_MARKERS = ("已确认", "已定", "确认使用", "您确认", "上一步已", "先前已", "定下来")
 
-# v48 确认请求形剥离（_tables_are_confirmed_references 专用）："请您确认/需要您确认/
+# 引用标记表域限定（_tables_are_confirmed_references 专用，双信号）：
+# ①标记 ±10 字符窗内含表语境词（表/数据源/方案/候选）或 db.table 限定名；
+# ②标记所在分隔子句（。！？；;，,\n 切分）内含完整 db.table 限定名——覆盖括注形
+# "…ads_x_stat_dm**（您已确认符合需求）"：表名与标记同句但相距 40+ 字符，±10
+# 窗扫不到，子句级限定名信号保其分类不回归。
+# 反例形："(3)用户已确认 user_id 标识和单日分区快照口径。需确认源表选择…"——
+# "已确认"落在标识口径上：窗内无表词（"目标表"距标记 13 字符在窗外），
+# 子句内无 db.table 限定名（user_id 裸标识无点；前句表名为 bare 名无点；
+# pending 提案表在另一段落）→ 不计引用。否则该问新表提案（方案A/B/C 三候选）
+# 被误判已确认引用、改判 AMBIGUITY、表判定无人应答，agent 沿用已被拒的表
+# 直至交付。
+# 真引用形（"源表已确认为 biads.t1"/"用户确认使用方案A了"/"数据源已定
+# agapdw.dwd_y_dm"）标记天然邻接表词/限定名，不受影响。
+_TABLE_SCOPE_CONTEXT_RE = re.compile(r"表|数据源|方案|候选")
+_QUALIFIED_TABLE_NAME_RE = re.compile(r"[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*", re.IGNORECASE)
+_CLAUSE_DELIM_CHARS = "。！？；;，,\n"
+
+# 确认请求形剥离（_tables_are_confirmed_references 专用）："请您确认/需要您确认/
 # 请问您确认使用"是确认请求（表名/方案为待确认提案），子串上却含"您确认/确认使用"
-# 引用标记——极性反转会让新表提案被误判为已确认引用（v47_smoke q01 铁例：近变体表
-# 提案问被 _mixed_question_override 改判 AMBIGUITY，表提案无人应答，错误兄弟表锁定）。
+# 引用标记——极性反转会让新表提案被误判为已确认引用（表提案问被
+# _mixed_question_override 改判 AMBIGUITY，表提案无人应答，错误兄弟表锁定）。
 # 先剥离请求形再查引用标记；真引用形（"按您确认的源表""已确认使用 X"）不带请求
-# 前缀，不受影响。前缀集合=语料+冒烟实测措辞（请/请问/麻烦/烦请/需要/要/希望）。
-# v53b 补"用户"变体：v48 只剥"您"，v52_r2 q34 实测 agent 以第三人称谈用户
-# （"需要用户确认使用哪个作为主源"）——"用户"二字挡住剥离，残余"确认使用"再度
-# 极性反转，真表提案（含我倾向选择 db.table 全套提案信号）被改判 AMBIGUITY、
-# 表判定无人应答（错误近变体宽表锁定 + 后续口径答复被 agent 误读为默认同意）。
-# 真"用户已确认"引用形带"已"字不匹配请求前缀+确认，不受影响。
-_REQUEST_CONFIRM_FORM_RE = re.compile(r"(?:请问|请|麻烦|烦请|需要|要|希望)(?:您|用户)?确认(?:使用)?")
+# 前缀，不受影响。前缀集合=实测措辞（请/请问/麻烦/烦请/需/需要/要/希望）。
+# 中间可带"您/用户"（agent 会以第三人称谈用户："需要用户确认使用哪个作为主源"，
+# 也会省"要"字写"需您确认选哪一套"/"需确认使用哪张作为主源"——裸"需"缩略形
+# 单字不在早期前缀集合，剥离漏过后残余"您确认/确认使用"极性反转，表提案问被
+# 改判 AMBIGUITY、表判定无人应答）。
+# 裸"需"仅后接（您|用户）?确认时剥离；真"用户已确认"引用形带"已"字不匹配请求
+# 前缀+确认、真引用形"按您确认的/已确认使用"的"确认"前是"您已/已"等非前缀字，
+# 均不受影响。"无需确认"否定形同被剥离——其本身非引用标记载体，剥离后无
+# "已确认/您确认"残留，行为不变。
+_REQUEST_CONFIRM_FORM_RE = re.compile(r"(?:请问|请|麻烦|烦请|需|需要|要|希望)(?:您|用户)?确认(?:使用)?")
 
 # 口径决策提问信号：决策对象是口径/取数方式/标识选择（"请选择取数口径""需确认两个口径"），
 # 表名仅作上下文出现（"源表 X 是每日快照""源表已内含1年窗口"）。
-# v3.5 实测（q61/q42）：此类提问被 TABLE_CONFIRM 模板答非所问，agent 拿不到口径答复后独自定错口径。
+# 此类提问若被 TABLE_CONFIRM 模板答非所问，agent 拿不到口径答复后会独自定错口径。
 _CALIBER_DECISION_RE = re.compile(r"口径|取哪[一]?天|是否包含当天|用哪个字段|按什么维度")
 
 # 新表候选提案表述：表名是待选对象（"计划使用 X""唯一匹配的表""作为源表"）。
 # 含此类表述时即使带口径关键词也保持 TABLE_CONFIRM（候选表未定，阻塞点在选表）。
-# v48 收窄：原裸"候选/我倾向/你倾向"三支撞非表候选措辞——"候选"撞标识字段候选
-# 枚举（q59"三个候选：方案A：device_id"/q49"没有其他候选"实证：源表已定仅问
-# 字段，被裸"候选"拦住改判、TABLE_CONFIRM 模板答非所问），"我倾向/你倾向"撞
-# 口径理解确认（q64"我倾向于理解为"）。"候选"改为结构感知：其后 4 字符内接
-# "表"字或 db.table 名才是表候选（"候选 biads.x_dm""候选源表""候选1（单表）"），
-# "候选字段/候选：方案A"不命中。表选择语境词（数据源(表)选择/候选数据源/
-# 数据源候选/源表确认/计划使用/唯一匹配/作为源表）整词承载。仅 _mixed_question_override
-# 的口径改判防护消费本 RE（_proposes_table_candidates）；纯表提案问（无口径信号）
-# 不经此路径，不受收窄影响。回放语料实测：恰 5 翻转全为质量修正（q02/q34/q70
-# AMB→TC 表提案修正，q49/q59 TC→AMB 标识选择修正），见 replay_check.py 头注释。
+# 注意收窄：裸"候选"会撞标识字段候选枚举（源表已定仅问字段时被拦住改判、
+# TABLE_CONFIRM 模板答非所问），"我倾向/你倾向"会撞口径理解确认（"我倾向于
+# 理解为"）。故"候选"为结构感知：其后 4 字符内接"表"字或 db.table 名才是
+# 表候选（"候选 biads.x_dm""候选源表""候选1（单表）"），"候选字段/候选：方案A"
+# 不命中。表选择语境词（数据源(表)选择/候选数据源/数据源候选/源表确认/计划使用/
+# 唯一匹配/作为源表）整词承载。仅 _mixed_question_override 的口径改判防护消费
+# 本 RE（_proposes_table_candidates）；纯表提案问（无口径信号）不经此路径，
+# 不受收窄影响。
 _TABLE_PROPOSAL_RE = re.compile(
     r"计划使用|唯一匹配|选哪个表|选表|数据源表|源表确认|确认源表|数据源选择|"
     r"源表选择|候选数据源|数据源候选|数据来源|作为.{0,12}(?:源表|主事实表|核心源表|事实表)|"
-    r"候选.{0,4}(?:表|[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)"
+    r"候选.{0,4}(?:表|[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*)|"
+    # "<角色>表选 db.table" 提案形（"安装行为表选 biads.x""应用维表选
+    # agapdw.y"）——表选后 4 字符内接 db.table 全名才是提案（"总表选哪个
+    # 字段"的"表选"后是疑问词，不命中）；带口径词的表选型问（"口径一致性，
+    # 需您确认选哪一套"）不再被改判 AMBIGUITY、表判定无人应答。真引用形由
+    # _tables_are_confirmed_references 分支先行拦截，不受本支影响。
+    r"表选.{0,4}[a-z_][a-z0-9_]*\.[a-z_][a-z0-9_]*"
 )
 
 
@@ -355,7 +375,7 @@ _TABLE_SUFFIX_GRAINS = (
     ("_hm", "小时级"),
 )
 
-# L1 近变体口径判别（v42）：表名 token → 客户口吻口径词。被拒表与 golden 表
+# L1 近变体口径判别：表名 token → 客户口吻口径词。被拒表与 golden 表
 # token 差集经此表转译（golden 侧独有 = 我要的口径，被拒侧独有 = 不要的口径），
 # 注入 TABLE_CONFIRM 拒绝/升级答复。与层级/粒度标签同源零泄漏边界：只译
 # token 为业务口径词，完整表名/db/字段仍禁。token Jaccard ≥ 1/3 才判近变体，
@@ -375,9 +395,8 @@ _VARIANT_TOKEN_CONCEPTS = {
     "list": "列表清单数据",
     "feature": "特征表（预计算）",
     "fulllist": "全量列表",
-    # v44 扩充（2026-10-20 复盘：15/55 拒绝轮因差集 token 无映射空手——
-    # q47 型 qa/result/search、q58 型 unified/client/install、q34 型 instance/cvr、
-    # q55 型 xtr、q37 型 order/pay）
+    # 常见差集 token 扩充（qa/result/search、unified/client/install、
+    # instance/cvr、xtr、order/pay 等）
     "qa": "问答（QA）口径",
     "result": "结果类数据（处理后产出）",
     "search": "搜索行为口径",
@@ -420,7 +439,20 @@ _VARIANT_TOKEN_CONCEPTS = {
 
 _CLAUSE_DELIM_RE = re.compile(r"([。！？；;，,\n])")
 _CLAUSE_QUESTION_RE = re.compile(r"[?？]|还是|哪个|哪些|是否|吗")
-_CLAUSE_NEGATION_RE = re.compile(r"不|没|非|排除|并非")
+# 确认动词被否定（"不建议用/不要采用/无需确认"）才豁免防线审查——若子句里出现
+# 裸"不/没/非"字就整句免审，会被表变体描述词误触发：如 OUTPUT 分支回复
+# "确认选用 X（不截断版本）"——"不"属"不截断"描述词（该变体的卖点），并非
+# 否定确认本身，整个错误表确认子句免审漏网，错误变体被口头锁定。
+# 语义：否定词 + 可选情态字 + 确认动词词根（用/使/采/确/同/选/定/按/建/推/符
+# 对应 用/使用/采用/确认/同意/选/定/按/建议/推荐/符合）才判"确认被否定"。
+# "不截断/不含/非空/不一定"等描述词性否定不豁免——此类子句若真在确认错误
+# 表，防线照常改写。裸"非"（非常/非空高频撞词）与"排除"（"排除X后，确认Y"
+# 的Y分句按逗号切分后独立成句，照常审查）不整句豁免。
+_NEGATED_CONFIRM_RE = re.compile(
+    r"(?:不|别|勿|莫|无需|不必|没有|并非|禁止?)"
+    r"(?:要|能|可|得|应|宜|需|再)?"
+    r"(?:用|使|采|确|同|选|定|按|建|推|符)"
+)
 _CONFIRM_DIRECTIVE_RE = re.compile(r"用|使用|采用|确认|同意|选|定|按|以|符合我的需求")
 _TABLE_PRONOUN_RE = re.compile(r"该表|此表|这张表|这些表|该数据源|这个数据源|上述表")
 

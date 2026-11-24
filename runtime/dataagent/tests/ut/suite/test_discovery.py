@@ -19,7 +19,7 @@ import yaml
 
 from dataagent.config.config_manager import ConfigManager
 from dataagent.core.suite.discovery import discover_suite_index, scan_suite_paths
-from dataagent.utils.runtime_paths import dataagent_home, dataagent_package_path
+from dataagent.utils.runtime_paths import dataagent_home, dataagent_package_path, dataagent_package_root
 
 
 def test_scan_suite_paths_user_and_builtin_suites() -> None:
@@ -40,6 +40,10 @@ def test_reload_without_suite_skips_discovery(monkeypatch) -> None:
         return {}
 
     monkeypatch.setattr("dataagent.core.suite.discovery.discover_suite_index", _fake_discover)
+    # test_subagent_tool.yaml 的 SUBAGENT_CONFIGS/allow_path 用 $env{PWD} 拼接（config_manager
+    # 经 os.getenv("PWD") 解析），缺省 PWD 取决于 pytest 启动目录——锚到包根父目录，
+    # 使本测试与启动 cwd 无关。
+    monkeypatch.setenv("PWD", str(dataagent_package_root().parent))
     default = dataagent_package_path("core", "flex", "flex_default_configs.yaml")
     cm = ConfigManager()
     cm.reload(

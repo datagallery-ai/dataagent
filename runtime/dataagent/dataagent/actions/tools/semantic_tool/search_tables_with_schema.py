@@ -489,6 +489,11 @@ def get_table_schema(
             preview_lines.append(f"  … 还有 {len(columns) - 5} 个字段")
     msg = "\n".join(preview_lines)
 
+    # 被拒表注记（对照参考合法，但持续提醒不得再提案）
+    rejected_note = _rejected_table_note(table_name)
+    if rejected_note:
+        detail = rejected_note + "\n" + detail
+
     # 获取表描述
     table_description = ""
     try:
@@ -532,6 +537,52 @@ def get_table_schema(
 
 def _fmt(original: str, frontend: str, data: Any) -> dict:
     return {"original_msg": original, "frontend_msg": frontend, "data": data}
+
+
+def _tables_named_match(a: str, b: str) -> bool:
+    """表名宽松等价（全等或裸名互相后缀；与 resolver/_loader 同语义，
+    此处为工具内注记判定的本地实现）。"""
+    al, bl = str(a).lower(), str(b).lower()
+    if not al or not bl:
+        return False
+    return al == bl or bl.endswith("." + al) or al.endswith("." + bl)
+
+
+def _rejected_table_note(table_name: str) -> str:
+    """被拒表 schema 检索注记。
+
+    实证被拒表被反复 get_table_schema（同表列枚举落盘 5 次）——基础池
+    过滤掐断候选回流后，历史对话仍可能驱动对被拒表的固着核查。注记持续
+    提醒"仅可对照参考、不得再提案"；不阻断返回（对照参考合法、轻端点、
+    列级证据核对本就是 #3 纪律）。台账不存在（非 HITL 场景）时 no-op。
+    """
+    try:
+        guard = get_current_sandbox()
+        workspace_root = guard.workspace_root if guard is not None else None
+    except Exception:
+        return ""
+    if workspace_root is None:
+        return ""
+    try:
+        payload = json.loads(
+            (Path(workspace_root) / ".memory" / "hitl_rejected_tables.json").read_text(
+                encoding="utf-8"
+            )
+        )
+    except Exception:
+        return ""
+    tables = payload.get("rejected_tables") if isinstance(payload, dict) else None
+    rejected = (
+        [str(t) for t in tables if isinstance(t, str) and t.strip()]
+        if isinstance(tables, list)
+        else []
+    )
+    if not any(_tables_named_match(table_name, r) for r in rejected):
+        return ""
+    return (
+        f"注：表 {table_name} 此前已被用户在源表确认中拒绝（不是任务需要的口径）。"
+        "本次 schema 结果仅可作对照参考，不要再把它作为候选数据源提案。"
+    )
 
 
 ENUM_VALUES_CONFIG_KEYS = ("enum_values_enabled", "enum_values_max_length")

@@ -24,7 +24,17 @@ HOOKS:
     planner:
       pre:
         - name: hooks.ir_config.prepare_data_task_context
+        # 限时强制交付·前置注入：进入 forcing window 后在 planner
+        # LLM 调用**之前**追加 HumanMessage 硬交付指令，当轮可见（post 版注入
+        # 落在已生成 AIMessage 的 content，其 tool_calls 照常执行、指令下一轮
+        # 才被看见——战损 7:0）。与 post 版共享去重标记，先到先得。
+        - hooks.deadline_guard.deadline_guard_pre
       post:
+        # 限时强制交付：AGENT_CONFIG.task_wall_budget_seconds 配置的
+        # 评测/限时任务，进入 forcing window 后在 planner 工作轮注入硬交付指令
+        # （workspace 锚定起始时间，每任务一次）。未配置预算 → 整体 no-op；
+        # complete=True 的收尾轮不注入（完成度核对是 delivery_guard 职责）。
+        - hooks.deadline_guard.deadline_guard
         # 最终回复以"等待用户答复"收尾（文本提问、未走 HITL 工具）时，把提问
         # 转换为 request_human_feedback 交由 hitl_auto_resolver 受 budget 约束作答，
         # 避免 actor loop 带着未决问题终止（NO_SQL 死胡同）。仅在无人值守 HITL 生效。
@@ -33,6 +43,16 @@ HOOKS:
         # 为 true 时；关掉后与加 IR→HITL 前一致）。同指纹/同字段熔断、答后仍未决、
         # 预算/fire 上限后降级放行。
         - hooks.ir_question_guard.ir_question_guard
+        # **数据质量校验不再自动跑** —— 交付后自动试算会把每一轮交付拖住几分钟
+        # （试算要连 DataOps 跑一遍）。现在改成**用户显式触发**：agent 在交付
+        # 说明的最后一句提示「输入『执行数据校验』执行数据校验」，用户输入后
+        # agent 调用 `dataops_validate_data` 工具走同一条试算 + 校验 + 自修正
+        # 链路。详见 skill `dataops_validate_data`。
+        # 交付守卫（L3+L4）：planner 收尾前核对 create_/insert_ 交付配对与
+        # TABLE_CONFIRM 已确认源表的贯穿性（清单由 hitl_auto_resolver 写入
+        # workspace/.memory/），缺漏即 complete=False 注入提醒回 actor loop
+        # 补齐；每任务最多拦截 2 次。仅在无人值守 HITL 生效。
+        - hooks.delivery_guard.delivery_guard
         # blocking 清空后、或 ir_question_guard fire 上限已耗尽（queue 可能仍挂着但即将
         # best-effort 放行）时，首次 nl2sql 前的一口径最终检视
         # （DATA_TASK_IR.enable_ir_caliber_review，默认 false）。选表等中途 HITL 若已
@@ -40,11 +60,6 @@ HOOKS:
         # BUDGET_EXHAUSTED 强制收敛。用户确认或补充后标 done，不再二次通读；补充经
         # update_ir 回写。
         - hooks.ir_caliber_review_guard.ir_caliber_review_guard
-        # **数据质量校验不再自动跑** —— 交付后自动试算会把每一轮交付拖住几分钟
-        # （试算要连 DataOps 跑一遍）。现在改成**用户显式触发**：agent 在交付
-        # 说明的最后一句提示「输入『执行数据校验』执行数据校验」，用户输入后
-        # agent 调用 `dataops_validate_data` 工具走同一条试算 + 校验 + 自修正
-        # 链路。详见 skill `dataops_validate_data`。
     human_feedback:
       pre:
         # HITL 自动应答（sql_feature_eval 无人值守场景）：读 AGENT_CONFIG.hitl_* 与

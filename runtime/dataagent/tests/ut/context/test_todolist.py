@@ -52,6 +52,11 @@ class TestTodoList:
 
     def test_append_and_pop_todo(self):
         """Test adding and popping todo nodes"""
+        # Reset the seed state: this test assumes prelist already holds 1 seeded                                                                            
+        # node (maxlen - 1 appends must succeed, one more must fail). Under                                                                                 
+        # pytest-xdist the seeding test may run on another worker, so reseed                                                                                
+        # here; init_todolist is clear+reseed and thus idempotent in-order.                                                                                 
+        self.context._todolist_manager.init_todolist() 
         # Add todo nodes
         maxlen = cast(int, self.context._todolist_manager.prelist.maxlen) - 1
         for i in range(maxlen):
