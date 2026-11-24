@@ -3,7 +3,8 @@
 import asyncio
 import hmac
 import logging
-from contextlib import asynccontextmanager
+from collections.abc import Awaitable, Callable
+from contextlib import aclosing, asynccontextmanager
 from dataclasses import replace
 from uuid import uuid4
 
@@ -12,9 +13,10 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.request_handlers.response_helpers import agent_card_to_dict
 from a2a.server.routes import create_jsonrpc_routes
 from a2a.server.tasks import TaskStore
-from a2a.types.a2a_pb2 import AgentCard
+from a2a.types.a2a_pb2 import AgentCard, GetTaskRequest, Task
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
-from langchain_core.messages import HumanMessage
+from a2a.utils.task import apply_history_length
+from langchain_core.messages import AIMessageChunk, HumanMessage
 from langgraph.types import Command
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
@@ -25,7 +27,7 @@ from starlette.routing import Route
 from dataagent import PreparedRuntime
 from dataagent.host import ServerSettings
 from dataagent.server.a2a.agent_card import JSONRPC_PATH, build_agent_card
-from dataagent.server.a2a.agent_executor import AgentKitExecutor, HITLContextBuilder
+from dataagent.server.a2a.agent_executor import AgentKitExecutor, HITLContextBuilder, message_text
 from dataagent.server.a2a.request_context import (
     A2AAuditMiddleware,
     A2ARejection,
@@ -89,6 +91,25 @@ async def _stop(turn, graph, *, error: bool = False, secrets=()) -> None:
             )
 
 
+class _RequestHandler(DefaultRequestHandler):
+    async def on_message_send_stream(self, params, context):
+        # The SDK emits the Task on creation, but only updates on continuation.
+        async with aclosing(super().on_message_send_stream(params, context)) as events:
+            first = await anext(events, None)
+            initial = context.state.pop("dataagent_initial_task", None)
+            if first is None:
+                # A validated retry can become stale while it waits in the SDK queue.
+                if initial is not None:
+                    current = await self.on_get_task(GetTaskRequest(id=initial.id), context)
+                    yield apply_history_length(current, params.configuration)
+                return
+            if initial is not None and not isinstance(first, Task):
+                yield apply_history_length(initial, params.configuration)
+            yield first
+            async for event in events:
+                yield event
+
+
 class AgentHost:
     """Bridge used by routes that share the host process's agent cache."""
 
@@ -96,7 +117,12 @@ class AgentHost:
         self.runtime = runtime
         self.app = app
 
-    async def reply(self, thread_id: str, inputs: str | Command):
+    async def reply(
+        self,
+        thread_id: str,
+        inputs: str | Command,
+        on_text: Callable[[str], Awaitable[None]] | None = None,
+    ):
         """Run one turn on the shared session index and checkpoint."""
         invocation = current_request.get()
         if invocation:
@@ -145,7 +171,49 @@ class AgentHost:
             if invocation:
                 invocation.stage = "agent_invoke"
             async with asyncio.timeout(self.runtime.timeout_seconds):
-                result = await handle.ainvoke(graph_input, config)
+                if on_text is None:
+                    result = await handle.ainvoke(graph_input, config)
+                else:
+                    result = {}
+                    interrupts = {}
+                    entry = self.runtime.settings.dataagent.entry
+                    async with aclosing(
+                        handle.astream(
+                            graph_input,
+                            config,
+                            stream_mode=["messages", "values"],
+                            version="v2",
+                            subgraphs=bool(entry),
+                        )
+                    ) as stream:
+                        async for event in stream:
+                            ns = event["ns"]
+                            if event["type"] == "values":
+                                if not ns:
+                                    result = event["data"]
+                                    interrupts.update(
+                                        (item.id, item) for item in event["interrupts"]
+                                    )
+                                continue
+                            message, metadata = event["data"]
+                            node = metadata.get("langgraph_node")
+                            if entry:
+                                in_entry = (not ns and node == entry) or (
+                                    len(ns) == 1 and ns[0].split(":", 1)[0] == entry
+                                )
+                                visible = (
+                                    in_entry
+                                    and node != "tools"
+                                    and "dataagent:a2a-public-text" in metadata.get("tags", ())
+                                )
+                            else:
+                                visible = not ns and node == "model"
+                            if visible and isinstance(message, AIMessageChunk):
+                                text = message_text(message)
+                                if text:
+                                    await on_text(text)
+                    if interrupts:
+                        result = {**result, "__interrupt__": tuple(interrupts.values())}
             if turn is not None:
                 if invocation:
                     invocation.stage = "checkpoint_settle"
@@ -287,6 +355,7 @@ def build_a2a_routes(
         host=host or server.host,
         port=server.port if port is None else port,
         requires_bearer=runtime is not None and bool(runtime.a2a_auth_token),
+        streaming=runtime is not None and executor is None,
     )
     routes = _agent_card_routes(card)
     if runtime is None:
@@ -297,9 +366,10 @@ def build_a2a_routes(
             agent_host.reply,
             secrets=tuple(runtime.redaction_secrets),
             cancel_waiting=agent_host.cancel_waiting,
+            stream_reply=agent_host.reply,
         )
     store = task_store or create_task_store()
-    handler = DefaultRequestHandler(
+    handler = _RequestHandler(
         agent_executor=executor,
         task_store=store,
         agent_card=card,

@@ -1,4 +1,5 @@
 import asyncio
+import json
 from contextlib import asynccontextmanager
 from dataclasses import replace
 from uuid import uuid4
@@ -9,7 +10,8 @@ from a2a.helpers import new_task, new_text_status_update_event
 from a2a.server.agent_execution import AgentExecutor
 from a2a.types.a2a_pb2 import TaskState
 from conftest import ScriptedModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.outputs import ChatGenerationChunk
 
 from dataagent.server.a2a import create_a2a_server
 from dataagent.server.a2a.agent_executor import AgentKitExecutor, final_text
@@ -35,6 +37,138 @@ def message(text, context_id):
 def rpc(client, payload, **kwargs):
     headers = {"A2A-Version": "1.0", **kwargs.pop("headers", {})}
     return client.post("/a2a/jsonrpc", json=payload, headers=headers, **kwargs)
+
+
+def a2a_events(response):
+    assert response.headers["content-type"].startswith("text/event-stream"), response.text
+    return [
+        json.loads(line.removeprefix("data: "))["result"]
+        for line in response.text.splitlines()
+        if line.startswith("data: ")
+    ]
+
+
+async def test_a2a_stream_emits_text_before_model_finishes(runtime):
+    first_delta = asyncio.Event()
+    second_delta = asyncio.Event()
+
+    class StreamingModel(ScriptedModel):
+        async def _astream(self, messages, stop=None, run_manager=None, **kwargs):
+            yield ChatGenerationChunk(message=AIMessageChunk(content="first "))
+            async with asyncio.timeout(5):
+                await first_delta.wait()
+            yield ChatGenerationChunk(message=AIMessageChunk(content="second"))
+            async with asyncio.timeout(5):
+                await second_delta.wait()
+
+    app = create_a2a_server(
+        runtime, host="127.0.0.1", port=9999, model=StreamingModel(responses=[])
+    )
+
+    async def observe(scope, receive, send):
+        async def capture(event):
+            if b'"first "' in event.get("body", b""):
+                first_delta.set()
+            if b'"second"' in event.get("body", b""):
+                second_delta.set()
+            await send(event)
+
+        await app(scope, receive, capture)
+
+    request = message("stream this", "a2a-stream")
+    request["method"] = "SendStreamingMessage"
+    async with app.router.lifespan_context(app):
+        async with httpx.AsyncClient(
+            transport=httpx.ASGITransport(app=observe), base_url="http://127.0.0.1:9999"
+        ) as client:
+            card = (await client.get("/.well-known/agent-card.json")).json()
+            assert card["capabilities"]["streaming"] is True
+            events = a2a_events(await rpc(client, request))
+            task_id = events[0]["task"]["id"]
+            task = (
+                await rpc(
+                    client,
+                    {
+                        "jsonrpc": "2.0",
+                        "id": "query",
+                        "method": "GetTask",
+                        "params": {"id": task_id},
+                    },
+                )
+            ).json()["result"]
+            assert len(task["artifacts"]) == 1
+            assert all(
+                part.get("text") not in ("first ", "second")
+                for item in task["history"]
+                for part in item["parts"]
+            )
+
+    updates = [event["statusUpdate"]["status"] for event in events if "statusUpdate" in event]
+    assert [status["message"]["parts"][0]["text"] for status in updates] == [
+        "Processing request...",
+        "first second",
+    ]
+    assert updates[-1]["state"] == "TASK_STATE_COMPLETED"
+    artifacts = [event["artifactUpdate"] for event in events if "artifactUpdate" in event]
+    assert artifacts[0]["artifact"]["parts"] == [{"text": "first "}]
+    assert len(artifacts) == 3
+    assert artifacts[1]["append"] and artifacts[1]["artifact"]["parts"] == [{"text": "second"}]
+    assert len({item["artifact"]["artifactId"] for item in artifacts}) == 1
+    assert artifacts[-1]["lastChunk"] and not artifacts[-1].get("append")
+    assert artifacts[-1]["artifact"]["parts"] == [{"text": "first second"}]
+
+
+async def test_burst_preview_preserves_order_and_bounds_store_updates():
+    from dataagent.server.a2a.agent_executor import _artifact_preview
+
+    updates = []
+
+    class Queue:
+        async def enqueue_event(self, event):
+            updates.append(event)
+
+    chunks = [str(i) for i in range(4000)]
+    async with _artifact_preview(Queue(), "task", "context", "result") as publish:
+        for chunk in chunks:
+            await publish(chunk)
+
+    assert updates[0].artifact.parts[0].text == chunks[0]
+    assert not updates[0].append and all(update.append for update in updates[1:])
+    assert len(updates) <= 5
+    assert "".join(update.artifact.parts[0].text for update in updates) == "".join(chunks)
+
+
+@pytest.mark.parametrize("public_answer", [False, True])
+async def test_a2a_streams_compiled_entry(runtime, tmp_path, public_answer):
+    from test_api import StreamingScriptedModel, _entry_runtime
+
+    runtime = _entry_runtime(runtime, tmp_path, public_answer=public_answer)
+    responses = [AIMessage(content="private draft")]
+    if public_answer:
+        responses.append(AIMessage(content="public answer"))
+    async with client_for(runtime, StreamingScriptedModel(responses=responses)) as client:
+        request = message("ask", "direct-entry")
+        request["method"] = "SendStreamingMessage"
+        events = a2a_events(await rpc(client, request))
+        task = (
+            await rpc(
+                client,
+                {
+                    "jsonrpc": "2.0",
+                    "id": "query",
+                    "method": "GetTask",
+                    "params": {"id": events[0]["task"]["id"]},
+                },
+            )
+        ).json()["result"]
+    for outward in (events, task):
+        assert "private draft" not in repr(outward)
+        assert "hidden-thought" not in repr(outward)
+    artifacts = [event["artifactUpdate"] for event in events if "artifactUpdate" in event]
+    assert len(artifacts) == (2 if public_answer else 1)
+    expected = "public answer" if public_answer else "visible-reply"
+    assert all(update["artifact"]["parts"] == [{"text": expected}] for update in artifacts)
+    assert artifacts[-1]["lastChunk"]
 
 
 def task_of(response):
@@ -100,7 +234,7 @@ async def test_agent_card_uses_the_request_host(runtime):
         assert set(card[modes]) == {"text/plain", "application/json"}
     for modes in ("inputModes", "outputModes"):
         assert set(card["skills"][0][modes]) == {"text/plain", "application/json"}
-    assert card["capabilities"]["streaming"] is False
+    assert card["capabilities"]["streaming"] is True
     interfaces = card["supportedInterfaces"]
     assert len(interfaces) == 1
     assert interfaces[0]["protocolBinding"] == "JSONRPC"

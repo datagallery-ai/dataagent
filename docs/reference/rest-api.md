@@ -97,7 +97,7 @@
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| `GET` | `/.well-known/agent-card.json` | Agent Card。只声明 JSON-RPC，`streaming` 为 false |
+| `GET` | `/.well-known/agent-card.json` | Agent Card。声明 JSON-RPC，流式由 A2A 请求方法选择 |
 | `POST` | `/a2a/jsonrpc` | JSON-RPC 入口，例如 `SendMessage`。请求必须带 `A2A-Version: 1.0` 头 |
 
 - `contextId` 就是会话的 `threadId`，和 `/api/v1/runs` 共用会话索引和 Checkpoint。
