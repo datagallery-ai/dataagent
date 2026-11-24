@@ -22,6 +22,12 @@ __all__ = [
     "LaunchOptions",
     "LoopDetectedError",
     "AgentContext",
+    "HITLContext",
+    "HITLHandler",
+    "HITLState",
+    "InteractionRequest",
+    "ResumeDecision",
+    "TriggerDecision",
     "PreparedRuntime",
     "SemanticServiceClient",
     "SubagentServices",
@@ -34,6 +40,12 @@ __all__ = [
 ]
 
 _LAZY = {
+    "HITLContext": ("dataagent.extensions.hitl", "HITLContext"),
+    "HITLHandler": ("dataagent.extensions.hitl", "HITLHandler"),
+    "HITLState": ("dataagent.extensions.hitl", "HITLState"),
+    "InteractionRequest": ("dataagent.extensions.hitl", "InteractionRequest"),
+    "ResumeDecision": ("dataagent.extensions.hitl", "ResumeDecision"),
+    "TriggerDecision": ("dataagent.extensions.hitl", "TriggerDecision"),
     "SemanticServiceClient": ("dataagent.semantic_client", "SemanticServiceClient"),
     "DataAgentError": ("dataagent.diagnostics.errors", "DataAgentError"),
     "LoopDetectedError": ("dataagent.extensions.loop_detection", "LoopDetectedError"),

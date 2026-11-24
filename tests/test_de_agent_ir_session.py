@@ -338,6 +338,7 @@ async def test_native_graph_runs_hooks_across_two_turns_without_todos(
 
     from conftest import ScriptedModel, call
     from langgraph.checkpoint.memory import InMemorySaver
+    from langgraph.types import Command
 
     from dataagent.assembly.graph import build_graph
     from dataagent.bootstrap import LaunchOptions, prepare_runtime
@@ -370,8 +371,10 @@ async def test_native_graph_runs_hooks_across_two_turns_without_todos(
         responses=[
             call("de-agent__read_ir", {}),
             AIMessage(content="完成"),
+            AIMessage(content="交付已确认"),
             call("de-agent__read_ir", {}),
             AIMessage(content="已更新"),
+            AIMessage(content="修改已确认"),
         ]
     )
     paths, _ = runtime.paths.open_session("ir-graph", create=True)
@@ -399,6 +402,11 @@ async def test_native_graph_runs_hooks_across_two_turns_without_todos(
     first = await graph.ainvoke(
         {"messages": [HumanMessage(content="近7天下载次数")]}, invocation, context=context
     )
+    assert first["__interrupt__"][0].value["policy_id"] == "de-agent/human_feedback_guard"
+    first = await graph.ainvoke(
+        Command(resume={first["__interrupt__"][0].id: "符合需求"}), invocation, context=context
+    )
+    assert not first.get("__interrupt__")
     messages = [
         m for m in first["messages"] if isinstance(m, ToolMessage) and m.name == "de-agent__read_ir"
     ]
@@ -413,7 +421,13 @@ async def test_native_graph_runs_hooks_across_two_turns_without_todos(
     second = await graph.ainvoke(
         {"messages": [HumanMessage(content="改成30天，其他不变")]}, invocation, context=context
     )
-    assert fill.await_count == 2
+    assert second["__interrupt__"][0].value["policy_id"] == "de-agent/human_feedback_guard"
+    second = await graph.ainvoke(
+        Command(resume={second["__interrupt__"][0].id: "符合需求"}), invocation, context=context
+    )
+    assert not second.get("__interrupt__")
+    # Two user turns plus two confirmation replies, each adding fresh evidence.
+    assert fill.await_count == 4
     assert relation.await_count == 1
     summaries = [m for m in second["messages"] if m.id == "data-task-business-context"]
     assert len(summaries) == 1

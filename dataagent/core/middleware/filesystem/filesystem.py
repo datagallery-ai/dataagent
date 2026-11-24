@@ -2383,4 +2383,6 @@ class FilesystemMiddleware(agent_types.AgentMiddleware):
         produced = await handler(request)
         if self._skip_tool_eviction(request.tool_call["name"]):
             return produced
+        if isinstance(produced, list):
+            return [await self._aintercept_large_tool_result(item) for item in produced]
         return await self._aintercept_large_tool_result(produced)
