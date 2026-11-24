@@ -242,6 +242,7 @@ few-shot 只演示协议，不是当前任务证据，禁止复制例子中的�
 可选操作未涉及、与当前任务无关的槽位为空，不是待澄清问题。
 question 是一个字符串，必须说明用户和证据中是否存在相关信息：
 没有时说明需要补充什么；有时指出哪里没说清楚。
+question 面向最终用户，使用业务自然语言，禁止出现 identity.components、field_ref、output_features、time_context、grain、field_id 等内部字段。
 unresolved 只能记录当前 Field Unit 的直接问题；其他字段的缺失或冲突必须完全忽略。
 冲突涉及的 value 槽位必须保持 null 或空数组；不得填写某个候选值后再备注冲突。
 禁止把“通常、一般、默认、建议、prefer、preference、latest、earliest”写成确定口径。

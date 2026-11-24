@@ -259,7 +259,7 @@ async def test_delivery_and_nl2sql_share_the_same_contract(harness):
             tool_call_id="read",
         )
     )
-    assert await h.before(h.request("de-agent__validate_deliverables"), params={}) is None
+    assert await h.before(h.request("de-agent__check_and_repair_sql"), params={}) is None
     second = await h.reader(
         SimpleNamespace(
             context=h.context,

@@ -32,7 +32,7 @@ from dataagent import AgentContext, collect_model_stream
 
 logger = logging.getLogger(__name__)
 
-_PROMPT_VERSION = "word-root-candidate-ranking-full-table-topk-v3"
+_PROMPT_VERSION = "word-root-candidate-ranking-semantic-columns-v1"
 _MAX_K = 20
 _MAX_BATCH_QUERY_ITEMS = 20
 _DEFAULT_LLM_BATCH_SIZE = 5
@@ -62,6 +62,7 @@ class _WordRootRecord:
     row_number: int
     values: dict[str, str]
     english_name: str
+    abbreviation: str
     chinese_description: str
     is_special: bool
     compiled_pattern: re.Pattern[str] | None
@@ -76,6 +77,7 @@ class _WordRootTable:
     description_column: str
     type_column: str
     regex_column: str
+    llm_columns: tuple[str, ...]
 
 
 async def validate_word_root(
@@ -87,16 +89,17 @@ async def validate_word_root(
 ) -> dict[str, Any]:
     """Check an English name against a configured CSV word-root table.
 
-    Exact normalized matches and special-root regular expressions are evaluated
-    locally. For unresolved names, the configured LLM ranks candidates from the
-    full table in one request.
+    Exact normalized matches against the English name or abbreviation, and
+    special-root regular expressions, are evaluated locally. For unresolved
+    names, the configured LLM ranks candidates from the full table in one request.
 
     Args:
         english_name: English name to validate.
         chinese_description: Optional Chinese description used for semantic candidate search.
         k: Maximum number of candidate records to return (1-20, default 5).
         _tool_context: Injected DataAgent context. Configure this tool with
-            ``csv_path`` and, if needed, CSV column names in ``plugins.config.de-agent.word_roots``.
+            ``AGENT_CONFIG.word_roots.csv_path`` for the dictionary path; CSV column
+            names remain in the tool YAML ``config``. Legacy ``config.csv_path`` is supported.
 
     Returns:
         A JSON-serializable result containing exact/regex matches or ranked candidates.
@@ -112,33 +115,18 @@ async def validate_word_root(
     if not 1 <= k <= _MAX_K:
         raise ValueError(f"k must be between 1 and {_MAX_K}")
 
-    config = dict(_tool_context.tool_config or {})
+    config = _word_root_config(_tool_context)
     try:
         table = _load_word_root_table(config)
     except FileNotFoundError as exc:
         logger.warning("Word-root CSV is missing; skipping validation: %s", exc)
         return _validation_skipped_result()
     llm_call_params = _llm_call_params(config)
+    match_result = _local_match_result(table, english_name)
+    if match_result is not None:
+        return match_result
+
     normalized_name = _normalize_name(english_name)
-
-    exact_matches = [
-        record
-        for record in table.records
-        if not record.is_special and _normalize_name(record.english_name) == normalized_name
-    ]
-    if exact_matches:
-        return _matched_result("exact", exact_matches)
-
-    regex_matches = [
-        record
-        for record in table.records
-        if record.is_special
-        and record.compiled_pattern is not None
-        and record.compiled_pattern.fullmatch(english_name)
-    ]
-    if regex_matches:
-        return _matched_result("regex", regex_matches)
-
     cache_key = _candidate_cache_key(
         table=table,
         english_name=normalized_name,
@@ -161,6 +149,7 @@ async def validate_word_root(
         english_name=english_name,
         chinese_description=chinese_description,
         k=k,
+        candidate_columns=table.llm_columns,
         llm_call_params=llm_call_params,
     )
     candidates = [
@@ -186,10 +175,10 @@ async def validate_word_roots(
     """Validate a batch of proposed word roots against the configured table.
 
     Each input item requires ``english_name`` and may contain ``chinese_description``.
-    Exact and special-regex checks are local. Unresolved items are sent to the
-    model in groups, with the full table included once per request. Duplicate
-    items are processed once and their results are expanded back to original
-    input order.
+    Exact English-name, abbreviation, and special-regex checks are local.
+    Unresolved items are sent to the model in groups, with the full table
+    included once per request. Duplicate items are processed once and their
+    results are expanded back to original input order.
 
     Args:
         items: Non-empty list of objects with non-empty ``english_name`` strings and
@@ -244,7 +233,7 @@ async def validate_word_roots(
     if len(unique_items) > _MAX_BATCH_QUERY_ITEMS:
         raise ValueError(f"items must contain no more than {_MAX_BATCH_QUERY_ITEMS} unique entries")
 
-    config = dict(_tool_context.tool_config or {})
+    config = _word_root_config(_tool_context)
     try:
         table = _load_word_root_table(config)
     except FileNotFoundError as exc:
@@ -308,15 +297,15 @@ async def validate_word_roots(
         pools: dict[str, list[tuple[_WordRootRecord, float]]] = {}
         for offset in range(0, len(pending), llm_batch_size):
             query_batch = pending[offset : offset + llm_batch_size]
-            pools.update(
-                await _rank_candidate_queries(
-                    llm=llm,
-                    records=normal_records,
-                    queries=query_batch,
-                    k=k,
-                    llm_call_params=llm_call_params,
-                )
+            ranked_pool = await _rank_candidate_queries(
+                llm=llm,
+                records=normal_records,
+                queries=query_batch,
+                k=k,
+                candidate_columns=table.llm_columns,
+                llm_call_params=llm_call_params,
             )
+            pools.update(ranked_pool)
         ranked_candidates = {
             query_id: [
                 {"record": record.values, "relevance": score}
@@ -352,6 +341,11 @@ async def validate_word_roots(
 
 
 def _local_match_result(table: _WordRootTable, english_name: str) -> dict[str, Any] | None:
+    """Match against English name, abbreviation, then special-root regex.
+
+    Abbreviation hits count as successful validation (``match_type="abbreviation"``).
+    Empty abbreviations are ignored. Special roots are only matched via regex.
+    """
     normalized_name = _normalize_name(english_name)
     exact_matches = [
         record
@@ -360,6 +354,16 @@ def _local_match_result(table: _WordRootTable, english_name: str) -> dict[str, A
     ]
     if exact_matches:
         return _matched_result("exact", exact_matches)
+
+    abbreviation_matches = [
+        record
+        for record in table.records
+        if not record.is_special
+        and record.abbreviation
+        and _normalize_name(record.abbreviation) == normalized_name
+    ]
+    if abbreviation_matches:
+        return _matched_result("abbreviation", abbreviation_matches)
 
     regex_matches = [
         record
@@ -383,7 +387,7 @@ def _candidate_cache_key(
     llm_call_params: dict[str, Any],
 ) -> tuple[str, str, str, int, str, str, str]:
     model_name = str(config.get("llm_model") or "primary").strip()
-    version = _PROMPT_VERSION
+    version = f"{_PROMPT_VERSION}:{','.join(table.llm_columns)}"
     return (
         table.fingerprint,
         _normalize_name(english_name),
@@ -397,7 +401,7 @@ def _candidate_cache_key(
 
 def _llm_call_params(config: dict[str, Any]) -> dict[str, Any]:
     if "llm_call_params" not in config:
-        return {}
+        return {"enable_thinking": False}
     params = config["llm_call_params"]
     if not isinstance(params, dict) or any(
         not isinstance(key, str) or not key.strip() for key in params
@@ -410,10 +414,14 @@ def _llm_call_params(config: dict[str, Any]) -> dict[str, Any]:
     return params
 
 
+def _word_root_config(context: WordRootContext) -> dict[str, Any]:
+    return dict(context.tool_config or {})
+
+
 def _load_word_root_table(config: dict[str, Any]) -> _WordRootTable:
     configured_path = str(config.get("csv_path") or "").strip()
     if not configured_path:
-        configured_path = str(Path(__file__).resolve().parents[4] / "word_dict_list.csv")
+        configured_path = str(Path(__file__).resolve().parent.parent / "word_dict_list.csv")
     path = Path(configured_path).expanduser().resolve()
     if not path.is_file():
         raise FileNotFoundError(f"word-root CSV does not exist: {path}")
@@ -423,6 +431,7 @@ def _load_word_root_table(config: dict[str, Any]) -> _WordRootTable:
     description_column = str(config.get("description_column") or "描述")
     type_column = str(config.get("type_column") or "词根类型")
     regex_column = str(config.get("regex_column") or "特殊词根规则")
+    abbreviation_column = str(config.get("abbreviation_column") or "词根简称")
     special_value = str(config.get("special_type_value") or "特殊词根").strip().casefold()
     delimiter = str(config.get("delimiter") or "")
 
@@ -436,6 +445,7 @@ def _load_word_root_table(config: dict[str, Any]) -> _WordRootTable:
         description_column,
         type_column,
         regex_column,
+        abbreviation_column,
         special_value,
         delimiter,
     )
@@ -451,6 +461,7 @@ def _load_word_root_table_cached(
     description_column: str,
     type_column: str,
     regex_column: str,
+    abbreviation_column: str,
     special_value: str,
     configured_delimiter: str,
 ) -> _WordRootTable:
@@ -477,6 +488,7 @@ def _load_word_root_table_cached(
     for row_number, raw_row in enumerate(reader, start=2):
         values = {str(key): str(value or "") for key, value in raw_row.items() if key is not None}
         english = values.get(english_column, "").strip()
+        abbreviation = values.get(abbreviation_column, "").strip()
         chinese_name = values.get(chinese_name_column, "").strip()
         description = values.get(description_column, "").strip()
         candidate_description = "；".join(
@@ -500,6 +512,7 @@ def _load_word_root_table_cached(
                 row_number=row_number,
                 values=values,
                 english_name=english,
+                abbreviation=abbreviation,
                 chinese_description=candidate_description,
                 is_special=is_special,
                 compiled_pattern=pattern,
@@ -514,6 +527,17 @@ def _load_word_root_table_cached(
         description_column=description_column,
         type_column=type_column,
         regex_column=regex_column,
+        llm_columns=tuple(
+            column
+            for column in (
+                english_column,
+                chinese_name_column,
+                abbreviation_column,
+                type_column,
+                description_column,
+            )
+            if column in headers
+        ),
     )
 
 
@@ -540,6 +564,7 @@ async def _rank_candidates(
     english_name: str,
     chinese_description: str,
     k: int,
+    candidate_columns: tuple[str, ...],
     llm_call_params: dict[str, Any],
 ) -> list[tuple[_WordRootRecord, float]]:
     if not records:
@@ -554,6 +579,7 @@ async def _rank_candidates(
         records=records,
         queries=[query],
         k=k,
+        candidate_columns=candidate_columns,
         llm_call_params=llm_call_params,
     )
     return pools.get("q0", [])[:k]
@@ -565,14 +591,16 @@ async def _rank_candidate_queries(
     records: list[_WordRootRecord],
     queries: list[dict[str, Any]],
     k: int,
+    candidate_columns: tuple[str, ...],
     llm_call_params: dict[str, Any],
 ) -> dict[str, list[tuple[_WordRootRecord, float]]]:
     """Send the full ordinary-root table once and retrieve final Top-k results."""
     if not records:
         return {query["query_id"]: [] for query in queries}
+    messages = _batch_messages_for_queries(records, queries, k, candidate_columns)
     payload = await _invoke_json(
         llm,
-        _batch_messages_for_queries(records, queries, k),
+        messages,
         llm_call_params=llm_call_params,
     )
     records_by_query = {query["query_id"]: {} for query in queries}
@@ -596,22 +624,30 @@ async def _rank_candidate_queries(
             if record is not None and row_id not in ranked_for_query and len(ranked_for_query) < k:
                 ranked_for_query[row_id] = (record, _score(candidate.get("score")))
 
-    return {
+    ranked = {
         query_id: sorted(ranked.values(), key=lambda item: item[1], reverse=True)
         for query_id, ranked in records_by_query.items()
     }
+    return ranked
 
 
 def _batch_messages_for_queries(
     records: list[_WordRootRecord],
     queries: list[dict[str, Any]],
     k: int,
+    candidate_columns: tuple[str, ...],
 ) -> list[dict[str, str]]:
-    columns = list(records[0].values)
+    columns = [column for column in candidate_columns if column in records[0].values]
     csv_buffer = io.StringIO(newline="")
     writer = csv.DictWriter(csv_buffer, fieldnames=["_candidate_id", *columns])
     writer.writeheader()
-    writer.writerows({"_candidate_id": record.row_id, **record.values} for record in records)
+    writer.writerows(
+        {
+            "_candidate_id": record.row_id,
+            **{column: record.values.get(column, "") for column in columns},
+        }
+        for record in records
+    )
     queries_payload = [
         {
             "query_id": query["query_id"],
@@ -624,8 +660,9 @@ def _batch_messages_for_queries(
         {
             "role": "system",
             "content": (
-                "For every query, independently select and rank the final semantically related word roots from the complete supplied CSV table. "
-                "Use all relevant columns, especially the English name and Chinese description when provided. "
+                "For every query, independently select and rank the final semantically related word roots from the supplied table. "
+                "The table includes the English name, Chinese name, abbreviation when available, type, and description. "
+                "Use these semantic fields to judge relevance; metadata such as status, source, creator, and timestamps is omitted. "
                 "If a query has no Chinese description, rely on its English name and the candidate table; do not invent a description. "
                 "Never invent candidates or IDs. Return only JSON: "
                 '{"results":[{"query_id":string,"candidates":[{"id":string,"score":number}]}]}. '
@@ -634,7 +671,7 @@ def _batch_messages_for_queries(
         },
         {
             "role": "user",
-            "content": "Complete CSV table (all ordinary-root records and columns):\n"
+            "content": "Complete ordinary-root table (selected semantic columns):\n"
             + csv_buffer.getvalue(),
         },
         {
@@ -654,9 +691,8 @@ async def _invoke_json(
     *,
     llm_call_params: dict[str, Any],
 ) -> dict[str, Any]:
-    response = await collect_model_stream(llm, messages, **llm_call_params)
-    content = getattr(response, "content", response)
-    return _parse_json_object(str(content))
+    content_text = await collect_model_stream(llm, messages, **llm_call_params)
+    return _parse_json_object(str(getattr(content_text, "content", content_text)))
 
 
 def _parse_json_object(content: str) -> dict[str, Any]:

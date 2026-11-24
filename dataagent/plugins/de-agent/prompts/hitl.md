@@ -25,6 +25,9 @@ question 写完整的问题、倾向方案及候选；reason 写阻塞原因。�
 - 当任务涉及预估/评分类指标但其产生机制（模型输出/系统直采/外部导入）无法从元数据确定时，需向用户确认该指标的产生机制
 - 当代码→中文名称的对照字典（映射关系）无法从元数据确定且影响输出列取值时，需向用户确认对照字典的来源
 - 当任务的业务词（筛选项/状态词/分类词）在候选源表的对应取值无法从字段注释确定时，需向用户确认业务词在本表的对应取值
-- 当 DataTaskIR 存在未确认口径（关键字段 unresolved 且带 question）时，优先调用 request_human_feedback 澄清后再调用 `task(subagent_type="nl2sql")` / `validate_deliverables`；若交互预算已用尽、同一未决问题已澄清仍未写入 IR、或系统已降级为 confirmed-only，则必须调用 `task(subagent_type="nl2sql")`，基于已确认口径 best-effort 生成 SQL，把未决项写入交付说明——禁止因 IR 未确认而改由主 agent 手写 SQL
-- 在调用 `validate_deliverables` 完成 SQL 校验后、最终交付前，必须向用户确认最终输出表的列数、列名与列顺序是否符合预期
-- 若同一 BLOCKED 问题连续 2 次修复后仍未通过，必须通过 HITL 请求用户决策，禁止继续重复调用 `validate_deliverables` 工具反复 execute
+- 当 DataTaskIR 存在未确认口径（关键字段 unresolved 且带 question）时，优先调用 request_human_feedback 澄清后再调用 `task(subagent_type="nl2sql")` / `check_and_repair_sql`；若交互预算已用尽、同一未决问题已澄清仍未写入 IR、或系统已降级为 confirmed-only，则必须调用 `task(subagent_type="nl2sql")`，基于已确认口径 best-effort 生成 SQL，把未决项写入交付说明——禁止因 IR 未确认而改由主 agent 手写 SQL
+- 在调用 `check_and_repair_sql` 完成 SQL 校验后、最终交付前，必须向用户确认最终输出表的列数、列名与列顺序是否符合预期
+- 若同一 BLOCKED 问题连续 2 次修复后仍未通过，必须通过 HITL 请求用户决策，禁止继续重复调用 `check_and_repair_sql` 工具反复 execute
+
+- 用户新的明确反馈优先于旧计划、模型推断和历史候选；反馈修改口径后，先刷新 IR 再生成 SQL。不要将明确拒绝理解为确认，不要反复询问已回答问题。
+- 生成 SQL 前的最终口径检视只进行一次；用户补充后据此修订，禁止要求用户再次确认相同摘要。

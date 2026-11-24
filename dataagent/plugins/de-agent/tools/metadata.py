@@ -4,6 +4,7 @@ import re
 
 from langchain.tools import ToolRuntime
 from utils.evidence import save_evidence
+from utils.feedback import load_rejections
 from utils.semantic_tools import semantic_tool
 
 from dataagent import AgentContext
@@ -124,4 +125,9 @@ def _table_name(value):
 def _get_table_schema(table_name, runtime):
     _table_name(table_name)
     data = _client(runtime).get_table_columns_info(table_name, limit=1000)
-    return save_evidence(runtime.context, "schema", table_name, data)
+    result = save_evidence(runtime.context, "schema", table_name, data)
+    if table_name.lower() in load_rejections(runtime.context).get("rejected_tables", []):
+        result["rejected_source_note"] = (
+            "此表已被用户拒绝，仅供口径对照，不得再次作为候选数据源提案。"
+        )
+    return result

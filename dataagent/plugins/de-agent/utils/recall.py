@@ -8,6 +8,7 @@ from uuid import uuid4
 from weakref import WeakValueDictionary
 
 from utils.evidence import retrieval_tables, save_evidence
+from utils.feedback import filter_candidates
 
 _LOCKS = WeakValueDictionary()
 _LOCKS_GUARD = Lock()
@@ -22,13 +23,13 @@ def load_semantic_context(context, query: str) -> dict:
     with lock:
         cached = _read_cache(path, query)
         if cached is not None:
-            return cached
+            return {**cached, "tables": filter_candidates(context, cached["tables"])}
         client = context.semantic_client
         if client is None:
             raise ValueError("de-agent requires the Agent's semantic configuration")
         payload = client.semantic_retrieve(query)
         saved = save_evidence(context, "retrieve", query, payload)
-        tables = retrieval_tables(payload)
+        tables = filter_candidates(context, retrieval_tables(payload))
         if not tables:
             raise ValueError("Semantic retrieval returned no usable table candidates")
         result = {"query": query, "tables": tables, "evidence_path": saved.get("evidence_path")}

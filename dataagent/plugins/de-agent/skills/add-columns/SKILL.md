@@ -7,9 +7,9 @@ description: |
 
 # 加列 Skill（ALTER TABLE ADD COLUMNS）
 
-> **前置要求**：执行本 skill 前，必须先确认已阅读并遵守主 Agent 数据工程指令中的通用规则，本 skill 不重复上述内容。当发生冲突时，以本 skill 要求为准。
+> **前置要求**：执行本 skill 前，必须先确认已阅读并遵守 instructions.md 中的通用规则，本 skill 不重复上述内容。当发生冲突时，以本 skill 要求为准。
 
-编写、修改或审核 SQL 前，读取 `sql-rules` skill 的 SKILL.md：ALTER DDL 使用 `references/ddl_rules.md` 中适用的字段类型、命名及词根校验规则；INSERT 使用 `references/dml_rules.md`。新建表专属的 CREATE、PARTITIONED BY、STORED AS 等声明要求不适用于 ALTER ADD COLUMNS。已有表的分区策略、已有列定义和顺序保持不变。
+编写、修改或审核 SQL 前，读取 `sql_rules` skill 的 SKILL.md：ALTER DDL 使用 `references/ddl_rules.md` 中适用的字段类型、命名及词根校验规则；INSERT 使用 `references/dml_rules.md`。新建表专属的 CREATE、PARTITIONED BY、STORED AS 等声明要求不适用于 ALTER ADD COLUMNS。已有表的分区策略、已有列定义和顺序保持不变。
 
 ## 何时使用
 
@@ -19,7 +19,7 @@ description: |
 
 ## 最终交付件
 
-最终交付物使用 `write_file` 写入 当前会话的 outputs 目录下，交付内容：
+最终交付物使用 `write_file` 写入 workspace 目录下，交付内容：
 - 目标表 ALTER DDL 文件：`alter_<table_name>.sql` (Hive方言)
 - 目标表 INSERT 文件：`modified_insert_<table_name>.sql` (Spark SQL方言)
 - (可选) 前置原始表 ALTER DDL 文件：`alter_<table_name>.sql` (Hive方言)
@@ -35,13 +35,13 @@ description: |
 - 如果用户提供了具体表名，调用 `validate_table_name` 工具校验表名是否合法；**如果表名不合法，要求用户确认**
 - 如果用户未指定表名
   - 使用 `read_file` 读取本 skill 目录下的 `references/base_feature_tables.md`，根据用户需求关键词匹配最相关的表
-  - 使用 `task(subagent_type="metadata-recall", description="完整检索需求")` 工具获取这些表的详细信息，分析后选择最相关的表
+  - 使用 `task(subagent_type="metadata-recall")` 工具获取这些表的详细信息，分析后选择最相关的表
   - **目标表必须是 `base_feature_tables.md` 所列出的表**，如果无法确定目标表，要求用户确认
 
 ### Step 2: 查询已有表的元数据
 
 - 使用 `check_table_existence` 工具检查目标表是否存在：该工具查询元数据服务并返回完整 schema
-  - 如果返回 `exists=False`（表不存在）：**立即跳转”降级”章节。禁止重试、禁止使用 `task(subagent_type="metadata-recall", description="完整检索需求")` 搜索、禁止跳过继续执行后续步骤**
+  - 如果返回 `exists=False`（表不存在）：**立即跳转”降级”章节，禁止重试、使用 `task(subagent_type="metadata-recall")` 搜索、禁止跳过继续执行后续步骤**
   - 如果返回 `exists=True`：继续后续步骤，schema 信息已包含在返回结果中
 - 使用 `query_sql_process` 工具获取目标表当前的 INSERT SQL，如果无法获取，要求用户提供当前表的 INSERT SQL，**禁止重试或跳过该步骤**
 
@@ -56,14 +56,14 @@ description: |
 ### Step 4：理解现有表的业务逻辑
 
 - 基于前面步骤的表结构、INSERT SQL，完整理解现有表的业务逻辑
-- 使用 `task(subagent_type="metadata-recall", description="...")` 查询 SQL 中用到的其他的表、列、UDF 等元数据的详细信息，**禁止对这些表使用 `query_sql_process` 工具**
+- 使用 `task(subagent_type="metadata-recall")` 查询 SQL 中用到的其他的表、列、UDF 等元数据的详细信息，**禁止对这些表使用 `query_sql_process` 工具**
 
 ### Step 5: 生成修改方案
 
 - 明确用户要新增的列的业务含义，与现有表、列的关系
 - 确定新列的列名、类型等关键信息
 - 优先基于 INSERT SQL 中已有的表开发新列
-- 如现有表无法满足需求，使用 `task(subagent_type="metadata-recall", description="完整检索需求")` 工具获取所需的表、列等元数据信息
+- 如现有表无法满足需求，使用 `task(subagent_type="metadata-recall")` 工具获取所需的表、列等元数据信息
 - 如需求不明确，主动向用户确认
 - **关键约束**：只允许新增列，严禁修改或删除已有列的定义
 
@@ -84,7 +84,7 @@ ALTER TABLE {db}.{table_name} ADD COLUMNS (
 ### Step 7: 生成新的 DML
 
 - 修改已有 INSERT SQL，将新列加入 SELECT 输出：
-  - 修改现有的 SQL，**禁止**使用 `task(subagent_type="nl2sql")` 生成
+  - 修改现有的 SQL，**禁止**使用 `wrapped_nl2sql_sub_agent_tool` 生成
   - **最小变更原则**：只修改为新增列所必需的部分，严禁重构已有逻辑、调整已有字段顺序、重命名已有 CTE 等散弹式修改
   - 确保新列的位置与 ALTER TABLE ADD COLUMNS 中的列顺序一致
 - 如果目标表有前置原始表，需要同时修改前置原始表的 INSERT SQL：
@@ -96,8 +96,8 @@ ALTER TABLE {db}.{table_name} ADD COLUMNS (
 - 交付件需包含 `alter_<table_name>.sql` 和 `modified_insert_<table_name>.sql`
 - 如修改涉及前置原始表，需包含 `alter_<origin_table_name>.sql` 和 `modified_insert_<origin_table_name>.sql`
 - 检查生成的 DDL/DML 是否满足用户需求
-- 对照 `sql-rules` skill 中的 `references/ddl_rules.md` 和 `references/dml_rules.md` 中适用的规范检查 DDL/DML，跳过新建表专属规则；新列的类型和 COMMENT、ALTER 与 INSERT 的新列顺序、前置原始表和目标表的字段衔接需逐项核对
-- **`check_and_repair_sql` 不适用 ALTER 场景，不要调用；不要调用未注册的旧版 SQL 校验工具**
+- 对照 `sql_rules/references/ddl_rules.md` 和 `sql_rules/references/dml_rules.md` 中适用的规范检查 DDL/DML，跳过新建表专属规则；新列的类型和 COMMENT、ALTER 与 INSERT 的新列顺序、前置原始表和目标表的字段衔接需逐项核对
+- **不要使用 `check_and_repair_sql` 作为 ALTER 场景的交付校验入口**
 - 如存在真实校验失败，修正并保存文件后重新检查；字典缺失、服务不可用等非结论性异常按 DDL 规则降级，不反复写入重试
 
 ### Step 9: 输出变更 Diff
@@ -120,10 +120,20 @@ ALTER TABLE {db}.{table_name} ADD COLUMNS (
 **新增内容**：{描述每个表修改了哪些 CTE / SELECT / JOIN}
 ```
 
+### Step 10: 交付提示
+
+在回复的最后一句加上（原样）：
+
+`如需校验数据质量，请输入"执行数据校验"。`
+
+> 数据正确性校验**不再在交付后自动执行**（试算要连 DataOps 跑一遍，会拖住
+> 每一轮交付）。用户输入「执行数据校验」后，调用 `dataops_validate_data`
+> 工具走同一条试算 + 校验 + 自修正链路。
+
 ## 降级：目标表不存在时回退新建表流程
 
 当 Step 2 中使用 `check_table_existence` 校验目标表时，如果返回 `exists=False`（表不存在）：
 1. 告知用户目标表在元数据中未找到，无法执行加列操作
 2. 询问用户是否需要改为创建新表
-3. 如用户确认，退出本 skill，按 `feature-engineering` skill 的新建表流程生成 `create_*.sql` + `insert_*.sql`
+3. 如用户确认，退出本 skill，读取并按 `feature-engineering` skill 的新建表流程生成 `create_*.sql` + `insert_*.sql`
 4. 不自动降级，必须经用户确认

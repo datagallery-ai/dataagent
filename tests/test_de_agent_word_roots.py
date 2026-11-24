@@ -286,3 +286,49 @@ def test_native_tool_schema_hides_runtime():
     schema = registry["de-agent__validate_word_roots"].tool_call_schema.model_json_schema()
     assert set(schema["properties"]) == {"items", "k", "llm_batch_size"}
     assert schema["required"] == ["items"]
+
+
+@pytest.mark.asyncio
+async def test_abbreviation_local_match_and_semantic_columns(tmp_path):
+    validate = PythonLoader().load(PLUGIN, "utils/word_root_validator.py:validate_word_roots")
+    adapter = validate.__globals__["WordRootContext"]
+    csv = tmp_path / "roots.csv"
+    csv.write_text(
+        "词根英文名,词根中文名,词根简称,词根类型,描述,特殊词根规则,创建人\napplication,应用,app,普通词根,应用程序,,PRIVATE_CREATOR\n"
+    )
+    ctx = context(tmp_path, {"csv_path": str(csv)})
+    requests = []
+
+    async def stream(messages, **kwargs):
+        requests.append(messages)
+        yield SimpleNamespace(
+            content='{"results":[{"query_id":"q1","candidates":[{"id":"row-2","score":99}]}]}'
+        )
+
+    ctx.get_model = lambda _: SimpleNamespace(astream=stream)
+    result = await validate(
+        [{"english_name": "app"}, {"english_name": "program"}],
+        _tool_context=adapter(ctx),
+    )
+    assert result["results"][0]["match_type"] == "abbreviation"
+    assert result["results"][0]["found"] is True
+    assert len(requests) == 1
+    table = requests[0][1]["content"]
+    assert "PRIVATE_CREATOR" not in table and "创建人" not in table
+    assert "application" in table and "app" in table
+    assert result["results"][1]["candidates"][0]["record"]["创建人"] == "PRIVATE_CREATOR"
+
+
+@pytest.mark.asyncio
+async def test_identifier_accepts_abbreviation_match(tmp_path, monkeypatch):
+    validate = PythonLoader().load(PLUGIN, "utils/word_roots.py:validate_identifier_word_roots")
+
+    async def abbreviations(items, **kwargs):
+        report = matched(items)
+        for item in report["results"]:
+            item["match_type"] = "abbreviation"
+        return report
+
+    monkeypatch.setitem(validate.__globals__, "validate_word_roots", abbreviations)
+    result = await validate(["app_user"], _tool_context=context(tmp_path))
+    assert result["pass"] is True

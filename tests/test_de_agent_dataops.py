@@ -261,9 +261,10 @@ async def test_real_table_validation_only_calls_quality_checker(tmp_path, monkey
     function, module = load("utils/dataops_validate_data_tool.py:validate_data")
     quality = AsyncMock(return_value={"ok": True, "sampled": True, "warnings": [], "details": {}})
     monkeypatch.setattr(module, "run_quality_check", quality)
-    result = await function(
-        "INSERT INTO db.t SELECT user_id FROM db.src", context=runtime(tmp_path).context
+    monkeypatch.setattr(
+        module, "fetch_semantic_columns", lambda *a, **k: (["user_id"], {"user_id": "string"})
     )
+    result = await function(target_table="db.t", context=runtime(tmp_path).context)
     assert result["data"]["target_table"] == "db.t"
     assert quality.await_args.kwargs["direct_table"] == "db.t"
 
@@ -313,6 +314,8 @@ async def test_quality_checks_run_concurrently_and_preserve_partial_metrics(tmp_
 
     async def execute(sql, timeout):
         nonlocal started
+        if "COUNT(" not in sql.upper() and "SUM(" not in sql.upper():
+            return "completed", "sample", {"data": []}
         index = started
         started += 1
         if started == 4:

@@ -4,6 +4,7 @@ import json
 
 import httpx
 from langchain_core.messages import HumanMessage, ToolMessage
+from utils.feedback import load_rejections
 from utils.recall import load_semantic_context
 
 
@@ -16,7 +17,9 @@ def prepare_recall(request, *, params):
     try:
         if not query:
             raise ValueError("The original user query is required for metadata recall")
-        result = load_semantic_context(request.runtime.context, query)
+        ledger = load_rejections(request.runtime.context)
+        expanded_query = query + "\n" + arguments.get("description", "") if ledger else query
+        result = load_semantic_context(request.runtime.context, expanded_query)
     except (httpx.HTTPError, ValueError) as exc:
         return ToolMessage(
             content=(
@@ -27,6 +30,7 @@ def prepare_recall(request, *, params):
             name=request.tool_call.get("name"),
             status="error",
         )
+    rejected = load_rejections(request.runtime.context)
     context_text = json.dumps(result.get("tables"), ensure_ascii=False)
     description = (
         arguments.get("description", "")
@@ -36,7 +40,8 @@ def prepare_recall(request, *, params):
         + context_text
         + "\n</semantic_retrieve_context>\n"
         + "以上候选表已由前置 Hook 按原始用户问题召回并缓存。"
-        + "按需补充 schema、UDF、Join 证据；无需再做语义粗召回。"
+        + "按需补充 schema、UDF、Join 证据；证据不足可用不同业务词补充检索。用户已拒绝的数据源不得再次提案。"
+        + ("\n用户拒绝口径：" + str(rejected.get("feedback")) if rejected else "")
     )
     return request.override(
         tool_call={**request.tool_call, "args": {**arguments, "description": description}}

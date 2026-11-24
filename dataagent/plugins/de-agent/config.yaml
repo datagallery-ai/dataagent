@@ -5,6 +5,7 @@ plugins:
       model: primary
       word_roots:
         english_name_column: 词根英文名
+        abbreviation_column: 词根简称
         chinese_name_column: 词根中文名
         description_column: 描述
         type_column: 词根类型
@@ -21,6 +22,14 @@ plugins:
         compact_json: false
         field_order: template
         semantic_field_reuse: false
+        semantic_check_policy: warn
+        enable_ir_caliber_review: false
+      delivery:
+        require_sql_pair: false
+        task_wall_budget_seconds: 0
+        max_model_calls: 0
+        forcing_window_seconds: 60
+        iteration_window: 2
       dataops:
         enabled: true
         model: primary
