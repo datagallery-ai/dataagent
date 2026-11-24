@@ -28,6 +28,8 @@ tools:
     entrypoint: tools/metadata.py:check_table_existence
   query_sql_process:
     entrypoint: tools/metadata.py:query_sql_process
+  rename_file:
+    entrypoint: tools/files.py:rename_file
   validate_word_roots:
     entrypoint: tools/word_roots.py:validate_word_roots
   read_ir:
@@ -75,11 +77,12 @@ hooks:
     matcher: de-agent__read_ir
   - entrypoint: hooks/ir.py:ensure_ir_ready
     matcher: de-agent__check_and_repair_sql
-  after_agent:
-  - entrypoint: hooks/dataops_quality_check_post.py:dataops_quality_check_post
   before_agent:
   - entrypoint: hooks/ir.py:prepare_turn
+  after_model:
+  - entrypoint: hooks/delivery.py:require_pair
   before_model:
+  - entrypoint: hooks/delivery.py:deadline
   - entrypoint: hooks/ir.py:prepare_context
 hitl:
   enabled: true
@@ -107,6 +110,10 @@ hitl:
       - output_features
       consumerTools:
       - de-agent__check_and_repair_sql
+  - id: ir_caliber_review
+    version: '1'
+    at: after_model
+    handler: hitl/caliber_review.py:CaliberReview
   - id: human_feedback_guard
     version: '1'
     at: after_model

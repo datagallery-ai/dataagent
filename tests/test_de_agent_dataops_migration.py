@@ -122,16 +122,13 @@ async def test_wrapper_cleans_dml_on_every_outcome_but_preserves_create_for_inse
 
 
 @pytest.mark.parametrize("failure", ["ddl", "dml", None])
-@pytest.mark.parametrize("entry", ["checker", "deliverables"])
 async def test_round_cleanup_runs_after_validation_without_replacing_verdict(
     tmp_path,
     monkeypatch,
     failure,
-    entry,
 ):
     loader = PythonLoader()
     cls, checker = load("utils/sql_checkers.py:SQLCheckerPipeline", loader)
-    _, delivery = load("tools/deliverables.py:_validate_dataops", loader)
     events = []
     ddl, dml = tmp_path / "create.sql", tmp_path / "insert.sql"
     ddl.write_text("CREATE TABLE db.ads_x (id STRING)")
@@ -152,19 +149,13 @@ async def test_round_cleanup_runs_after_validation_without_replacing_verdict(
         checker.dataops_validate_tool, "dataops_validate_sql_with_log_analysis", validate
     )
     monkeypatch.setattr(checker.dataops_validate_tool, "cleanup_temp_tables", cleanup)
-    monkeypatch.setattr(delivery, "dataops_validate_sql_with_log_analysis", validate)
-    monkeypatch.setattr(delivery, "cleanup_temp_tables", cleanup)
     ctx = context(tmp_path)
-    if entry == "checker":
-        pipeline = cls(tmp_path, None, PLUGIN / "skills/sql-rules/references", context=ctx)
-        pipeline.report_dir.mkdir(parents=True)
-        passed = await pipeline._validate_dataops(
-            {"ddl": ddl.read_text(), "dml": dml.read_text()},
-            {"ddl": ddl, "dml": dml},
-        )
-    else:
-        report = await delivery._validate_dataops(ddl, dml, ctx, "q")
-        passed = report["status"] == "PASS"
+    pipeline = cls(tmp_path, None, PLUGIN / "skills/sql-rules/references", context=ctx)
+    pipeline.report_dir.mkdir(parents=True)
+    passed = await pipeline._validate_dataops(
+        {"ddl": ddl.read_text(), "dml": dml.read_text()},
+        {"ddl": ddl, "dml": dml},
+    )
     assert passed is (failure is None)
     assert events == (["ddl", "cleanup"] if failure == "ddl" else ["ddl", "dml", "cleanup"])
     assert not list(tmp_path.rglob("*.lock"))
@@ -196,10 +187,8 @@ def test_probe_schema_requires_columns_and_exposes_its_constraints():
 def test_budget_constant_and_exhaustion_diagnostics():
     loader = PythonLoader()
     _, checker = load("utils/sql_checkers.py:SQLCheckerPipeline", loader)
-    _, delivery = load("tools/deliverables.py:_validate_dataops", loader)
     assert (
         checker.DEFAULT_MAX_DATAOPS_VALIDATION_ATTEMPTS
-        == delivery.DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
         == checker.dataops_validate_tool.MAX_VALIDATE_ATTEMPTS
         == 10
     )

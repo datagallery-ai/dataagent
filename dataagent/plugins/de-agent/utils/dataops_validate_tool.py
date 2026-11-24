@@ -40,6 +40,9 @@ from datetime import date, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import sqlglot
+from sqlglot import exp
+
 from dataagent import AgentContext
 from utils.dataops_constants import DEFAULT_DATAOPS_VALIDATION_ATTEMPTS
 from utils.dataops_log_utils import (
@@ -591,7 +594,17 @@ def _collapse_pt_d_range(sql: str, partition_date: str) -> str:
 
     收敛到哪一天：取范围的**上界**（``<=`` / ``<`` 的右值）。
       - 上界是字面日期 → 用它；``<``（不含上界）→ 往前挪一天，仍落在原范围内；
-      - 上界是占位符/宏（``$date`` / ``${start_time,...}``）→ 用 ``partition_date``。
+      - 上界是调度宏（``$date`` / ``${start_time,...}``）→ **先把宏解析成真实
+        日期**（``$date`` → 基准日；``${start_time,-23,yyyyMMdd}`` → 基准日往前
+        23 天），再按上界规则取用。
+
+    **为什么必须先把宏解析成真实日期**：DataOps 后端**不**替换调度宏，原样提交
+    就是拿字符串字面量做比较（``'2' > '$'`` 恒为 False），源表被过滤成空集 ——
+    试算扫不到任何行，校验只能报「0 行」。
+
+    **只有下界、没有上界**时（``pt_d >= '${start_time,-23,yyyyMMdd}'``）：
+    取**下界**解析出的日期作为收敛目标 —— 它落在原范围内，且比上界更贴近
+    「时间窗口的起点」这个语义。
 
     Args:
         sql: 原始 SQL。
@@ -609,17 +622,36 @@ def _collapse_pt_d_range(sql: str, partition_date: str) -> str:
 
     # --- 1) 先定下收敛到哪一天 -------------------------------------------
     target: str | None = None
+    upper: str | None = None  # 上界（``<=`` / ``<`` 的右值）
+    upper_is_exclusive = False  # 上界是不是严格小于（``<``）
+    lower: str | None = None  # 下界（``>=`` / ``>`` 的左值）
+
     for match in matches:
         op = match.group("op")
-        if op not in ("<=", "<"):
+        if op == "=":
             continue
         value = match.group("val").strip()
-        if value and not _is_scheduler_placeholder(value):
-            target = _shift_one_day_before(value) if op == "<" else value
-            break
-        if target is None:
-            # 上界是占位符/宏 → 用质量校验链路的基准日
-            target = partition_date
+        resolved = _resolve_scheduler_macro(value, partition_date) if value else ""
+        if not resolved:
+            # 不是调度宏 —— 当作字面日期（解析不出来就当不是日期，忽略）
+            resolved = value if _looks_like_partition_date(value) else ""
+        if not resolved:
+            continue
+        if op in ("<=", "<"):
+            if upper is None:
+                upper = resolved
+                upper_is_exclusive = op == "<"
+        elif op in (">=", ">"):
+            lower = resolved if lower is None else lower
+
+    if upper is not None:
+        # 上界优先。``<``（不含上界）→ 往前挪一天，仍落在原范围内。
+        # 注意：上界可能是宏解析出来的基准日，此时 ``<`` 也要往前挪一天 ——
+        # 否则会收敛到基准日**之后**的那一天，落在原范围之外。
+        target = _shift_one_day_before(upper) if upper_is_exclusive else upper
+    elif lower is not None:
+        # 只有下界 → 取下界（它落在原范围内）。
+        target = lower
     if target is None:
         return sql
 
@@ -654,7 +686,7 @@ def _collapse_pt_d_range(sql: str, partition_date: str) -> str:
 # 校验看到，所以试算的 INSERT 会加 ``LIMIT N`` 截断写入量，省掉全量写入的耗时。
 #
 # 三条硬约束：
-#   1. 只作用于质量校验链路；语法校验链路（validate_deliverables）要验证 SQL 的
+#   1. 只作用于质量校验链路；语法校验链路（check_and_repair_sql）要验证 SQL 的
 #      真实行为，加 LIMIT 会掩盖数据量/性能问题，保持原样。
 #   2. 用词法扫描定位插入点，只**插入一段文本**，SQL 其余部分逐字节保持原样
 #      （平台 UDF ``!bicoredata.IsEmpty``、注释、LATERAL VIEW 等一律不动）——
@@ -1504,8 +1536,7 @@ async def dataops_validate_sql_with_log_analysis(
     - When ``attempt > MAX_VALIDATE_ATTEMPTS`` the call is rejected without
       touching DataOps; the caller must not initiate attempt 11.
     - ``MAX_VALIDATE_ATTEMPTS`` (10) is the same limit enforced by
-      ``validate_deliverables``'s session-level cap and ``check_and_repair_sql``'s
-      per-SQL budget.
+      ``check_and_repair_sql``'s per-SQL budget.
     - When the final attempt (``attempt == MAX_VALIDATE_ATTEMPTS``) still
       returns ``passed: false``, this wrapper auto-dumps
       ``validate_<table>.json`` + ``delivery_warning.md`` to the workspace
@@ -1594,7 +1625,7 @@ async def dataops_validate_sql_with_log_analysis(
     # **DML 的临时表必须在本轮结束时删掉 —— 成功与否都要删。**
     #
     # 早先这里只在两条路径上清理：成功时、以及 ``attempt >= MAX_VALIDATE_ATTEMPTS``
-    # 时。而两个调用方（``validate_deliverables`` 与 ``check_and_repair_sql``）
+    # 时。而调用方 ``check_and_repair_sql`` 在早期实现中
     # **每次调用都从 attempt=1 重新开始**，所以 ``attempt >= MAX_VALIDATE_ATTEMPTS``
     # 这条分支实际上是死代码 —— 结果就是**每一次失败的尝试都会在 adhoctemp
     # 里留下一张临时表**，越迭代越多。
@@ -3289,3 +3320,296 @@ async def cleanup_temp_tables(
             seen.add(job_id)
             job_ids.append(job_id)
     return job_ids
+
+
+def _parse_sql_ast(sql: str) -> exp.Expression | None:
+    """解析 SQL 成 AST；失败返回 ``None``。
+
+    依次尝试 hive 方言 → 默认方言 —— 两者能覆盖的 SQL 形态略有差异。
+    """
+    for dialect in (_CTE_STATIC_DIALECT, None):
+        try:
+            if dialect is None:
+                return sqlglot.parse_one(sql)
+            return sqlglot.parse_one(sql, read=dialect)
+        except Exception as exc:  # noqa: BLE001
+            logger.debug(f"[expand_ctes_static] parse failed (dialect={dialect!r}): {exc!r}")
+    return None
+
+
+def cte_names(sql: str) -> tuple[str, ...]:
+    """取 SQL 里定义的 CTE 名字（按定义顺序）。
+
+    这些名字**不是物理表** —— 解析源表清单时必须排除。
+    """
+    expression = _parse_sql_ast(sql)
+    if expression is None:
+        return ()
+    names: list[str] = []
+    for with_clause in expression.find_all(exp.With):
+        for cte in with_clause.expressions:
+            alias = cte.alias_or_name
+            if alias and alias not in names:
+                names.append(alias)
+    return tuple(names)
+
+
+def has_cte(sql: str) -> bool:
+    """SQL 里有没有 ``WITH ... AS (...)``。
+
+    用 AST 判断而不是文本匹配 —— 文本匹配会把字符串字面量里的 ``WITH``、
+    注释里的 ``WITH`` 也算进去。
+    """
+    expression = _parse_sql_ast(sql)
+    if expression is None:
+        return False
+    return any(expression.find_all(exp.With))
+
+
+def _replace_table_refs(node: exp.Expression, alias: str, inner: exp.Expression) -> bool:
+    """把 ``node`` 里所有对 ``alias`` 的表引用替换成 ``(inner) AS <原别名>``。
+
+    **保留原表别名** —— ``FROM t t1 JOIN t t2`` 里两个引用用的是同一个 CTE，
+    但各自带别名 ``t1`` / ``t2``。替换成派生表时必须沿用这些别名，否则
+    ``t1.a`` / ``t2.a`` 的列引用会悬空（SQL 语义就变了）。
+
+    Returns:
+        是否找到过引用（没找到也算成功 —— CTE 可能压根没被用）。
+    """
+    replaced = False
+    for table in list(node.find_all(exp.Table)):
+        if table.name.lower() != alias.lower():
+            continue
+        # 表上原有的别名（``t1``）优先；没有才用 CTE 名。
+        table_alias = table.alias
+        alias_name = table_alias or alias
+        subquery = exp.Subquery(
+            this=inner.copy(),
+            alias=exp.TableAlias(this=exp.to_identifier(alias_name)),
+        )
+        table.replace(subquery)
+        replaced = True
+    return replaced
+
+
+def _references_any_table(node: exp.Expression, aliases: set[str]) -> bool:
+    """``node`` 里是否引用了 ``aliases`` 中的任何一个表别名。"""
+    lowered = {alias.lower() for alias in aliases}
+    return any(table.name.lower() in lowered for table in node.find_all(exp.Table))
+
+
+def _inline_with_clause(with_clause: exp.With) -> exp.Expression | None:
+    """把一个 ``WITH`` 子句的 CTE 定义摊平成派生表替换。
+
+    Returns:
+        替换后的 AST；无法安全展开时返回 ``None``。
+    """
+    ctes = list(with_clause.expressions)
+    if not ctes:
+        return None
+
+    # CTE 名 → 其 SELECT 表达式。
+    definitions: dict[str, exp.Expression] = {}
+    for cte in ctes:
+        alias = cte.alias_or_name
+        if not alias:
+            return None
+        # ``WITH a AS (SELECT ...)`` 里 CTE 主体是 ``Subquery``；也可能是裸 SELECT。
+        body = cte.this
+        inner = body.this if isinstance(body, exp.Subquery) else body
+        if not isinstance(inner, exp.Select):
+            # 非 SELECT 主体（如 ``WITH a AS (INSERT ...)``）—— 不展开。
+            return None
+        definitions[alias] = inner
+
+    # 找到这个 WITH 所属的「宿主」—— WITH 挂在它前面的那个表达式上。
+    host = with_clause.parent
+    if host is None:
+        return None
+
+    # 把 WITH 摘掉，但**先把所有 CTE 定义体搬到宿主下面**。
+    #
+    # 为什么不能直接扔掉定义体：CTE 之间可以互相引用（``_agg`` 的定义里
+    # ``FROM _src``）。定义体一旦丢掉，展开 ``_agg`` 时它内部的 ``FROM _src``
+    # 就变成了悬空引用 —— 要么替换不到（漏展开），要么留下指向已消失别名的
+    # 坏 SQL。
+    #
+    # 所以做法是：**按依赖顺序**逐个展开 —— 每次只展开「当前不依赖任何其它
+    # 未展开 CTE」的那个，把它替换成派生表；被它依赖的 CTE 因为已经变成
+    # 派生表（内联在定义体里），会跟着一起被替换掉。
+    #
+    # 注意：**不能**用 ``host.replace(with_clause)`` —— sqlglot 把 WITH 存在
+    # 宿主节点的 ``args["with_"]`` 里，不作为子节点，``replace`` 只会把 WITH
+    # 挪到宿主**前面**（语句仍然带 CTE，adHoc 照样拒绝）。
+    removed = False
+    for arg_name in ("with_", "with"):
+        if host.args.get(arg_name) is not None:
+            host.set(arg_name, None)
+            removed = True
+    if not removed:
+        return None
+
+    pending = dict(definitions)
+    guard = 0
+    while pending:
+        guard += 1
+        if guard > len(definitions) + 2:  # pragma: no cover - 防御死循环
+            return None
+        # 找一个「不依赖任何未展开 CTE」的。
+        ready = [
+            alias
+            for alias, inner in pending.items()
+            if not _references_any_table(inner, set(pending) - {alias})
+        ]
+        if not ready:
+            # 互相循环引用 —— 展不开，放弃。
+            return None
+        # 按依赖顺序处理：一次只展开一个（依赖已展开的会跟着被替换）。
+        alias = ready[0]
+        inner = pending.pop(alias)
+        _replace_table_refs(host, alias, inner)
+        # 还没展开的 CTE 定义体里也可能引用了这个 —— 一并替换掉。
+        for remaining_inner in pending.values():
+            _replace_table_refs(remaining_inner, alias, inner)
+    return host
+
+
+def _expand_with_clauses(expression: exp.Expression) -> exp.Expression | None:
+    """把 AST 里的所有 ``WITH`` 子句摊平成派生表。
+
+    反复处理直到没有 WITH 为止 —— 嵌套的 WITH（子查询里还有 WITH）需要多轮。
+    设上限防死循环。
+    """
+    # 深拷贝 —— 不改调用方的 AST。
+    root = expression.copy()
+
+    for _ in range(10):
+        with_clauses = list(root.find_all(exp.With))
+        if not with_clauses:
+            break
+        # 从**最深**的一层开始 —— 嵌套 WITH 里内层先展开。
+        target = max(
+            with_clauses,
+            key=lambda node: len(list(node.find_all(exp.Select))),
+        )
+        inlined = _inline_with_clause(target)
+        if inlined is None:
+            return None
+        root = inlined
+
+    if list(root.find_all(exp.With)):
+        # 还有 WITH 没摊平（结构太复杂）—— 放弃，返回原 SQL。
+        return None
+    return root
+
+
+def expand_ctes_static(sql: str) -> str:
+    """把 ``WITH ... AS (...)`` 内联成派生表（**静态**，不调模型）。
+
+    Args:
+        sql: 原始 SQL（可能带 CTE）。
+
+    Returns:
+        展开后的 SQL。**没有 CTE 时原样返回**；解析失败或展开不安全时也
+        原样返回 —— 宁可不做，也不要产出错误的 SQL。
+
+    展开规则（与 SQL 语义一致）：
+
+    - ``WITH a AS (SELECT ...)`` → 引用处变成 ``(SELECT ...) AS a``；
+    - CTE 之间可以互相引用 → **按依赖顺序**展开（被依赖者先展开）；
+    - ``FROM t t1 JOIN t t2`` → 各自保留原别名（``AS t1`` / ``AS t2``），
+      否则 ``t1.a`` 的列引用会悬空。
+    """
+    text = str(sql or "")
+    if not text.strip():
+        return text
+
+    expression = _parse_sql_ast(text)
+    if expression is None:
+        return text
+    if not any(expression.find_all(exp.With)):
+        return text
+
+    try:
+        expanded = _expand_with_clauses(expression)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[expand_ctes_static] expansion failed ({exc!r}); keeping original SQL")
+        return text
+
+    if expanded is None:
+        return text
+    try:
+        return expanded.sql(pretty=False)
+    except Exception as exc:  # noqa: BLE001
+        logger.debug(f"[expand_ctes_static] serialization failed ({exc!r}); keeping original SQL")
+        return text
+
+
+_CTE_STATIC_DIALECT = "hive"
+
+
+def _shift_days(value: str, days: int) -> str:
+    """把 ``YYYYMMDD`` 往前挪 ``days`` 天（``days`` 为负则往后）；解析失败时原样返回。"""
+    try:
+        return (
+            date(int(value[:4]), int(value[4:6]), int(value[6:8])) + timedelta(days=days)
+        ).strftime("%Y%m%d")
+    except (ValueError, IndexError):
+        return value
+
+
+def _looks_like_partition_date(value: str) -> bool:
+    """判断一个值是不是字面分区日期（``YYYYMMDD``，可带时分秒后缀）。"""
+    text = (value or "").strip()
+    if len(text) < 8 or not text[:8].isdigit():
+        return False
+    try:
+        date(int(text[:4]), int(text[4:6]), int(text[6:8]))
+    except ValueError:
+        return False
+    return True
+
+
+def _resolve_scheduler_macro(value: str, partition_date: str) -> str:
+    """把一个调度宏解析成**真实日期**（``YYYYMMDD``）。
+
+    DataOps 后端**不**替换这些占位符，所以原样提交会拿字符串字面量做比较
+    （``'2' > '$'`` 恒为 False），源表被过滤成空集。
+
+    支持的形态：
+
+    ==============================  =========================================
+    宏                              解析结果
+    ==============================  =========================================
+    ``$date`` / ``${date}``          基准日（``partition_date``）
+    ``${start_time,-N,yyyyMMdd}``   基准日往前 N 天
+    ``$last_seven_day``              基准日往前 7 天
+    其它 / 无法解析                  原样返回（调用方兜底）
+    ==============================  =========================================
+
+    Args:
+        value: 占位符文本（可能带引号）。
+        partition_date: 基准日（``YYYYMMDD``）。
+
+    Returns:
+        解析出的日期字符串；解析不了时返回 ``""``，表示「没解析出来」。
+    """
+    token = (value or "").strip().strip("'\"").strip()
+    if not token:
+        return ""
+
+    lowered = token.lower()
+    if lowered in ("$date", "${date}"):
+        return partition_date
+    if lowered == "$last_seven_day":
+        return _shift_days(partition_date, -7)
+
+    # ``${start_time,-23,yyyyMMdd}`` → 基准日往前 23 天。
+    offset_match = _MACRO_OFFSET_RE.match(token)
+    if offset_match:
+        return _shift_days(partition_date, int(offset_match.group(1)))
+
+    return ""
+
+
+_MACRO_OFFSET_RE = re.compile(r"^\$\{\s*[A-Za-z_]\w*\s*,\s*(-?\d+)\s*(?:,|\})")

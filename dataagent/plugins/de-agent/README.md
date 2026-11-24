@@ -35,8 +35,6 @@ plugins:
   config:
     de-agent:
       allowed_databases: []
-      quality_gate: true
-      quality_gate_include_suggestions: false
       model: primary
 ```
 
@@ -58,7 +56,7 @@ flowchart LR
   D --> B
   B --> N
   N --> R[after_run 保存 INSERT 文件]
-  R --> V[静态检查 + 原生模型质量建议]
+  R --> V[程序 SQL 检查与有界修复]
 ```
 
 默认节点：`perceptor → generator → validator → reflector`，不包含 executor 和 selector，因此不要求安装 Hive 执行驱动。SQL 安全检查默认关闭；旧 Suite 的 DDL/DML 方言规则作为交付检查保留。
@@ -102,7 +100,7 @@ NL2SQL 上下文包含三个字段：`schema_str`（本次所选表的完整 sch
 - 迁移元数据召回、表名/存在性检查、已有 INSERT 查询、DDL 反馈、SQL 生成与保存、交付检查、加列和特征工程 Skills。
 - 未引入 DataTaskIR、任务信封或新任务工具；未迁入旧版禁用的 golden-schema 实验入口。
 - 加列保留旧方式：读取已有 SQL 后由主 Agent 最小修改，不调用新建表 NL2SQL 流程。
-- 静态检查继承原 Suite 的 Hive/平台规范；模型质量检查只报告有依据的问题和未验证项，不证明业务等价，也不执行仓库 SQL。
+- 静态检查继承原 Suite 的 Hive/平台规范；`check_and_repair_sql` 负责程序检查和有界模型修复；DataOps 验证受配置开关控制。
 - 元数据错误返回可恢复的原生工具错误；不能将超时等同于“表不存在”。
 
 ## 验证
@@ -132,3 +130,16 @@ uv run pytest tests/test_de_agent_live.py -q
 - 真实 DeepSeek + 已部署语义服务：2 项通过。覆盖主 Agent 原生 task 全链路、实际 DDL/INSERT 文件、交付检查完成状态、两个并发 NL2SQL 会话隔离、缺少证据时返回失败。
 - 测试仅生成 SQL，没有执行 Hive 写入。加列与特征工程的完整业务案例尚未做端到端验收。
 - 测试中 semantic/retrieve 曾超时，表字段接口正常。检索错误以原生工具错误返回；明确来源表直接查 schema，未知来源的语义召回可用性仍取决于后端。
+
+
+## 2026-11-24 main 同步
+
+- !586、!656：词根简称本地命中；模型只接收词根语义列，完整 CSV 记录仍保留在工具结果中。
+- !572、!598、!565、!655：增加命名任务入口、`check-feature-developed` skill 和 SQL 规则更新。
+- !679：数据校验改为显式调用 `dataops_validate_data`。INSERT 交付物走临时表试算、确定性校验、常识检查、回源比对和有界自修正；仅提供目标表时走只读校验。修正写回本会话交付文件，并保留备份。自动交付后试算 hook 已取消注册。
+- !677、!681：IR 模板升级到 1.2.0，增加关联键/统计主体、透传/序列与小时分区语义检查；用户明确拒绝的数据源在本会话后续检索中被过滤，schema 对照仍允许并附拒绝注记。口径复核通过原生 HITL policy 执行，不依赖旧 Flex auto resolver。
+- !648、!649：metadata-recall 默认温度 0.4，使用独立模型副本；新增会话 outputs 内的 `rename_file`，拒绝路径越界及覆盖。
+
+IR 与交付约束按任务类型配置：`plugins.config.de-agent.data_task_ir.semantic_check_policy` 为 `warn`（默认）或 `enforce`；`enable_ir_caliber_review: true` 开启生成 SQL 前的一次口径复核。`plugins.config.de-agent.delivery.require_sql_pair: true` 开启成对 SQL 交付检查；`task_wall_budget_seconds`、`max_model_calls` 非零时开启对应预算收口。预算使用会话输出目录的任务标记；交付检查最多补充一轮模型请求，不会无限阻止结束。这些强制交付选项默认关闭，命名、查重或解释类任务可保持关闭。
+
+metadata-recall 的模型槽位和温度在 `subagents/metadata-recall.yaml` 的 `model`、`temperature` 中声明；普通子 Agent 也支持这两个可选字段。它们不改变根 Agent 或其他子 Agent 的模型。修改内置声明后，现有持久化 runtime 需要刷新扩展才能接入新资源。

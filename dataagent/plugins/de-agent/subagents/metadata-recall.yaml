@@ -1,5 +1,7 @@
 schema_version: 1
 name: metadata-recall
+model: primary
+temperature: 0.4
 description: 召回表、列、指标、UDF 和 Join 关系，只返回有来源的元数据证据。生成 SQL 前先使用此子 Agent。
 system_prompt_file: prompts/metadata.md
 tools:

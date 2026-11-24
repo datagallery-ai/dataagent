@@ -40,6 +40,7 @@ from .inputs import collect_evidence, input_state
 from .json_llm import ainvoke_json_object
 from .render import render_constraint_context, render_context
 from .runtime import ir_enabled, ir_options, ir_state
+from .semantic_checks import collect_ir_semantic_warnings
 from .template import (
     list_field_templates,
     load_template_catalog,
@@ -66,6 +67,10 @@ def ir_consistency_policy(context: AgentContext) -> str:
     policy = _ir_option(context, "consistency_policy", "warn")
     if policy not in {"warn", "enforce"}:
         raise ValueError("DataTaskIR 配置错误：consistency_policy 必须为 warn 或 enforce")
+    if ir_semantic_check_policy(context) == "enforce" and ir_state(context).get(
+        "ir_semantic_warnings"
+    ):
+        return "enforce"
     return policy
 
 
@@ -445,6 +450,12 @@ async def _ir_consistency_gate(
             "output": {"warnings": warnings},
         },
     )
+    semantic = collect_ir_semantic_warnings(field_results, user_query=user_query)
+    ir_state(context)["ir_semantic_warnings"] = semantic
+    if ir_semantic_check_policy(context) == "enforce":
+        warnings.extend(str(item) for item in semantic)
+    elif semantic:
+        logger.warning("DataTaskIR semantic warnings: %s", semantic)
     return warnings, error is None
 
 
@@ -555,6 +566,7 @@ def validate_ir_config(context):
     """Validate all policies before inference or durable state mutation."""
     ir_failure_policy(context)
     ir_consistency_policy(context)
+    ir_semantic_check_policy(context)
     if _ir_option(context, "refresh_policy", "eager") not in {"eager", "on_consume"}:
         raise ValueError("DataTaskIR refresh_policy must be eager or on_consume")
 
@@ -761,3 +773,10 @@ def read_ir(context: AgentContext) -> str:
         logger.error("[read_ir] task ir not created, use create_ir to init IR.")
         return ""
     return get_ir_context(context)
+
+
+def ir_semantic_check_policy(context):
+    value = _ir_option(context, "semantic_check_policy", "warn")
+    if value not in {"warn", "enforce"}:
+        raise ValueError("data_task_ir.semantic_check_policy must be warn or enforce")
+    return value

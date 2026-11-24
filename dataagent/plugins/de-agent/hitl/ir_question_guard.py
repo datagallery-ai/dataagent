@@ -12,7 +12,9 @@ from typing import Annotated, Any, NotRequired
 from langchain.agents.middleware.types import PrivateStateAttr
 from langchain_core.messages import AIMessage
 from utils.data_task_ir import core
+from utils.data_task_ir.render import humanize_ir_hitl_text
 from utils.data_task_ir.runtime import ir_enabled, ir_state
+from utils.feedback import record_feedback
 
 from dataagent import (
     HITLHandler,
@@ -144,11 +146,12 @@ class IRQuestionGuard(HITLHandler):
     def interaction_builder(self, context, *, params):
         lines = ["【DataTaskIR 待澄清口径】请确认具体方案，不要仅回答‘自主判断’："]
         for item in context.decision.payload["queue"]:
-            lines.append(f"【{item['title']}】{item['question']}")
+            lines.append(humanize_ir_hitl_text(f"【{item['title']}】{item['question']}"))
             lines.append("未决点：" + "；".join(map(str, item["unresolved"][:3])))
         return InteractionRequest(question="\n".join(lines)[:2000])
 
     def resume_handler(self, context, *, params):
+        record_feedback(context.runtime.context, context.answer)
         payload = context.decision.payload
         current = asking_state(context.state, payload["task_id"])
         current["query"] = payload["query"]

@@ -6,6 +6,7 @@ from typing import Annotated, Any, NotRequired
 
 from langchain.agents.middleware.types import PrivateStateAttr
 from langchain_core.messages import AIMessage, HumanMessage
+from utils.feedback import record_feedback
 
 from dataagent import (
     HITLHandler,
@@ -62,6 +63,7 @@ class _CompletionGuard(HITLHandler):
         return last, scope, count
 
     def resume_handler(self, context, *, params):
+        record_feedback(context.runtime.context, context.answer)
         payload = context.decision.payload
         return ResumeDecision(
             action="replan",

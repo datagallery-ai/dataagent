@@ -198,6 +198,19 @@ def materialize_subagents(
             ),
             "middleware": compiled_hooks,
         }
+        if spec.model is not None or spec.temperature is not None:
+            model = (
+                services.get_model(spec.model)
+                if spec.model
+                else context.get_model()
+                if context is not None
+                else services.get_model("primary")
+            )
+            child["model"] = (
+                model.model_copy(update={"temperature": spec.temperature})
+                if spec.temperature is not None
+                else model
+            )
         # Upstream distinguishes omitted tools (inherit) from [] (no explicit tools).
         if spec.tools is not None:
             child["tools"] = [tool_registry[name] for name in ids]

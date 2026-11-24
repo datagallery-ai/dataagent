@@ -69,20 +69,6 @@ def test_guard_insert_returns_error(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_deliverables_returns_path_error_without_validation(tmp_path):
-    tool = PythonLoader().load(PLUGIN, "tools/deliverables.py:validate_deliverables")
-    context = SimpleNamespace(session=SimpleNamespace(outputs=tmp_path / "outputs"))
-    result = await tool(
-        str(tmp_path / "create_bad.sql"),
-        "insert_bad.sql",
-        "query",
-        SimpleNamespace(context=context),
-    )
-    assert result["valid"] is False
-    assert "outputs directory" in result["errors"][0]
-
-
-@pytest.mark.asyncio
 @pytest.mark.parametrize(
     "name,argument,flag",
     [

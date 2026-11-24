@@ -119,7 +119,7 @@ async def test_first_task_without_todos_commits_and_unchanged_consumers_reuse(h,
     assert first["status"] == "committed"
     assert len(first["evidence"]) == 1
     assert first["queries"] == ["近7天下载次数"]
-    assert await h.consume(state, "validate_deliverables") is None
+    assert await h.consume(state, "de-agent__check_and_repair_sql") is None
     assert h.fill.await_count == h.gate.await_count == 1
     assert len(list(h.session.current(h.context)["store"].root.glob("versions/*.json"))) >= 2
 

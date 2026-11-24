@@ -90,23 +90,25 @@ async def dataops_validate_data(
     sql_file_path: str | None = None,
     target_table: str = "",
     partition_filter: str = "",
+    dml_path: str | None = None,
 ) -> dict:
-    """Read-only data quality checks from a target table name, CREATE DDL or INSERT SQL.
+    """Validate an INSERT deliverable with scratch-table trial and quality checks.
 
-    Does not execute the INSERT or create/drop tables. Prefer sql_file_path for a
-    session output artifact. A table name alone resolves columns through semantic metadata.
-    Optional target_table/partition_filter override SQL extraction.
+    May repair the session INSERT artifact after complete rechecks. Prefer dml_path
+    or sql_file_path. A target table alone uses read-only metadata-based checks.
     """
     with dataops_settings(runtime.context) as context:
         if dataops_options(context).get("enabled", True) is False:
             return {"ok": False, "skipped": True, "reason": "dataops_disabled"}
         try:
             path = str(output_file(runtime.context, sql_file_path)) if sql_file_path else None
+            dml = str(output_file(runtime.context, dml_path)) if dml_path else None
         except ArtifactPathError as exc:
             return {"ok": False, "error": str(exc), "reason": "artifact_outside_outputs"}
         return await _validate_data(
             sql,
             sql_file_path=path,
+            dml_path=dml,
             target_table=target_table,
             partition_filter=partition_filter,
             context=context,

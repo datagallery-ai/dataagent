@@ -34,7 +34,7 @@ def cartesian():
 def test_catalog_is_v1_and_all_six_units_can_render_their_examples():
     _, render, load = functions()
     catalog = load()
-    assert str(catalog["template_version"]) == "1.0.0"
+    assert str(catalog["template_version"]) == "1.2.0"
     assert [field["field_id"] for field in catalog["fields"]] == [
         "identity",
         "sources",
@@ -141,13 +141,10 @@ def test_render_counts_key_plus_expansion_and_preserves_per_feature_grain():
     assert render([]) == ""
 
 
-def test_checker_and_feature_engineering_skill_use_six_field_semantics():
-    checker = (PLUGIN / "prompts/ir_quality_check.md").read_text()
+def test_feature_engineering_skill_uses_six_field_semantics():
     skill = (PLUGIN / "skills/feature-engineering/SKILL.md").read_text()
-    for prompt in (checker, skill):
-        assert "identity.components" in prompt
-        assert "expand(output_features)" in prompt
-        assert "aggregation.grain" in prompt
-        assert "feature_key" not in prompt
-        assert "output_fields" not in prompt
-    assert "不得因列名不一致判失败" in checker
+    assert "identity.components" in skill
+    assert "expand(output_features)" in skill
+    assert "aggregation.grain" in skill
+    assert "feature_key" not in skill
+    assert "output_fields" not in skill

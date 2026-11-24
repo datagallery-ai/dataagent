@@ -71,7 +71,6 @@
 | H3 | 已修。删除 `deploy/nginx.datagallery.conf.example` 及其引用：没有部署脚本、测试或 CI 使用它，内容多次与代码不一致。SSE 响应自带 `X-Accel-Buffering: no`，Web 转发时另加 `Cache-Control: no-transform`；nginx 按这个头自动关闭 SSE 缓冲 |
 | S1 | 已修。MCP 报错按调用入口写 `create_agent` 或 `build_graph` |
 | S2 | 已修。`create_agent` 改为显式关键字参数，拼错立即 `TypeError`；`python-api.md` 同步 |
-| E1 | 待决策：`validate_deliverables` 工具是否恢复。见 E1 行 |
 | E4 | 锚点已加。workspace 名称正则加 `^$`。四套正则的统一转为 P2 |
 | C1 | 端口已修。新增 `dataagent.server_listen`，降级启动时也读所选配置的 `server` 段。“缺少环境变量时 models 段降级、其他段退出”的差异已写进 `cli-and-environment.md`，行为未改，转为 P1 |
 | C2 | 已修。`.env.example`、`README.md`、`README_zh.md` 改为“网页上不能改模型”，并说明根 `.env` 覆盖 Home `.env`。根 `.env` 仍是文档推荐的模型配置位置，所以保留模型变量 |
@@ -159,14 +158,14 @@
 | S4 | 部分已修 | 错误类型没有统一基类：`DataAgentError(Exception)`、`LoopDetectedError(RuntimeError)`、`ConfigurationLoadError(ValueError)`、`A2ACallError(RuntimeError)`，配置错误多数直接抛 `ValueError`；nl2sql 复制了一个同名 `DataAgentError` | `dataagent/diagnostics/errors.py:164`；`dataagent/extensions/loop_detection.py:55`；`dataagent/bootstrap/config_files.py:33`；`dataagent/plugins/nl2sql/nl2sql/errors.py:177` | 已修：`ConfigurationLoadError`、`LoopDetectedError`、`A2ACallError` 继承 `DataAgentError`，保留内置基类；nl2sql 改为复用核心类。未做：内部配置校验仍直接抛 `ValueError`（数量多，且调用方按 `ValueError` 捕获） |
 | S5 | 已修 | `LaunchOptions.session_id` 只恢复 workspace 绑定，不是默认会话；默认会话固定为 `"sdk"`；workspace 有多种写法 | `dataagent/bootstrap/startup.py:84-90`；`dataagent/assembly/context.py:104` | `session_id` 改为默认会话，或从 SDK 移除；workspace 只留一种写法 |
 | S6 | 已修 | `Runtime` 和 `ModelContext` 命名误导，见第 3 节 | `dataagent/bootstrap/runtime.py:18`；`dataagent/assembly/context.py:76-161` | 已修：`Runtime` → `PreparedRuntime`，`ModelContext` → `AgentContext`；`dataagent/core` 未改动 |
-| S7 | 已修 | 内置插件曾依赖非公开模块 `dataagent.model_stream` 和 `dataagent.history_sql.config`，说明公开 API 不够用 | `dataagent/plugins/de-agent/tools/deliverables.py:28`；`dataagent/plugins/de-agent/hooks/history_sql.py:8` | 已修：`collect_model_stream` 从 `dataagent` 导出；历史 SQL 的配置和下载实现归入 de-agent 的 `utils/history_sql/`，hook 直接使用插件内部配置；下载命令适配器通过 `dataagent.host` 使用宿主日志接口，由 `test_layering.py` 检查 |
+| S7 | 已修 | 内置插件曾依赖非公开模块 `dataagent.model_stream` 和 `dataagent.history_sql.config`，说明公开 API 不够用 | `dataagent/plugins/de-agent/utils/dataops_mcp.py`；`dataagent/plugins/de-agent/hooks/history_sql.py:8` | 已修：`collect_model_stream` 从 `dataagent` 导出；历史 SQL 的配置和下载实现归入 de-agent 的 `utils/history_sql/`，hook 直接使用插件内部配置；下载命令适配器通过 `dataagent.host` 使用宿主日志接口，由 `test_layering.py` 检查 |
 | S8 | 已修 | `SemanticServiceClient` 方法签名风格不统一：参数顺序、`limit` 和 `top_k` 混用；构造函数暴露 `_shared`；`verify` 默认 False | `dataagent/semantic_client/client.py:40,251,276` | 已修：条数统一为关键字参数 `limit`（替换 `top_k`），定位参数按库、表、关键词排序；构造函数删除 `_shared`；直接构造时默认 `verify=True`，`from_settings` 仍按配置 |
 
 ### 4.4 扩展声明
 
 | 编号 | 优先级 | 问题 | 证据 | 建议 |
 | --- | --- | --- | --- | --- |
-| E1 | 待决策 | de-agent 的一条 Hook 永远不会触发：matcher 写的是 `validate_deliverables`，这个函数还在 `tools/deliverables.py:32`，但 commit 4f717b50 从清单 `tools` 中删除了它的注册，之后 ac4b5b08、cb69853d、1528d1e3 仍在修改这个函数，删除注册可能是误操作；即使存在，注册名也是 `de-agent__validate_deliverables`；多个 Skill 仍让模型调用它 | `dataagent/plugins/de-agent/.plugin.yaml:111`；`dataagent/extensions/hooks.py:119`；`dataagent/extensions/tools.py:22` | 由插件负责人确定：恢复 `validate_deliverables`（matcher 改为 `de-agent__validate_deliverables`），或删除这条 Hook 并把两个 dataops Skill 改指 `check_and_repair_sql`。编译时校验 matcher 放到 P1：matcher 也可能指向 MCP 和原生工具，需要先定规则 |
+| E1 | 已修 | 废弃交付校验工具的实现、专属提示词和引用已清理 | `dataagent/plugins/de-agent/tools/sql_checkers.py` | SQL 规范检查统一使用 `check_and_repair_sql`；数据正确性校验使用 `dataops_validate_data` |
 | E2 | 已修 | 两套 Hook 共用 `hooks` 键，但事件名、声明位置和签名都不同：Agent Hook 有 6 个事件，写在 `.plugin.yaml` 或 `dataagent.hooks`；Run Hook 只有 `before_run`/`after_run`，写在 `plugins.config.<id>.hooks`，只在含 compiled 子代理的插件中生效，其他插件写了被静默忽略 | `dataagent/config/declarations.py:92-99,226-230`；`dataagent/bootstrap/discovery.py:209-227`；`dataagent/extensions/subagents.py:93-104` | 已修：Run Hook 键名改为 `plugins.config.<id>.run_hooks`，与 Agent Hook 的 `hooks` 分开；插件没有编译子代理却写了 `run_hooks` 时装配失败。仍放在部署配置里，不移到 `.plugin.yaml`：它是部署方按场景配置的（如 nl2sql 场景包），不是插件作者固定的 |
 | E3 | 已修 | Hook 契约不完整：工具 Hook 签名不带 runtime，内置插件靠 `request.runtime.context` 取上下文，文档未写；文档对“怎样拒绝执行”前后矛盾 | `dataagent/plugins/de-agent/hooks/history_sql.py:20-24,43`；`docs/extensions/hooks.md:3,41-51,72` | 写明两种拒绝方式：返回错误 `ToolMessage`（模型可以纠正）；抛异常（终止本轮） |
 | E4 | 已修 | ID 正则有四套。workspace 正则原先没有锚点（`'../../evil name!'` 能通过校验），P0 已加 | `dataagent/config/settings.py:41,108`；`dataagent/config/declarations.py` 的 `RESOURCE_ID_PATTERN`；插件工具 ID 不允许 `-` | 已修：四套合为两类，定义在 `dataagent.config.declarations`（见 R5）。插件工具 ID 允许 `-`；A2A 远端 `id` 改为小写，与其他声明名一致 |
@@ -188,7 +187,7 @@
 | C7 | 关闭 | 来源优先级各处不同：`history_sql` 环境变量优先，`dataops` 配置优先；（dataops 属于示例插件，只作对照） | `dataagent/plugins/de-agent/utils/history_sql/config.py`；`dataagent/plugins/de-agent/utils/dataops_mcp.py:131-134`；`dataagent/plugins/de-agent/config.yaml:33` | de-agent 的 `history_sql` 按 R7 统一 |
 | C8 | 关闭 | `serve --session` 只采用该会话的 workspace 绑定，文档写“恢复会话” | `dataagent/cli.py:100`；`docs/reference/cli-and-environment.md:22` | 改名为 `--bind-session` 或删除；改正文档 |
 | C9 | 已修 | 超时键名和单位不统一：`timeout_seconds`、`semantic.timeout`、`dataops.timeout_s`、`poll_interval_ms`、`DATAOPS_MCP_TIMEOUT`、`DATAOPS_REQUEST_TIMEOUT_SEC` | `dataagent/config/settings.py:28,112,174`；`dataagent/plugins/de-agent/config.yaml:31-32` | 已修（核心）：`semantic.timeout` → `semantic.timeout_seconds`，核心配置的时长键都以 `_seconds` 结尾。`dataops.*`、`DATAOPS_*` 属于示例插件，按 C10 由插件作者决定 |
-| C10 | 不处理 | 插件配置命名混乱：模型别名有 `model` 和 `llm_model` 两种写法；开关有四种写法；`thresholds.null_rate_threshold` 后缀重复；代码会读的 `quality_gate`、dataops 的 `url` 等键默认文件里没有；nl2sql 接受 `semantic` 键但没有代码读取 | `dataagent/plugins/de-agent/config.yaml:6,14,44-48`；`dataagent/plugins/nl2sql/nl2sql/config_manager.py:50,62` | 示例插件的配置命名不属于核心契约，留给插件作者 |
+| C10 | 不处理 | 插件配置命名混乱：模型别名有 `model` 和 `llm_model` 两种写法；开关有四种写法；`thresholds.null_rate_threshold` 后缀重复；DataOps 的 `url` 等配置键默认文件里没有；nl2sql 接受 `semantic` 键但没有代码读取 | `dataagent/plugins/de-agent/config.yaml:6,14,44-48`；`dataagent/plugins/nl2sql/nl2sql/config_manager.py:50,62` | 示例插件的配置命名不属于核心契约，留给插件作者 |
 | C11 | 已修 | 结构小问题：`dataagent.model` 是只有 `default` 一个键的组；顶层键 `dataagent` 与产品名重复；`a2a.agents` 与入站 A2A 同名 | `dataagent/config/settings.py:23-24,121-124` | 已修：`dataagent.model` 改为字符串；`a2a.agents` → `a2a.remote_agents`；`config.yaml` 升到 4，仅支持当前版本。顶层键 `dataagent` 不改：改它会使所有配置失效，收益小 |
 | C12 | 已修 | `history_sql` 不是 `dataagent` 子命令，只接受 `--config`；语料目录有三处设置 | `dataagent/history_sql/__main__.py:22-31`；`pyproject.toml:40` | 已修：改为 `dataagent history-sql`，和 `serve` 共用 `--config`、`--env-file`；删除 `python -m dataagent.history_sql`。语料目录的三处来源保留，顺序符合 R7，文档写明 |
 | C13 | 已修 | `DATAAGENT_HOME` 为空时 Node 当作“没有 Home”、Python 当作未设置；`npm run start` 静默忽略除 `--config`、`--web-host`、`--web-port`、`--api`、`--web` 以外的参数；`dataagent/plugins/attribution-analysis` 没有 `.plugin.yaml` 却被当作插件候选 | `ui/shared/server-listen.mjs`；`ui/tui/src/backend.ts`；`dataagent/bootstrap/paths.py:home_path`；`scripts/stack-runtime-config.mjs` | 已修：各端统一为“空值等于未设置”，`~` 展开、相对路径以当前目录为基准；删除 `attribution-analysis`。`npm run start` 收到未识别参数时报错退出 |
@@ -210,4 +209,4 @@
 3. **P2**：已处理（2026-11-15/16，分支 `chore/interface-followups-20261115`），各条结果写在 4.2–4.5 的“建议”列，术语表见第 3 节。版本未正式发布，所有改名都不保留旧名：
    - `config.yaml` 升到 4，`.plugin.yaml` 升到 3，子代理 YAML 为 1；旧版本报错时指出支持的版本。
    - 服务路由统一在 `/api/v1` 下，JSON 成功响应统一用信封。
-4. **仍待决策**：H2（Web 发布范围）、E1（`validate_deliverables`）。C3、C10 属于示例插件，不处理。
+4. **仍待决策**：H2（Web 发布范围）。C3、C10 属于示例插件，不处理。

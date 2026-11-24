@@ -90,9 +90,8 @@ Perceptor 保留 Hook 显式注入的字段（包括空值），不再加载默�
 主 Agent 可以修订已有 INSERT。写入工具对首次创建 INSERT 的拦截是流程引导，
 不是阻止 shell 写文件的权限隔离。
 
-SQL 安全检查默认关闭。DDL/DML 静态规范检查和模型质量建议仍保留。
-`validate_deliverables.valid` 表示静态检查结果；`quality_status=completed` 只表示模型检查已返回，
-不意味着没有警告或业务等价。没有执行 Hive SQL。
+SQL 安全检查默认关闭。当前 DDL/DML 交付检查使用 `check_and_repair_sql`，模型只用于有界修复。
+下方评测数据记录历史基线的交付检查结果，不代表当前工具返回结构；历史评测未执行 Hive SQL。
 
 ### 代码位置
 
@@ -126,7 +125,7 @@ Agent 为 `DeepSeek-V4.1-Flash`，Judge 为 `DeepSeek-V4-Flash-0731`，并发 3�
 | Agent 正常结束 | 31/33；第 2、13 题失败 |
 | DDL 与 INSERT 文件齐全 | 32/33；第 2 题两者均缺失 |
 | 最终文件静态复查 | 31 题通过；第 13 题有 1 条 DML 告警；第 2 题无产物 |
-| 实际调用交付检查 | 31 题、合计 56 次；这 31 题最终一次 valid=true 且 quality_status=completed |
+| 实际调用交付检查 | 31 题、合计 56 次；这 31 题最终一次旧版交付检查通过，模型检查已返回 |
 | 过程评分 | 32 PASS、1 UNKNOWN；均分 0.9697 |
 | SQL 语义 Judge | 21 PASS、10 PARTIAL、1 FAIL、1 UNKNOWN；均分 0.7879 |
 | Agent 正常结束且语义 PASS | 20/33 |

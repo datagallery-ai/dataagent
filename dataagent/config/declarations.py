@@ -166,6 +166,8 @@ class SubAgentSpec(StrictModel):
     system_prompt_file: str | None = Field(default=None, min_length=1)
     entrypoint: str | None = Field(default=None, min_length=1)
     tools: list[str] | None = None
+    model: str | None = None
+    temperature: float | None = Field(default=None, ge=0, le=2)
     # Omitted sources inherit the root's compiled Skills; [] explicitly opts out.
     skills: list[str] | None = None
     hooks: list[HookSpec] = Field(default_factory=list)
@@ -206,6 +208,8 @@ class SubAgentSpec(StrictModel):
                 or self.skills is not None
                 or self.hooks
                 or self.filesystem_tools is not None
+                or self.model is not None
+                or self.temperature is not None
             ):
                 raise ValueError(
                     f"Compiled SubAgent {self.name!r} does not take tools, skills, hooks or filesystem_tools; "
