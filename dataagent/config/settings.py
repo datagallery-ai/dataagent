@@ -178,13 +178,20 @@ class SemanticSettings(StrictModel):
     username: str | None = Field(default=None, min_length=1, repr=False)
     password: SecretStr | None = Field(default=None, min_length=1)
     timeout_seconds: float = Field(default=30, gt=0, allow_inf_nan=False)
+    semantic_scenario: str | None = Field(default=None, min_length=1)
     tls: SemanticTLSSettings = Field(default_factory=SemanticTLSSettings)
 
     @model_validator(mode="after")
     def paired_credentials(self):
-        """Require a complete optional Basic Auth pair and a nonblank endpoint."""
+        """Require credentials pairs, a nonblank endpoint and a sendable scenario."""
         if not self.base_url.strip():
             raise ValueError("semantic.base_url must not be blank")
+        if self.semantic_scenario is not None:
+            scenario = self.semantic_scenario.strip()
+            if not scenario:
+                raise ValueError("semantic.semantic_scenario must not be blank")
+            if not (scenario.isascii() and scenario.isprintable()):
+                raise ValueError("semantic.semantic_scenario must be printable ASCII")
         if (self.username is None) != (self.password is None):
             raise ValueError("semantic.username and password must both be configured")
         return self

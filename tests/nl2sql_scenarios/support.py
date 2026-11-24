@@ -49,6 +49,13 @@ def make_context(scenario, model, semantic_client, *, db_id="business_twin") -> 
     )
 
 
-def semantic_client(handler):
-    """A semantic client wired to an httpx.MockTransport handler (no network)."""
-    return SemanticServiceClient("http://semantic.internal", transport=httpx.MockTransport(handler))
+def semantic_client(handler, *, scenario=None):
+    """A semantic client wired to an httpx.MockTransport handler (no network).
+
+    ``scenario`` mirrors the root ``semantic.semantic_scenario`` setting: when
+    set, the client itself stamps X-Semantic-Scenario on its requests exactly
+    as a settings-built host client does.
+    """
+    return SemanticServiceClient(
+        "http://semantic.internal", transport=httpx.MockTransport(handler), scenario=scenario
+    )

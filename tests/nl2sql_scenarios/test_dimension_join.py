@@ -107,7 +107,7 @@ LOST_DIMENSION_SQL = (
 
 def _mappings(scenario: str) -> dict[str, dict[str, str]]:
     """Load one pack's packaged dimension mappings."""
-    return load_dimensions(PACK_ROOT / scenario / "dimensions.yaml", scenario)
+    return load_dimensions(PACK_ROOT / scenario / "dimensions.yaml")
 
 
 def _fact_state() -> dict:

@@ -74,11 +74,11 @@ def table_list_transport(
 
 async def select_table(model: ScriptedModel, tables: list[str], question: str) -> tuple[str, bool]:
     """Drive the selection pipeline: a selector wired like ``build_scenario`` over a mock catalog."""
-    with semantic_client(table_list_transport(tables)) as client:
+    with semantic_client(table_list_transport(tables), scenario=SEMANTIC_SCENARIO) as client:
         selector = BusinessTwinTableSelector(
             make_context("udn.business_twin", model, client),
             base=PACK_DIR,
-            semantic_client=client.with_scenario(SEMANTIC_SCENARIO),
+            semantic_client=client,
         )
         return await selector._select_table_by_business_family(question)
 

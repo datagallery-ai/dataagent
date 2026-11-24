@@ -54,13 +54,18 @@ logger = logging.getLogger(__name__)
 _PROMPT_DIR = Path(__file__).resolve().parent / "prompts"
 
 
-def load_dimensions(path: Path, scenario: str) -> dict[str, dict[str, str]]:
+def load_dimensions(path: Path) -> dict[str, dict[str, str]]:
     """Load and validate one pack's packaged fact-to-dimension mappings."""
     try:
         payload = read_yaml(Path(path))
         dimensions = payload["dimensions"]
         required = {"dimension_table", "key_column", "value_column"}
-        if payload.get("scenario") != scenario or not isinstance(dimensions, dict):
+        scenario = payload.get("scenario")
+        if (
+            not isinstance(scenario, str)
+            or not scenario.strip()
+            or not isinstance(dimensions, dict)
+        ):
             raise ValueError("scenario or dimensions is invalid")
         if any(
             not isinstance(item, dict) or not required.issubset(item)

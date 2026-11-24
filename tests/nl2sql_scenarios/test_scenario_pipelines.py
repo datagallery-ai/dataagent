@@ -136,7 +136,7 @@ async def test_pack_assembles_with_every_hook_point(scenario: str) -> None:
 async def test_business_twin_pinned_table_selection_skips_the_model() -> None:
     """A question naming a table selects it directly — zero LLM calls."""
     model = ScriptedModel(responses=[])
-    with semantic_client(bt_transport_handler) as client:
+    with semantic_client(bt_transport_handler, scenario="business_twin") as client:
         handlers = load_scenario(make_context("udn.business_twin", model, client))
         context = await handlers[PERCEPTOR_SCHEMA_CONTEXT](
             f"查一下 {BT_FACT} 中无锡市的小区上行PRB利用率"
@@ -162,7 +162,7 @@ async def test_business_twin_llm_selection_chain() -> None:
         '```json\n{"family_name": "fact_dw1745159007_0000000000008000", '
         '"granularity": "1h", "explicit_granularity": true}\n```',  # LLM 2: family + granularity
     )
-    with semantic_client(bt_transport_handler) as client:
+    with semantic_client(bt_transport_handler, scenario="business_twin") as client:
         handlers = load_scenario(make_context("udn.business_twin", model, client))
         context = await handlers[PERCEPTOR_SCHEMA_CONTEXT]("各地市的平均QoE")
 
@@ -180,7 +180,7 @@ async def test_traffic_insight_pipeline() -> None:
         '```json\n{"family_name": "dwd_app_traffic", "granularity": "1h", '
         '"explicit_granularity": true}\n```',  # LLM 2: family + granularity
     )
-    with semantic_client(ti_transport_handler) as client:
+    with semantic_client(ti_transport_handler, scenario="traffic_insight") as client:
         handlers = load_scenario(make_context("udn.traffic_insight", model, client, db_id="yunhe"))
         context = await handlers[PERCEPTOR_SCHEMA_CONTEXT]("各应用的上行流量，按小时统计")
 

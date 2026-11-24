@@ -7,6 +7,7 @@ from concurrent.futures import ThreadPoolExecutor
 import httpx
 import pytest
 
+from dataagent.config.settings import SemanticSettings
 from dataagent.diagnostics.errors import DataAgentError
 from dataagent.semantic_client import SemanticServiceClient, normalize_semantic_base_url
 
@@ -131,6 +132,38 @@ def test_scenario_must_be_a_string(scenario):
     """Non-string scenario values fail fast instead of corrupting a header."""
     with pytest.raises(ValueError, match="semantic scenario must be a string"):
         SemanticServiceClient("http://semantic.test/api", scenario=scenario)
+
+
+def test_constructed_scenario_stamps_requests_and_skips_health():
+    """A client built with scenario= (as from_settings does) stamps the header; health is exempt."""
+    requests = []
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json={"ok": True})
+
+    with SemanticServiceClient(
+        "http://semantic.test/api", transport=httpx.MockTransport(respond), scenario="business_twin"
+    ) as client:
+        assert client.scenario == "business_twin"
+        client.get("search/fulltext")
+        client.get("health")
+    assert [request.headers.get("X-Semantic-Scenario") for request in requests] == [
+        "business_twin",
+        None,
+    ]
+
+
+def test_from_settings_carries_the_configured_semantic_scenario():
+    """The root semantic.semantic_scenario setting rides the settings-built client."""
+    configured = SemanticSettings(
+        base_url="http://semantic.test", semantic_scenario="business_twin"
+    )
+    with SemanticServiceClient.from_settings(configured) as client:
+        assert client.scenario == "business_twin"
+    plain = SemanticSettings(base_url="http://semantic.test")
+    with SemanticServiceClient.from_settings(plain) as client:
+        assert client.scenario is None
 
 
 def test_scenario_view_borrows_the_pool_and_closing_it_is_a_noop():

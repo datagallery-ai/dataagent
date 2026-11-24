@@ -100,6 +100,7 @@ class SemanticServiceClient:
             auth=auth,
             timeout=settings.timeout_seconds,
             verify=build_ssl_context(settings.tls),
+            scenario=settings.semantic_scenario,
         )
 
     def with_scenario(self, scenario: str) -> SemanticServiceClient:
