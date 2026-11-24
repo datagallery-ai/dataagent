@@ -140,8 +140,10 @@ export function takeNextQueuedChatPrompt(queue: QueuedChatPrompt[]): {
 export function resolveQueuedSubmitMode(input: {
   agentIsRunning: boolean;
   liveRunStatus: LiveRunStatus;
+  hasPendingInteraction?: boolean;
 }): "queue" | "dispatch" {
   if (
+    input.hasPendingInteraction ||
     input.agentIsRunning ||
     input.liveRunStatus === "running" ||
     input.liveRunStatus === "suspended"

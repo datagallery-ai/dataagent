@@ -10,6 +10,7 @@ import { App } from './App.js';
 import { store } from '../state/store.js';
 import { getMessageTextContent } from '../state/message-history.js';
 import { SessionClient } from '../protocol/session-client.js';
+import { ConfigClient, type RunDefaults } from '../config/index.js';
 import type { AgentClient, RunAgentInput } from '../protocol/types.js';
 
 /** Success envelope used by every /api/v1 JSON route. */
@@ -18,7 +19,7 @@ const ok = (data: unknown) => Response.json({ success: true, data });
 const views: Array<ReturnType<typeof render>> = [];
 const tick = () => new Promise<void>((resolve) => setImmediate(resolve));
 
-function view(client: AgentClient, columns = 80, rows = 24, sessions?: SessionClient) {
+function view(client: AgentClient, columns = 80, rows = 24, sessions?: SessionClient, configClient?: ConfigClient) {
   store.setWorkspaceConfig({ llm: [], db: [], skill: [], kb: [], mcp: [] });
   store.startNewSession('ui-test');
   store.setConnectionStatus('connected');
@@ -31,7 +32,7 @@ function view(client: AgentClient, columns = 80, rows = 24, sessions?: SessionCl
   const stderr = Object.assign(new PassThrough(), { isTTY: true, columns, rows });
   const frames: string[] = [];
   stdout.on('data', (chunk) => frames.push(String(chunk)));
-  const result = render(<App client={client} datasourceId={undefined} tui={{
+  const result = render(<App client={client} configClient={configClient} datasourceId={undefined} tui={{
     model: 'GLM-5.2', home: '/tmp/tui-home',
     sessions: sessions ?? new SessionClient('http://127.0.0.1:8790', async () => { throw new Error('Unexpected session call'); }),
   }} />, {
@@ -973,6 +974,241 @@ it('queued prompts wait for an explicit HITL reply and resume afterwards', async
   assert.deepEqual(requests[1]?.answers, { approval: 'yes' });
   assert.equal(requests[2]?.answers, undefined);
   assert.equal(requests[2]?.messages[0]?.content, 'Queued task');
+});
+
+for (const failure of ['RUN_ERROR', 'disconnect', 'stop'] as const) {
+  it(`HITL answer recovery clears a consumed interrupt after ${failure}`, async () => {
+    const requests: RunAgentInput[] = [];
+    let release!: () => void;
+    const gate = new Promise<void>(resolve => { release = resolve; });
+    let refreshes = 0;
+    const sessions = new SessionClient('http://127.0.0.1:8790', async (url) => {
+      if (String(url).endsWith('/cancel')) return new Response(null, { status: 204 });
+      refreshes++;
+      return ok({ threadId: 'ui-test', title: 'Task', createdAt: '', updatedAt: '',
+        status: 'interrupted', hasCheckpoint: true, notice: null, messages: [], pendingInteractions: [] });
+    });
+    const current = view({
+      cancelRun() { release(); },
+      async *runAgent(input) {
+        requests.push(input);
+        yield { type: 'RUN_STARTED', threadId: input.threadId, runId: input.runId } as BaseEvent;
+        if (requests.length === 1) {
+          yield { type: 'CUSTOM', name: 'human_feedback', value: [{
+            type: 'human_feedback', interruptId: 'consumed', message: 'Approve?',
+          }] } as BaseEvent;
+          yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+        } else if (requests.length === 2) {
+          if (failure === 'stop') await gate;
+          if (failure === 'RUN_ERROR') {
+            yield { type: 'RUN_ERROR', runId: input.runId, code: 'MODEL_ERROR', message: 'Model failed' } as BaseEvent;
+          } else {
+            throw new Error(failure === 'stop' ? 'The run was cancelled' : 'Connection lost');
+          }
+        } else {
+          yield { type: 'RUN_FINISHED', runId: input.runId } as BaseEvent;
+        }
+      },
+    }, 80, 24, sessions);
+    await tick();
+    await submit(current, 'First task');
+    await until(() => store.getState().runStatus === 'suspended');
+    await submit(current, 'yes');
+    await until(() => requests.length === 2);
+    if (failure === 'stop') await submit(current, '/stop');
+    await until(() => refreshes === 1 && store.getState().runStatus !== 'running');
+    await submit(current, 'Continue the task');
+    await until(() => requests.length === 3 && store.getState().runStatus === 'completed');
+    assert.deepEqual(requests[1]?.answers, { consumed: 'yes' });
+    assert.equal(requests[2]?.answers, undefined);
+    assert.equal(requests[2]?.messages[0]?.content, 'Continue the task');
+    assert.equal(requests[2]?.threadId, 'ui-test');
+  });
+}
+
+for (const recovery of ['offline', 'still-running'] as const) {
+  it(`HITL answer recovery retries synchronization before sending when ${recovery}`, async () => {
+    const requests: RunAgentInput[] = [];
+    let refreshes = 0;
+    const sessions = new SessionClient('http://127.0.0.1:8790', async () => {
+      refreshes++;
+      if (refreshes === 1 && recovery === 'offline') throw new Error('Offline');
+      return ok({ threadId: 'ui-test', title: 'Task', createdAt: '', updatedAt: '',
+        status: refreshes === 1 ? 'running' : 'interrupted', hasCheckpoint: true,
+        notice: null, messages: [], pendingInteractions: [] });
+    });
+    const current = view({ async *runAgent(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        yield { type: 'CUSTOM', name: 'human_feedback', value: [{
+          type: 'human_feedback', interruptId: 'old', message: 'Approve?',
+        }] } as BaseEvent;
+        yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+      } else if (requests.length === 2) {
+        throw new Error('Disconnected');
+      } else {
+        yield { type: 'RUN_FINISHED', runId: input.runId } as BaseEvent;
+      }
+    } }, 80, 24, sessions);
+    await tick();
+    await submit(current, 'Task');
+    await until(() => store.getState().runStatus === 'suspended');
+    await submit(current, 'yes');
+    await until(() => current.frames.join('').includes(recovery === 'offline' ? 'Unable to refresh' : 'still stopping'));
+    assert.equal(requests.length, 2);
+    await submit(current, 'Continue');
+    await until(() => requests.length === 3 && store.getState().runStatus === 'completed');
+    assert.equal(refreshes, 2);
+    assert.equal(requests[2]?.answers, undefined);
+    assert.equal(requests[2]?.messages[0]?.content, 'Continue');
+  });
+}
+
+for (const interruptId of ['old', 'remaining']) {
+  it(`HITL answer recovery retains the authoritative pending interrupt ${interruptId}`, async () => {
+    const requests: RunAgentInput[] = [];
+    let refreshed = false;
+    const sessions = new SessionClient('http://127.0.0.1:8790', async () => {
+      refreshed = true;
+      return ok({ threadId: 'ui-test', title: 'Task', createdAt: '', updatedAt: '',
+        status: 'interrupted', hasCheckpoint: true, notice: null, messages: [],
+        pendingInteractions: [{ type: 'human_feedback', interruptId, message: 'Confirm again?' }] });
+    });
+    const current = view({ async *runAgent(input) {
+      requests.push(input);
+      if (requests.length === 1) {
+        yield { type: 'CUSTOM', name: 'human_feedback', value: [{
+          type: 'human_feedback', interruptId: 'old', message: 'Approve?',
+        }] } as BaseEvent;
+        yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+      } else if (requests.length === 2) {
+        yield { type: 'RUN_ERROR', runId: input.runId, code: 'FAILED', message: 'Failed' } as BaseEvent;
+      } else {
+        yield { type: 'CUSTOM', name: 'human_feedback', value: [] } as BaseEvent;
+        yield { type: 'RUN_FINISHED', runId: input.runId } as BaseEvent;
+      }
+    } }, 80, 24, sessions);
+    await tick();
+    await submit(current, 'Task');
+    await until(() => store.getState().runStatus === 'suspended');
+    await submit(current, 'yes');
+    await until(() => refreshed && transcript().includes('Confirm again?'));
+    await submit(current, 'retry');
+    await until(() => requests.length === 3 && store.getState().runStatus === 'completed');
+    assert.deepEqual(requests[2]?.answers, { [interruptId]: 'retry' });
+    assert.deepEqual(requests[2]?.messages, []);
+  });
+}
+
+it('HITL answer recovery blocks queued messages until pending interactions are synchronized', async () => {
+  const requests: RunAgentInput[] = [];
+  let failAnswer!: () => void;
+  const answerGate = new Promise<void>(resolve => { failAnswer = resolve; });
+  let finishRefresh!: () => void;
+  const refreshGate = new Promise<void>(resolve => { finishRefresh = resolve; });
+  let refreshing = false;
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () => {
+    refreshing = true;
+    await refreshGate;
+    return ok({ threadId: 'ui-test', title: 'Task', createdAt: '', updatedAt: '',
+      status: 'error', hasCheckpoint: true, notice: null, messages: [], pendingInteractions: [] });
+  });
+  const current = view({ async *runAgent(input) {
+    requests.push(input);
+    if (requests.length === 1) {
+      yield { type: 'CUSTOM', name: 'human_feedback', value: [{
+        type: 'human_feedback', interruptId: 'old', message: 'Approve?',
+      }] } as BaseEvent;
+      yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+    } else if (requests.length === 2) {
+      await answerGate;
+      yield { type: 'RUN_ERROR', runId: input.runId, code: 'FAILED', message: 'Failed' } as BaseEvent;
+    } else {
+      yield { type: 'RUN_FINISHED', runId: input.runId } as BaseEvent;
+    }
+  } }, 80, 24, sessions);
+  await tick();
+  await submit(current, 'Task');
+  await until(() => store.getState().runStatus === 'suspended');
+  await submit(current, 'yes');
+  await until(() => requests.length === 2 && store.getState().runStatus === 'running');
+  await submit(current, 'Queued task');
+  failAnswer();
+  await until(() => refreshing && store.getState().runStatus === 'failed');
+  await tick(); await tick();
+  assert.equal(requests.length, 2);
+  finishRefresh();
+  await until(() => requests.length === 3 && store.getState().runStatus === 'completed');
+  assert.equal(requests[2]?.answers, undefined);
+  assert.equal(requests[2]?.messages[0]?.content, 'Queued task');
+});
+
+it('HITL manual recovery holds queued prompts while preparing the manual run', async () => {
+  const requests: RunAgentInput[] = [];
+  let failAnswer!: () => void;
+  const answerGate = new Promise<void>(resolve => { failAnswer = resolve; });
+  let finishDefaults!: () => void;
+  const defaultsGate = new Promise<void>(resolve => { finishDefaults = resolve; });
+  let finishManual!: () => void;
+  const manualGate = new Promise<void>(resolve => { finishManual = resolve; });
+  let preparingManual = false;
+  let defaultsRequested = false;
+  class DefaultsClient extends ConfigClient {
+    override async listSkills() { return []; }
+    override async getRunDefaults(): Promise<RunDefaults> {
+      if (!preparingManual) throw new Error('No defaults available');
+      defaultsRequested = true;
+      await defaultsGate;
+      return { enabledDatasourceIds: [], enabledKnowledgeIds: [], enabledMcpServerIds: [] };
+    }
+  }
+  let refreshes = 0;
+  const sessions = new SessionClient('http://127.0.0.1:8790', async () => {
+    if (++refreshes === 1) throw new Error('Offline');
+    preparingManual = true;
+    return ok({ threadId: 'ui-test', title: 'Task', createdAt: '', updatedAt: '',
+      status: 'error', hasCheckpoint: true, notice: null, messages: [], pendingInteractions: [] });
+  });
+  const current = view({ async *runAgent(input) {
+    requests.push(input);
+    if (requests.length === 1) {
+      yield { type: 'CUSTOM', name: 'human_feedback', value: [{
+        type: 'human_feedback', interruptId: 'old', message: 'Approve?',
+      }] } as BaseEvent;
+      yield { type: 'RUN_FINISHED', runId: input.runId, metadata: { status: 'waiting_for_input' } } as BaseEvent;
+    } else if (requests.length === 2) {
+      await answerGate;
+      throw new Error('Disconnected');
+    } else {
+      if (requests.length === 3) await manualGate;
+      yield { type: 'RUN_FINISHED', runId: input.runId } as BaseEvent;
+    }
+  } }, 80, 24, sessions, new DefaultsClient({ baseUrl: 'http://127.0.0.1:8790' }));
+  await tick();
+  await submit(current, 'Task');
+  await until(() => store.getState().runStatus === 'suspended');
+  await until(() => current.frames.join('').includes('请回答上方问题'));
+  await new Promise(resolve => setTimeout(resolve, 30));
+  await submit(current, 'yes');
+  await until(() => requests.length === 2 && store.getState().runStatus === 'running');
+  await submit(current, 'Queued task');
+  failAnswer();
+  await until(() => current.frames.join('').includes('Unable to refresh'));
+  await submit(current, 'Manual continuation');
+  await until(() => defaultsRequested);
+  // Allow React renders/effects to flush while datasource preparation is pending.
+  await tick(); await tick();
+  assert.equal(requests.length, 2);
+  assert.doesNotMatch(transcript(), /Queued task/);
+  finishDefaults();
+  await until(() => requests.length === 3);
+  assert.equal(requests[2]?.messages[0]?.content, 'Manual continuation');
+  assert.equal(requests[2]?.answers, undefined);
+  await tick();
+  assert.equal(requests.length, 3);
+  finishManual();
+  await until(() => requests.length === 4 && store.getState().runStatus === 'completed');
+  assert.equal(requests[3]?.messages[0]?.content, 'Queued task');
 });
 
 it('/resume restores HITL and renders all new snapshot replies exactly once', async () => {

@@ -171,6 +171,10 @@
   },
   "chatInput": {
     "placeholder": "Ask a data question…",
+    "feedbackTitle": "Waiting for your answer",
+    "feedbackRemaining": "{{count}} more questions",
+    "feedbackPlaceholder": "Type an answer or choose an option above…",
+    "feedbackSend": "Submit answer",
     "add": "Add",
     "addMenu": "Add content",
     "uploadFile": "Upload file",

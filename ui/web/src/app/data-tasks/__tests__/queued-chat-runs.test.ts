@@ -167,6 +167,19 @@ describe("queued chat runs", () => {
     ).toBe("dispatch");
   });
 
+  it("keeps messages queued while native HITL is pending even if the run looks completed", () => {
+    expect(resolveQueuedSubmitMode({
+      agentIsRunning: false,
+      liveRunStatus: "completed",
+      hasPendingInteraction: true,
+    })).toBe("queue");
+    expect(resolveQueuedSubmitMode({
+      agentIsRunning: false,
+      liveRunStatus: "completed",
+      hasPendingInteraction: false,
+    })).toBe("dispatch");
+  });
+
   it("shows the stop control only while a run is active and the draft is empty", () => {
     expect(
       shouldShowRunningStopControl({

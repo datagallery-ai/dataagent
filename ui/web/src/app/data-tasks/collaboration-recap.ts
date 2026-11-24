@@ -68,8 +68,13 @@ export function findPendingCollaborationToolCall(
 export function reconcileSuspendedLiveRunState(
   liveRun: LiveRun,
   responses: CollaborationResponseRecord[],
+  hasPendingInteraction = false,
 ): LiveRun {
   if (liveRun.runStatus !== "suspended") {
+    return liveRun;
+  }
+  // Native HITL may pause in middleware without a collaboration tool call.
+  if (hasPendingInteraction) {
     return liveRun;
   }
   // HITL suspend can arrive before TOOL_CALL_* events land in LiveRun.
