@@ -305,6 +305,37 @@ def feedback_content(message):
 def collect_feedback(context, state):
     session = current(context)
     changed = False
+    known = {item.get("tool_call_id") for item in session["feedback"]}
+    for feedback in state.get("completion_guards", {}).values():
+        if feedback.get("query") != session["query"] or not feedback.get("reply_id"):
+            continue
+        if feedback["reply_id"] not in known:
+            session["feedback"].append(
+                {
+                    "content": feedback["answer"],
+                    "query_index": len(session["snapshot"]["queries"]),
+                    "turn_id": session["turn_id"],
+                    "tool_call_id": feedback["reply_id"],
+                }
+            )
+            known.add(feedback["reply_id"])
+            changed = True
+    clarification = state.get("ir_clarification", {})
+    if clarification.get("task_id") == session["snapshot"].get("task_id"):
+        known = {item.get("tool_call_id") for item in session["feedback"]}
+        for answer in clarification.get("answers", []):
+            if answer["id"] in known:
+                continue
+            session["feedback"].append(
+                {
+                    "content": answer["content"],
+                    "query_index": answer["query_index"],
+                    "turn_id": session["turn_id"],
+                    "tool_call_id": answer["id"],
+                }
+            )
+            known.add(answer["id"])
+            changed = True
     for message in state.get("messages", []):
         text = feedback_content(message)
         if text and message.tool_call_id not in session["old_feedback_ids"]:

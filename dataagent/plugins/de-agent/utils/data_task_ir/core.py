@@ -511,6 +511,20 @@ async def ensure_ir_ready(context: AgentContext, state: dict) -> dict | None:
     cache = ir_state(context)
     if not ir_enabled(context):
         return
+    clarification = (state or {}).get("ir_clarification", {})
+    if not cache.get("turn") and clarification.get("task_id"):
+        ir_session.prepare_turn(
+            context,
+            {
+                **(state or {}),
+                "user_query": clarification.get("query") or (state or {}).get("user_query"),
+            },
+        )
+        restored = ir_session.current(context)
+        if restored and clarification.get("task_id") == (restored.get("snapshot") or {}).get(
+            "task_id"
+        ):
+            restored["decision"] = {"relation": "continue", "reason": "恢复 IR 澄清交互"}
     await ir_session.ensure_task_bound(context, state)
     if cache.get("ir_turn_suppressed"):
         return deepcopy(cache.get("ir_fallback"))
@@ -736,6 +750,8 @@ def get_ir_context(context: AgentContext) -> str:
     rendered = cache.get("ir_rendered_context")
     if not rendered or rendered == "IR init!":
         rendered = render_constraint_context(fields)
+    if cache.get("ir_hitl_best_effort"):
+        rendered += "\n【IR 澄清降级】仅消费已确认口径；未决项写入交付说明，不得补造假设。"
     return rendered
 
 

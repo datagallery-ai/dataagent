@@ -81,3 +81,35 @@ hooks:
   - entrypoint: hooks/ir.py:prepare_turn
   before_model:
   - entrypoint: hooks/ir.py:prepare_context
+hitl:
+  enabled: true
+  instructions: prompts/hitl.md
+  policies:
+  - id: text_question_guard
+    version: '1'
+    at: after_model
+    handler: hitl/completion_guards.py:TextQuestionGuard
+    params:
+      text_question_max_fires: 2
+  - id: ir_question_guard
+    version: '1'
+    at: after_model
+    handler: hitl/ir_question_guard.py:IRQuestionGuard
+    params:
+      budget: 8
+      hitl_question_guard_max_fires: 2
+      hitl_max_same_fingerprint_asks: 2
+      hitl_max_same_field_asks: 2
+      hitl_blocking_fields:
+      - identity
+      - sources
+      - time_context
+      - output_features
+      consumerTools:
+      - de-agent__check_and_repair_sql
+  - id: human_feedback_guard
+    version: '1'
+    at: after_model
+    handler: hitl/completion_guards.py:HumanFeedbackGuard
+    params:
+      conditions: []

@@ -41,6 +41,7 @@ DataAgent 主包提供本地数据 Agent 运行时。Python 发行包名是 `dat
 | [工具](extensions/tools.md) | Python 工具、模型和运行上下文 |
 | [Skill](extensions/skills.md) | 编写、发现和作用域 |
 | [Hook](extensions/hooks.md) | 生命周期、顺序和错误 |
+| [HITL](extensions/hitl.md) | 可继承 handler、六个插入阶段与人工反馈恢复 |
 | [子代理](extensions/subagents.md) | 声明、继承和执行限制 |
 | [MCP](extensions/mcp.md) | 接入外部 MCP 服务 |
 | [语义服务](extensions/semantic-service.md) | 客户端、认证和 TLS |

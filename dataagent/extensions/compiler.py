@@ -8,6 +8,7 @@ from langchain_core.language_models import BaseChatModel
 from langchain_core.tools import BaseTool
 
 from dataagent.config.declarations import HookSpec, PluginSpec, SubAgentSpec
+from dataagent.extensions.hitl import HITLMiddleware
 from dataagent.extensions.hooks import compile_hooks
 from dataagent.extensions.loading import PythonLoader, contained_path
 from dataagent.extensions.skills import collect_loose_skills, compile_skill_sources
@@ -57,6 +58,8 @@ def compile_extensions(
     plugin_ids: set[str] = set()
     child_only_tools: set[str] = set()
     prompts = []
+    hitl_policies = []
+    hitl_enabled = False
     for root, spec in selected_plugins:
         if spec.id in plugin_ids:
             raise ValueError(f"Duplicate plugin ID: {spec.id}")
@@ -73,12 +76,33 @@ def compile_extensions(
             f"{spec.id}__{name}" for name, entry in spec.tools.items() if entry.scope == "subagents"
         )
         all_hook_entries.extend((root, entry) for entry in spec.hooks)
+        if spec.hitl.enabled and ("hitl" in spec.model_fields_set):
+            hitl_enabled = True
+            if spec.hitl.instructions:
+                instructions = contained_path(root, spec.hitl.instructions).read_text(
+                    encoding="utf-8"
+                )
+                if not instructions.strip():
+                    raise ValueError(f"Plugin {spec.id}: HITL instructions must not be blank")
+                prompts.append(instructions)
+            hitl_policies.extend(
+                HITLMiddleware.from_config(
+                    spec.hitl,
+                    root=root,
+                    namespace=spec.id,
+                    loader=loader,
+                ).policies.values()
+            )
         collect_subagents(root, spec, child_specs, agent_names)
     compiled_skill_sources.extend(collect_loose_skills(skill_sources, skill_names))
     compiled_skill_sources = list(dict.fromkeys(compiled_skill_sources))
     all_hook_entries.extend(hook_entries)
 
     compiled_hooks = compile_hooks(all_hook_entries, loader, agent_name=ROOT_AGENT_NAME)
+    if hitl_enabled:
+        if "request_human_feedback" in tool_registry:
+            raise ValueError("request_human_feedback is reserved for HITL")
+        compiled_hooks.append(HITLMiddleware(hitl_policies, model_feedback=True))
     with_workflow = {plugin_id for _, plugin_id, child in child_specs if child.kind == "compiled"}
     for plugin_id in sorted(set(run_hook_entries or {}) & plugin_ids - with_workflow):
         raise ValueError(

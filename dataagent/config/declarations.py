@@ -233,6 +233,51 @@ class RunHookSpec(ExtensionConfig):
     entrypoint: str = Field(min_length=1)
 
 
+HITLStage = Literal[
+    "before_agent",
+    "after_agent",
+    "before_model",
+    "after_model",
+    "before_tool",
+    "after_tool",
+]
+
+
+class HITLPolicySpec(StrictModel):
+    id: str = Field(pattern=f"^{NAME_PATTERN}$")
+    version: str = Field(default="1", min_length=1)
+    at: HITLStage = "before_tool"
+    matcher: str | None = Field(default=None, min_length=1)
+    handler: str | None = Field(default=None, min_length=1)
+    params: dict[str, JsonValue] = Field(default_factory=dict)
+
+    @field_validator("matcher")
+    @classmethod
+    def nonblank_matcher(cls, value):
+        if value is not None and not value.strip():
+            raise ValueError("HITL matcher must not be blank")
+        return value
+
+    @model_validator(mode="after")
+    def tool_matcher_only(self):
+        if self.matcher is not None and self.at not in {"before_tool", "after_tool"}:
+            raise ValueError("HITL matcher is only supported for before_tool/after_tool")
+        return self
+
+
+class HITLConfig(StrictModel):
+    enabled: bool = Field(default=True, strict=True)
+    instructions: str | None = Field(default=None, min_length=1)
+    policies: list[HITLPolicySpec] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def unique_policy_ids(self):
+        ids = [policy.id for policy in self.policies]
+        if len(set(ids)) != len(ids):
+            raise ValueError("HITL policy IDs must be unique within one source")
+        return self
+
+
 class PluginSpec(StrictModel):
     schema_version: Literal[3] = 3
     id: str = Field(pattern=f"^{NAME_PATTERN}$")
@@ -244,6 +289,7 @@ class PluginSpec(StrictModel):
     skills: list[str] = Field(default_factory=list)
     subagents: list[str] = Field(default_factory=list)
     hooks: list[HookSpec] = Field(default_factory=list)
+    hitl: HITLConfig = Field(default_factory=HITLConfig)
 
     @model_validator(mode="before")
     @classmethod
