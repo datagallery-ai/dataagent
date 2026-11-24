@@ -12,7 +12,7 @@
 # ============================================================================
 """Planner post-hook that rescues final text questions from terminating the actor loop.
 
-背景（Q34-Q71 run，2026-09-17）：agent 在最终回复文本里向用户提问
+背景:agent 在最终回复文本里向用户提问
 （"请问您确认使用方案 A 吗？"）而不调用 request_human_feedback 工具——
 planner 对无工具调用的消息置 complete=True，actor loop 随即结束，问题无人
 回答、SQL 未写，直接产出到 NO_SQL（~12/38 题）。本 hook 在完成前检测

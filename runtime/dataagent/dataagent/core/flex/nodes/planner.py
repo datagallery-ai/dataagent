@@ -33,6 +33,9 @@ from dataagent.utils.env_utils import get_env_bool
 from dataagent.utils.formatting_utils import format_tool_calls_for_display
 from dataagent.utils.messages_utils import parse_actions_to_ai_message, record_message
 
+# v3.4 方案3：LLM 调用连续失败上限——网关瞬时故障（500 等）先重试，达上限才终止任务。
+MAX_CONSECUTIVE_LLM_ERRORS = 3
+
 
 class Planner(BaseNode):
     """
@@ -221,7 +224,7 @@ class Planner(BaseNode):
             import traceback
 
             logger.error(f"Error traceback: {traceback.format_exc()}")
-            return self._build_error_result(writer, e, terminal_mode=terminal_mode)
+            return self._build_error_result(writer, e, terminal_mode=terminal_mode, state=state)
         finally:
             _in_react_llm_call.reset(react_token)
 
@@ -414,7 +417,14 @@ class Planner(BaseNode):
             "curr_iter": curr_iter,
         }
 
-    def _build_error_result(self, writer, error: Exception, *, terminal_mode: bool = False) -> dict[str, Any]:
+    def _build_error_result(
+        self,
+        writer,
+        error: Exception,
+        *,
+        terminal_mode: bool = False,
+        state: FlexState | None = None,
+    ) -> dict[str, Any]:
         if isinstance(error, LLMCallError):
             logger.error("❌ 推理执行错误: {}", error)
         else:
@@ -431,6 +441,24 @@ class Planner(BaseNode):
                 }
             )
         writer({"type": "break"})
+        # LLM 网关瞬时故障不终止任务——complete=False 让 actor loop
+        # 重回 planner 原地重试；连续失败达上限才放弃（防瞬时故障演变成无限循环）。
+        if isinstance(error, LLMCallError) and state is not None:
+            consecutive = _count_trailing_error_messages(state.get("messages", []))
+            if consecutive < MAX_CONSECUTIVE_LLM_ERRORS - 1:
+                logger.warning(
+                    f"[{self.name}] LLM 调用失败（连续第 {consecutive + 1} 次），"
+                    f"未达 {MAX_CONSECUTIVE_LLM_ERRORS} 次上限，注入重试提示继续任务"
+                )
+                retry_message = AIMessage(
+                    content=(
+                        f"[SYSTEM] 上一轮模型调用失败（{error_msg}），多为网关瞬时故障。"
+                        "请基于当前任务进度继续原定下一步，不要因该错误终止任务。"
+                    ),
+                    additional_kwargs={"error": True},
+                )
+                curr_iter = int(state.get("curr_iter", 0) or 0) + 1
+                return {"messages": retry_message, "complete": False, "curr_iter": curr_iter}
         error_ai_message = AIMessage(content=error_msg, additional_kwargs={"error": True})
         return {"messages": error_ai_message, "complete": True, "error": error_msg}
 
@@ -440,6 +468,22 @@ class Planner(BaseNode):
             return False
 
         return any(tool_call.get("name") == "request_human_feedback" for tool_call in ai_message.tool_calls)
+
+
+def _count_trailing_error_messages(messages: Any) -> int:
+    """统计消息列表尾部连续的 error AIMessage 个数（v3.4 方案3：LLM 连续失败计数）。
+
+    从尾部向前数 additional_kwargs 带 error 标记的 AIMessage，
+    遇到非 error 消息即停——成功的 planner 调用会把计数自然归零。
+    """
+    count = 0
+    for msg in reversed(list(messages or [])):
+        akw = getattr(msg, "additional_kwargs", None)
+        if isinstance(akw, dict) and akw.get("error"):
+            count += 1
+            continue
+        break
+    return count
 
 
 def _dump_context_prompt_if_enabled(messages_to_process: Any, state: FlexState, runtime: Any = None) -> None:

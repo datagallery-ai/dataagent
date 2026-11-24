@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""de_agent suite hitl_auto_resolver hook 的场景单元测试（v3.3-v3.6 行为基线）。
+"""de_agent suite hitl_auto_resolver hook 的场景单元测试（历史行为基线）。
 
 通用 HITL 基座（调用检测/载荷提取/消息注入/门控）的测试在
 ``tests/ut/flex/hooks/test_hitl_common.py``；分类机制框架测试在
@@ -322,7 +322,7 @@ class TestHitlAutoResolver:
         assert result["messages"][-1].content == "这是自动回复内容"
 
     def test_llm_failure_falls_back_without_exception(self, task_index_file):
-        """MR453 复核 P0-1 回归：LLM 生成失败走兜底回复，不再 (None, None) 解包炸 TypeError。"""
+        """回归：LLM 生成失败走兜底回复，不再 (None, None) 解包炸 TypeError。"""
         state = _make_state(
             messages=[
                 HumanMessage(content="<user_query>查询用户订单数</user_query>"),
@@ -363,13 +363,13 @@ class TestHitlAutoResolver:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P0-P4 行为测试（v3.3：提取拼接 / 分类修正 / 时间窗口具体化）
+# 行为测试（提取拼接 / 分类修正 / 时间窗口具体化）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestClassifyHitlAction:
     def test_mixed_question_without_tables_reroutes_to_ambiguity(self):
-        """P2：命中 TABLE_CONFIRM 关键词但无候选表名 + 标识关键词 → AMBIGUITY_CLARIFY。"""
+        """命中 TABLE_CONFIRM 关键词但无候选表名 + 标识关键词 → AMBIGUITY_CLARIFY。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
 
         assert classify_hitl_action("源表已定，确认用户标识用 device_id 还是 user_id？") == "AMBIGUITY_CLARIFY"
@@ -480,31 +480,55 @@ class TestAnswerTableConfirmProgrammatic:
         return _answer_table_confirm_programmatic(golden_sql, hil_question, "开发序列特征")
 
     def test_partial_confirm_directs_proceed(self):
-        """P4：部分确认回复含"不用再问/直接推进"指令。"""
+        """部分确认回复含"不用再问/直接推进"指令；补充候选限定已检索池。"""
         golden = "SELECT a.id FROM db.dwd_a_dm t1 JOIN db.dwd_b_dm t2 ON t1.id=t2.id"
         reply = self._run(golden, "源表确认：使用 db.dwd_a_dm，是否可以？")
         assert "不用再就这些表来问我" in reply
         assert "推进" in reply
+        # 补充数据源候选从已检索池整理，不再引导重新检索
+        assert "已检索到的候选" in reply
+        assert "不必为此重新检索" in reply
         # 不泄漏 agent 未提到的 golden 表
         assert "dwd_b_dm" not in reply
 
-    def test_wrong_table_rejection_advises_new_keywords(self):
-        """P5 配套：拒绝错表时要求换业务词重新检索，不要重复候选。"""
+    def test_mixed_confirm_rejection_directs_proceed_no_research(self):
+        """混合提案（部分正确）确认正确表后不再要求换词重检索，改推进优先。
+
+        实测死循环：agent 手握已确认表仍被"换业务词重新检索"指令
+        推回检索，4 轮拒绝-重检索后迭代耗尽零交付。
+        """
         golden = "SELECT a.id FROM db.dwd_a_dm t1 JOIN db.dwd_b_dm t2 ON t1.id=t2.id"
         reply = self._run(golden, "源表候选：db.dwd_a_dm 和 db.ads_wrong_dm")
+        assert "符合我的需求" in reply
+        assert "就此定下来" in reply
+        assert "不是我想要的数据来源" in reply
+        # 确认存在时不得再出现换词重检索指令
+        assert "换用需求里的业务词重新检索" not in reply
+        assert "重新检索" not in reply
+        # 推进优先 + 替代候选限定在已检索池
+        assert "直接基于已确认的表推进" in reply
+        assert "已检索到的候选" in reply
+        # 不泄漏 agent 未提到的 golden 表
+        assert "dwd_b_dm" not in reply
+
+    def test_all_wrong_rejection_still_advises_new_keywords(self):
+        """边界锁定：全错提案（无任何确认表）保留换词重检索指令。"""
+        golden = "SELECT a.id FROM db.dwd_a_dm t1 JOIN db.dwd_b_dm t2 ON t1.id=t2.id"
+        reply = self._run(golden, "源表候选：db.ads_wrong1_dm 和 db.ads_wrong2_dm")
         assert "不是我想要的数据来源" in reply
         assert "换用需求里的业务词重新检索" in reply
+        assert "dwd_a_dm" not in reply
         assert "dwd_b_dm" not in reply
 
     def test_bare_agent_table_not_judged_wrong(self):
-        """MR453 复核 P1(a)：agent 裸提（省 db 前缀）正确源表不再被判成错表。"""
+        """MR453 复核 (a)：agent 裸提（省 db 前缀）正确源表不再被判成错表。"""
         golden = "SELECT a FROM dwd.dwd_a JOIN dim.dim_b ON 1=1"
         reply = self._run(golden, "源表确认：使用 dwd_a，是否可以？")
         assert "符合我的需求" in reply
         assert "不是我想要的数据来源" not in reply
 
     def test_unprefixed_golden_sql_activates_programmatic(self):
-        """MR453 复核 P1(c)：golden SQL 无 db 前缀时程序化判定仍生效（此前退回 LLM）。"""
+        """MR453 复核 (c)：golden SQL 无 db 前缀时程序化判定仍生效（此前退回 LLM）。"""
         golden = "select a from dwd_user_event join dim_b on 1=1"
         reply = self._run(golden, "源表确认：使用 dwd_user_event，是否可以？")
         assert reply is not None
@@ -512,21 +536,21 @@ class TestAnswerTableConfirmProgrammatic:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v42 L1 近变体口径判别：被拒表与 golden 表 token 差集 → 客户口吻口径词提示
-# 靶例：q51 billing/event 互选、q57 oCPD/oCPC、q64 30d/1y+ubr 窗口口径
+# L1 近变体口径判别：被拒表与 golden 表 token 差集 → 客户口吻口径词提示
+# 靶例：billing/event 互选、oCPD/oCPC、30d/1y+ubr 窗口口径
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestNearVariantCaliberHint:
-    def _hint(self, golden: list[str], rejected: list[str]) -> str:
+    def _hint(self, golden: list[str], rejected: list[str], **kwargs) -> str:
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
             _near_variant_caliber_hint,
         )
 
-        return _near_variant_caliber_hint(golden, rejected)
+        return _near_variant_caliber_hint(golden, rejected, **kwargs)
 
     def test_q51_billing_event_variant(self):
-        """q51 型：billing/event 同族近变体 → 要"事件流水"不要"计费流水"。"""
+        """billing/event 同族近变体 → 要"事件流水"不要"计费流水"。"""
         hint = self._hint(
             ["biods.ods_hispace_hiad_event_log_hm"],
             ["biods.ods_hispace_hiad_billing_log_hm"],
@@ -536,7 +560,7 @@ class TestNearVariantCaliberHint:
         assert hint.startswith("另外把数据口径")
 
     def test_q57_ocpc_ocpd_variant(self):
-        """q57 型：oCPD/oCPC 近变体 → 口径词直接说破。"""
+        """oCPD/oCPC 近变体 → 口径词直接说破。"""
         hint = self._hint(
             ["biads.ads_agalg_ocpc_single_frame_calibration_pcvr_siteid_appid_expid_multi_gran_original_period_hm"],
             ["biads.ads_agalg_ocpd_calibration_pcvr_siteid_appid_expid_original_period_new_hm"],
@@ -545,7 +569,7 @@ class TestNearVariantCaliberHint:
         assert "oCPD" in hint
 
     def test_q64_window_and_ubr_variant(self):
-        """q64 型：30d/1y 窗口 + all/ubr 口径差集 → 窗口与 UBR 口径提示。"""
+        """30d/1y 窗口 + all/ubr 口径差集 → 窗口与 UBR 口径提示。"""
         hint = self._hint(
             ["biads.ads_agrec_adv_common_user_ubr_uninstallapp_list_1y_dm"],
             ["biads.ads_agrec_adv_common_user_uninstallapp_list_30d_all_dm"],
@@ -561,6 +585,24 @@ class TestNearVariantCaliberHint:
             ["biods.ods_user_profile_basic_info"],
         )
         assert hint == ""
+
+    def test_confirmed_exist_tail_checks_pool_not_retrieval(self):
+        """确认表存在时尾句指向核对已检索候选，不再指向检索新候选。"""
+        hint = self._hint(
+            ["biods.ods_hispace_hiad_event_log_hm"],
+            ["biods.ods_hispace_hiad_billing_log_hm"],
+            confirmed_exist=True,
+        )
+        assert "核对你已检索到的候选数据源" in hint
+        assert "检索候选数据源" not in hint.replace("核对你已检索到的候选数据源", "")
+
+    def test_confirmed_exist_false_keeps_retrieval_tail(self):
+        """边界：无确认表（全错）时尾句保留检索指引。"""
+        hint = self._hint(
+            ["biods.ods_hispace_hiad_event_log_hm"],
+            ["biods.ods_hispace_hiad_billing_log_hm"],
+        )
+        assert "核对、检索候选数据源" in hint
 
     def test_near_variant_without_mapped_tokens_no_hint(self):
         """近变体但差集 token 无概念映射 → 空串回落现行为。"""
@@ -612,7 +654,7 @@ class TestNearVariantCaliberHint:
 
 class TestCustomerRestateQueryV42:
     def test_long_query_keeps_tail_conditions(self):
-        """v41 q51 共因：复述放宽到 300 字，尾部筛选条件不再被 80 字截丢。"""
+        """共因：复述放宽到 300 字，尾部筛选条件不再被 80 字截丢。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
             _customer_restate_query,
         )
@@ -624,15 +666,38 @@ class TestCustomerRestateQueryV42:
         assert tail_marker in restate
         assert restate.endswith("…") is False or len(query) > 300
 
+    def test_harness_boilerplate_stripped_from_restate(self):
+        """evo-eval harness 在任务文本后拼接"资源目录：…评测产物…"协议段
+        （agent_adapter_base._query_text），复述素材截到该标记为止——协议
+        boilerplate 不进客户口吻答复（用户指令，历史实证）。"""
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
+            _customer_restate_query,
+        )
+
+        query = (
+            "开发卸载应用清单序列特征，输出用户维度清单。"
+            "资源目录：/home/zhanghao/.evo_eval/agent/20261111_2058_0de4/33 "
+            "这个也是你的工作区，所有改动必须在这个目录内。 "
+            "请提交以下评测产物，并严格使用指定的产物名称与格式： "
+            "1. sql: sql（必须，允许多份）；SQL 交付文件，允许多份。"
+        )
+        restate = _customer_restate_query(query)
+        assert "开发卸载应用清单序列特征" in restate
+        assert "资源目录" not in restate
+        assert "评测产物" not in restate
+        assert "工作区" not in restate
+        # 干净短需求不截断、不误伤
+        assert _customer_restate_query("开发事件序列特征") == "开发事件序列特征"
+
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v3.4 方案1：混合提问分类修复（已确认引用 → AMBIGUITY_CLARIFY）
+# 混合提问分类修复（已确认引用 → AMBIGUITY_CLARIFY）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestClassifyConfirmedReferenceReroute:
     def test_q52_mid_question_with_confirmed_table_reroutes(self):
-        """回归（q52）：引用已确认源表的 Mid 追问（标识+时间）不再被判成选表问题。"""
+        """回归：引用已确认源表的 Mid 追问（标识+时间）不再被判成选表问题。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
 
         q = (
@@ -642,7 +707,7 @@ class TestClassifyConfirmedReferenceReroute:
         assert classify_hitl_action(q) == "AMBIGUITY_CLARIFY"
 
     def test_q62_time_question_with_confirmed_table_reroutes(self):
-        """回归（q62）：时间口径追问引用已定数据源 → AMBIGUITY_CLARIFY。"""
+        """回归：时间口径追问引用已定数据源 → AMBIGUITY_CLARIFY。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
 
         q = "时间窗口口径需确认：近7天是否含当天？数据源已定 agapdw.dwd_y_dm。"
@@ -671,8 +736,8 @@ class TestClassifyConfirmedReferenceReroute:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v3.5 复盘：口径决策提问误路由修复（TABLE_CONFIRM → AMBIGUITY_CLARIFY）
-# v3.5 实测 10 条提问（q07/q20/q39/q42/q44/q61×2/q66/q67/q71）为"时间窗口/口径"
+# 复盘：口径决策提问误路由修复（TABLE_CONFIRM → AMBIGUITY_CLARIFY）
+# 实测 10 条提问为"时间窗口/口径"
 # 决策类提问但提到表名，被 TABLE_CONFIRM 模板答非所问，agent 拿不到口径答复后独自定错口径。
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -684,7 +749,7 @@ class TestCaliberQuestionReroute:
         return classify_hitl_action(q)
 
     def test_q61_combined_caliber_question_reroutes(self):
-        """回归（q61 Q3）：标识+时间窗口口径合并提问，表名仅作上下文 → AMBIGUITY_CLARIFY。"""
+        """回归：标识+时间窗口口径合并提问，表名仅作上下文 → AMBIGUITY_CLARIFY。"""
         q = (
             "Mid阶段需要确认两个口径：1）用户标识字段——该任务为内容级特征，判断不需要用户标识字段，"
             "需用户确认；2）时间窗口口径——源表是每日快照，需确认取哪天的数据。"
@@ -695,7 +760,7 @@ class TestCaliberQuestionReroute:
         assert self._classify(q) == "AMBIGUITY_CLARIFY"
 
     def test_q61_final_caliber_choice_reroutes(self):
-        """回归（q61 Q4）：预算内最后一次"请选择取数口径 A/B"→ AMBIGUITY_CLARIFY。"""
+        """回归：预算内最后一次"请选择取数口径 A/B"→ AMBIGUITY_CLARIFY。"""
         q = (
             "系统提示交互预算已用3/4，这是最后一次可获得答复的提问。时间窗口口径是最致命的未决口径"
             "——它直接影响SQL的分区过滤条件。源表 `biads.ads_agalg_ue_content_ucb_score_dm` 是每日快照表，"
@@ -705,7 +770,7 @@ class TestCaliberQuestionReroute:
         assert self._classify(q) == "AMBIGUITY_CLARIFY"
 
     def test_q42_embedded_window_caliber_reroutes(self):
-        """回归（q42 Q2）：源表已内含窗口、按分区读取的口径确认 → AMBIGUITY_CLARIFY。"""
+        """回归：源表已内含窗口、按分区读取的口径确认 → AMBIGUITY_CLARIFY。"""
         q = (
             "需要确认时间窗口口径，源表已内含1年窗口，按单日分区读取。"
             "关于时间窗口口径：源表 `biads.ads_agrec_adv_common_user_ubr_clickapp_list_1y_plus_dm` "
@@ -739,19 +804,19 @@ class TestCaliberQuestionReroute:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v48 混合提问改判极性修正：确认请求形 ≠ 已确认引用；字段候选 ≠ 表候选
+# 混合提问改判极性修正：确认请求形 ≠ 已确认引用；字段候选 ≠ 表候选
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestMixedQuestionPolarityV48:
-    """v48 极性修正（v47_smoke q01 铁例 + 回放语料 5 翻转审计）。
+    """极性修正（实测铁例 + 回放语料 5 翻转审计）。
 
     两类极性反转：①确认请求形（"请您确认/需要您确认/请问您确认使用"）曾被子串
     "您确认/确认使用"误判为已确认引用——新表提案问（含口径关键词）被改判
-    AMBIGUITY 后表提案无人应答，agent 带着错误兄弟表往下走（smoke q01 选
+    AMBIGUITY 后表提案无人应答，agent 带着错误兄弟表往下走（冒烟案例选
     _1y_dm 而非 golden _1y_v2_dm FAIL）；②裸"候选"曾把标识字段候选枚举/
     否定形（"没有其他候选"）误判为表候选，口径决策问被 TABLE_CONFIRM 模板
-    答非所问。回放门基线随 v48 重定为 51/46/82/3（审计见 replay_check.py 头注释）。
+    答非所问。回放门基线重定为 51/46/82/3（审计见 replay_check.py 头注释）。
     """
 
     def _classify(self, q: str) -> str:
@@ -777,7 +842,7 @@ class TestMixedQuestionPolarityV48:
     def test_smoke_q01_table_proposal_stays_table_confirm(self):
         """铁例 pin：近变体表提案 + 礼貌"请您确认" + 标识/时间子问 → TABLE_CONFIRM。
 
-        pre-v48 该问被改判 AMBIGUITY_CLARIFY，程序化答复只给标识/时间口径，
+        该问曾被改判 AMBIGUITY_CLARIFY，程序化答复只给标识/时间口径，
         表提案无人应答（agent 按纪律提问却被抢答，错误兄弟表锁定）。
         """
         assert self._classify(self.SMOKE_Q01) == "TABLE_CONFIRM"
@@ -796,7 +861,7 @@ class TestMixedQuestionPolarityV48:
         assert self._confirmed_refs("已确认使用 biads.t1")
 
     def test_q02_shape_polite_table_proposal_stays_table_confirm(self):
-        """回放翻转 pin（q02）："请您确认数据源表选择"+候选表+表字段清单 → TABLE_CONFIRM。"""
+        """回放翻转 pin："请您确认数据源表选择"+候选表+表字段清单 → TABLE_CONFIRM。"""
         q = (
             "Initial阶段需要确认数据源表选择，已通过元数据检索锁定两张候选表，"
             "需要用户确认后再推进后续步骤。 我倾向的方案如下，请您确认数据源表选择：  "
@@ -805,7 +870,7 @@ class TestMixedQuestionPolarityV48:
         assert self._classify(q) == "TABLE_CONFIRM"
 
     def test_q34_shape_candidate_options_stays_table_confirm(self):
-        """回放翻转 pin（q34）：候选数据源选项 + 方案枚举 + 口径子问 → TABLE_CONFIRM。"""
+        """回放翻转 pin：候选数据源选项 + 方案枚举 + 口径子问 → TABLE_CONFIRM。"""
         q = (
             "用户要求给出2-3个候选数据源选项。已整理3个方案：候选1（单表）、候选2（+应用维表）、"
             "候选3（+回传表）。推荐候选2。剩余2次提问机会，需要确认源表选择后才能推进后续步骤。"
@@ -814,9 +879,9 @@ class TestMixedQuestionPolarityV48:
         assert self._classify(q) == "TABLE_CONFIRM"
 
     def test_q59_identifier_field_candidates_reroute_ambiguity(self):
-        """回放翻转 pin（q59/q49）：标识字段候选枚举/否定形不是表提案 → AMBIGUITY_CLARIFY。
+        """回放翻转 pin：标识字段候选枚举/否定形不是表提案 → AMBIGUITY_CLARIFY。
 
-        pre-v48 裸"候选"（"三个候选：方案A：device_id"）误拦改判，TABLE_CONFIRM
+        此前裸"候选"（"三个候选：方案A：device_id"）误拦改判，TABLE_CONFIRM
         模板答表而标识问题无人应答。
         """
         q1 = (
@@ -833,7 +898,7 @@ class TestMixedQuestionPolarityV48:
         assert self._classify(q2) == "AMBIGUITY_CLARIFY"
 
     def test_bare_candidate_with_table_names_stays_table_confirm(self):
-        """守护（v3.5 pin632 语义保留）："候选 biads.x 或 db.y"（候选接 db.table 名）
+        """守护（既有语义保留）："候选 biads.x 或 db.y"（候选接 db.table 名）
         仍是表候选提案，带口径词也保持 TABLE_CONFIRM。"""
         assert (
             self._classify(
@@ -843,8 +908,8 @@ class TestMixedQuestionPolarityV48:
         )
 
     def test_interpretation_lean_not_table_proposal(self):
-        """口径理解确认的"我倾向于理解为"（q64 型）不因 v48 收窄而误入表提案
-        （v48 已从 _TABLE_PROPOSAL_RE 移除裸"我倾向"，此 pin 防将来回潮）。"""
+        """口径理解确认的"我倾向于理解为"不会被误判入表提案
+        （已从 _TABLE_PROPOSAL_RE 移除裸"我倾向"，此 pin 防将来回潮）。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
             _proposes_table_candidates,
         )
@@ -857,13 +922,13 @@ class TestMixedQuestionPolarityV48:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v3.4 方案4：列枚举死局提问转向
+# 列枚举死局提问转向
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestColumnEnumerationRedirect:
     def test_q58_enumeration_ask_detected(self):
-        """回归（q58）：“期望的5列具体包含哪些列”是列枚举死局。"""
+        """回归：“期望的5列具体包含哪些列”是列枚举死局。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import _is_column_enumeration_ask
 
         assert _is_column_enumeration_ask("需要澄清用户期望的5列具体包含哪些列")
@@ -898,7 +963,7 @@ class TestColumnEnumerationRedirect:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v3.4 方案1：AMBIGUITY_CLARIFY 组合答复（标识 + 时间）
+# AMBIGUITY_CLARIFY 组合答复（标识 + 时间）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -938,7 +1003,7 @@ class TestAnswerAmbiguityCombined:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v46 口径缺口问型：UNA → AMBIGUITY 改判 + 程序化去重答复（query 缺口六模式）
+# 口径缺口问型：UNA → AMBIGUITY 改判 + 程序化去重答复（query 缺口六模式）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -988,7 +1053,7 @@ class TestCaliberGapOverride:
         assert self._classify("最终输出列数与输出结构是否符合预期？") == "OUTPUT_SCHEMA_PREVIEW"
 
     def test_declarative_dedup_stays_table_confirm(self):
-        """回放门 pin（q01/q67）：确认引用 + 陈述形"去重"不改判——
+        """回放门 pin：确认引用 + 陈述形"去重"不改判——
         "维度去重两个口径问题""去重后聚合序列"是历史 TABLE_CONFIRM 问，
         追问改判信号里"去重"只认疑问形（是否需要去重/去重吗）。"""
         q1 = (
@@ -1054,7 +1119,7 @@ class TestDedupCaliberProgrammatic:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P2：AMBIGUITY 标识短路（golden 不在选项中 → 概念化转向，不经 LLM 兜底）
+# AMBIGUITY 标识短路（golden 不在选项中 → 概念化转向，不经 LLM 兜底）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1108,7 +1173,7 @@ class TestAmbiguityIdentifierShortCircuit:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P4(a-2)：OUTPUT_SCHEMA 聚合粒度概念化（不泄漏 agent 未提到的字段名）
+# OUTPUT_SCHEMA 聚合粒度概念化（不泄漏 agent 未提到的字段名）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1158,7 +1223,7 @@ class TestOutputSchemaGrainConcept:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P4(a-1)：TABLE_CONFIRM 连续选错升级（特征级指引打破检索-拒绝死局）
+# TABLE_CONFIRM 连续选错升级（特征级指引打破检索-拒绝死局）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1222,7 +1287,7 @@ class TestTableConfirmEscalation:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v51 P0-4：第 3 次拒绝切换"自主决策交付"最终话术（顽疾六 grounding 死锁出口）
+# 第 3 次拒绝切换"自主决策交付"最终话术（顽疾六 grounding 死锁出口）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1277,15 +1342,15 @@ class TestTableConfirmThirdRejectionAutonomy(TestTableConfirmEscalation):
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v53：复合提问内嵌口径子问复合答复（TABLE_CONFIRM/OUTPUT 各出口经 _with_caliber
-# 追加口径段；靶例 v52_r2 q54/q60 第4问——表提案/输出确认里内嵌"标识+时间窗口"
+# 复合提问内嵌口径子问复合答复（TABLE_CONFIRM/OUTPUT 各出口经 _with_caliber
+# 追加口径段；靶例：复合问里内嵌"标识+时间窗口"
 # 子问被整段丢弃，agent 被拒表后拿不到口径）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestEmbeddedCaliberCompositeReplyV53(TestTableConfirmThirdRejectionAutonomy):
     def test_third_reject_embedded_caliber_pick_from_options(self):
-        """q54 形态（选项含 golden 标识）：第3拒自主交付话术 + 标识选定 + 时间口径。"""
+        """形态（选项含 golden 标识）：第3拒自主交付话术 + 标识选定 + 时间口径。"""
         q = (
             "用户标识字段用 user_id 还是 imei 需要确认，时间窗口口径也需要确认。"
             "基于业务特征我自主决策选择 db.ods_wrong_c 作为数据源，是否可以？"
@@ -1298,7 +1363,7 @@ class TestEmbeddedCaliberCompositeReplyV53(TestTableConfirmThirdRejectionAutonom
         assert "时间口径" in reply
 
     def test_third_reject_embedded_caliber_concept_redirect(self):
-        """q54 真实录形态（选项 uid/imei 不含 golden 标识）：概念粒度转向 + 时间口径。"""
+        """真实录形态（选项 uid/imei 不含 golden 标识）：概念粒度转向 + 时间口径。"""
         q = (
             "用户标识字段（uid 还是 imei）和时间窗口口径需要用户确认。"
             "我自主决策选择 db.ods_wrong_c 作为数据源。"
@@ -1311,7 +1376,7 @@ class TestEmbeddedCaliberCompositeReplyV53(TestTableConfirmThirdRejectionAutonom
         assert "user_id" not in reply  # 泄漏防线保持
 
     def test_third_reject_pure_table_proposal_unchanged(self):
-        """回归锁：纯表提案（无口径词）第3拒话术不追加口径段（v52 行为保持）。"""
+        """回归锁：纯表提案（无口径词）第3拒话术不追加口径段（行为保持）。"""
         reply = self._run(
             "源表候选：db.ods_wrong_c，是否可以？", self._two_prior_rejection_messages()
         )
@@ -1359,7 +1424,7 @@ class TestOutputEmbeddedCaliberV53:
         return _answer_output_schema_programmatic(golden_sql or self.GOLDEN, hil_question)
 
     def test_grain_reply_embedded_time_window_q60(self):
-        """q60 形态：粒度转向罐头 + 内嵌时间窗口/标识子问一并答复。"""
+        """形态：粒度转向罐头 + 内嵌时间窗口/标识子问一并答复。"""
         q = (
             "输出按 user_id 和 app_type 聚合的汇总表对吗？"
             "用户标识 user_id 是否合适？时间窗口源表1年是否满足'过去365天不含当天'？"
@@ -1371,7 +1436,7 @@ class TestOutputEmbeddedCaliberV53:
         assert "用户标识使用 user_id" in reply
 
     def test_grain_reply_pure_structure_unchanged(self):
-        """回归锁：纯输出结构问（无口径词）不追加口径段（v52 行为保持）。"""
+        """回归锁：纯输出结构问（无口径词）不追加口径段（行为保持）。"""
         reply = self._run("输出结构确认：我计划输出明细宽表")
         assert reply is not None
         assert "汇总结果" in reply
@@ -1381,7 +1446,7 @@ class TestOutputEmbeddedCaliberV53:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# P2 事后防线：LLM 兜底回复的假确认子句审查与改写
+# 事后防线：LLM 兜底回复的假确认子句审查与改写
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1431,6 +1496,41 @@ class TestVetLlmConfirmation:
         """否定子句（"不建议用 device_id"）不是确认，不改写。"""
         answer = "不建议用 device_id 作为用户标识。"
         assert self._vet(answer, "用户标识用 device_id 还是 oaid？") == answer
+
+    def test_descriptor_negation_no_longer_bypasses_vet(self):
+        """（实证）：确认子句内嵌描述词性否定（"（不截断版本）"是表变体
+        卖点、并非否定确认本身）不再整句豁免——错误表确认照常被防线替换。
+
+        OUTPUT 分支 LLM 回复"确认选用 X（不截断版本）"，裸"不"字
+        触发旧整句否定豁免，错误变体 unlimit（golden 实为截断版 code_history）
+        被口头锁定。
+        """
+        vetted = self._vet(
+            "确认选用 biads.ads_wrong_a_dm（不截断版本）。",
+            "源表用 biads.ads_wrong_a_dm 可以吗？",
+        )
+        assert "不是我想要的数据来源" in vetted
+        assert "确认选用" not in vetted
+        assert "dws_evt_fct_dm" not in vetted  # 不泄漏 golden 表名
+
+    def test_descriptor_negations_identifier_confirm_vetted(self):
+        """描述词性否定（不含/非空/没有空值）不再豁免标识假确认审查。"""
+        vetted = self._vet(
+            "使用 device_id 作为用户标识（该字段非空、不含重复值）。",
+            "用户标识用 device_id 还是 oaid？",
+        )
+        assert "纠正" in vetted
+        assert "device_id 作为用户标识（" not in vetted
+
+    def test_true_prohibition_forms_still_exempt(self):
+        """确认动词真被否定（不要用/不能采用/无需确认/别选）仍豁免不改写。"""
+        for answer in (
+            "不要使用 device_id 作为用户标识。",
+            "不能采用 device_id 作为用户标识。",
+            "无需确认 device_id，你自行决策即可。",
+            "别选 device_id 作为标识。",
+        ):
+            assert self._vet(answer, "用户标识用 device_id 还是 oaid？") == answer
 
     def test_consecutive_false_confirms_single_redirect(self):
         """多个冲突子句 → 纠正语只出现一次，其余冲突子句丢弃。"""
@@ -1495,7 +1595,7 @@ class TestVetLlmConfirmation:
         assert vetted == answer
 
     def test_unprefixed_golden_vet_active(self):
-        """MR453 复核 P1(c)：无 db 前缀 golden SQL 下假确认审查仍拦错表（此前静默放行）。"""
+        """MR453 复核 (c)：无 db 前缀 golden SQL 下假确认审查仍拦错表（此前静默放行）。"""
         golden = "select a from dwd_user_event"
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import _vet_llm_confirmation
 
@@ -1511,7 +1611,7 @@ class TestVetLlmConfirmation:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MR453 复核 P1：源表名裸名/限定名统一（提取 + 防泄漏）
+# MR453 复核：源表名裸名/限定名统一（提取 + 防泄漏）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
@@ -1529,7 +1629,7 @@ class TestBareTableNameExtraction:
         ]
 
     def test_ads_prefix_bare_name_extracted(self):
-        """ads_ 层裸表名同样提取（v3.6 实测 golden 源表在 biads.ads_* 层）。"""
+        """ads_ 层裸表名同样提取（实测 golden 源表在 biads.ads_* 层）。"""
         assert self._golden("select a from ads_evt_fct_dm") == ["ads_evt_fct_dm"]
 
     def test_qualified_names_still_extracted(self):
@@ -1562,7 +1662,7 @@ class TestSanitizeLlmReplyLeak:
         return _sanitize_llm_reply_leak(answer, self.GOLDEN, hil_question, action)
 
     def test_bare_name_leak_blocked(self):
-        """MR453 复核 P1(b)：LLM 裸名报出 agent 未提的 golden 表 → 拦截（此前放行）。"""
+        """MR453 复核 (b)：LLM 裸名报出 agent 未提的 golden 表 → 拦截（此前放行）。"""
         sanitized = self._sanitize("我建议用 dwd_user_event 这张表", "输出结构是否满足需求？")
         assert "dwd_user_event" not in sanitized
         assert "符合我需求的数据表" in sanitized
@@ -1629,7 +1729,7 @@ class TestSanitizeLlmReplyLeak:
 class TestChineseGluedTableNames:
     """中文与表名间无空格（"候选表biads.ads_x…dm已按"）时 \b 失效，用 ASCII 边界修复。
 
-    v3.6 两题实测（q42 Q1）：表名前后紧贴中文导致提取为空，纯选表提问被
+    两题实测：表名前后紧贴中文导致提取为空，纯选表提问被
     误判 AMBIGUITY_CLARIFY，拿到答非所问的口径回复。
     """
 
@@ -1691,12 +1791,12 @@ class TestChineseGluedTableNames:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v41 L1b-heavy + L4：拒绝写扩池标记 / 确认写已确认源表清单
+# L1b-heavy + L4：拒绝写扩池标记 / 确认写已确认源表清单
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestL1bHeavyMarkerAndConfirmedTables:
-    """v41：TABLE_CONFIRM 程序化判定的两个 workspace 副作用。
+    """TABLE_CONFIRM 程序化判定的两个 workspace 副作用。
 
     - 拒绝（wrong 非空）→ 写 .semantic/hitl_expand_retrieve_request.json（L1b-heavy）；
     - 确认（wrong 空，部分/全部）→ 累积写 .memory/hitl_confirmed_tables.json（L4）。
@@ -1846,9 +1946,9 @@ class TestL1bHeavyMarkerAndConfirmedTables:
             assert marker["rejection_round"] == 2
 
     def test_partial_correct_rejection_records_correct_tables(self):
-        """v44 L4 缺口修复：部分正确轮（correct+wrong 皆非空）的正确表同样累积写 L4。
+        """L4 缺口修复：部分正确轮（correct+wrong 皆非空）的正确表同样累积写 L4。
 
-        v43_r1 实证 12/17 任务有口头锁定（"这几张表符合我的需求，就此定下来"）
+        实证 12/17 任务有口头锁定（"这几张表符合我的需求，就此定下来"）
         但无 .memory/hitl_confirmed_tables.json 记录——delivery_guard 的确认贯穿
         核对对这些表失明。修复后拒绝轮的 correct 部分也要进记录。
         """
@@ -1918,14 +2018,14 @@ class TestL1bHeavyMarkerAndConfirmedTables:
             assert _resolve_agent_workspace_root({}, _BareRuntime()) is None
 
 
-class TestV45RejectedLedgerAndPoolHint:
-    """v45：拒绝副作用的两层扩展。
+class TestV45RejectedLedger:
+    """被拒表持久台账（起类内只保留台账测试）。
 
-    - P0-1①：被拒表持久台账 .memory/hitl_rejected_tables.json（跨轮 union +
+    - 被拒表持久台账 .memory/hitl_rejected_tables.json（跨轮 union +
       rounds 递增 + 近变体口径契约 want_tokens/want_phrases）——loader 基础
       池过滤与 mr 工具（轮次帽/口径对照）的消费数据源；
-    - P0-2：拒绝答复追加池内表名 token 对照段（口径 token 对照 agent 已检索
-      池，指名道姓给"优先核对"候选，q55 型死局的 agent 侧根因修复）。
+    - 池内表名 token 对照段已移除（用户指令：resolver 答复不
+      指名候选池表名，降臃肿；表名级引导由工具侧检索口径对照承担）。
     """
 
     # golden 含 xtr/list/stat 口径 token，被拒表与之近变体（Jaccard=2/6=1/3）
@@ -1938,14 +2038,6 @@ class TestV45RejectedLedgerAndPoolHint:
         tmp = tempfile.TemporaryDirectory()
         path = _P(tmp.name)
         return tmp, path, path / ".semantic", path / ".memory"
-
-    def _write_pool_context(self, semantic_dir: Any, tables: list[str]) -> None:
-        import json as _json
-
-        semantic_dir.mkdir(parents=True, exist_ok=True)
-        (semantic_dir / "semantic_retrieve_context_fake001.json").write_text(
-            _json.dumps({"query": "q", "tables": tables}), encoding="utf-8"
-        )
 
     def test_rejection_writes_rejected_ledger(self):
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
@@ -2019,106 +2111,22 @@ class TestV45RejectedLedgerAndPoolHint:
             assert record["rejected_tables"] == ["db.zzz_yyy_xxx"]
             assert "want_tokens" not in record
 
-    def test_pool_token_hint_names_pool_matches(self):
-        """口径 token 对照池内表名：命中的池表（未被拒）指名道姓进提示。"""
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _pool_token_hint,
-        )
+    def test_rejection_reply_no_pool_table_hint_v61(self):
+        """回归：池内有口径 token 命中表，拒绝答复也不再指名池内表
+        （对照段移除，用户指令降臃肿）；口径词提示保留。"""
+        import json
 
-        tmp, root, semantic_dir, _ = self._workspace()
-        with tmp:
-            self._write_pool_context(
-                semantic_dir,
-                ["db.dwd_xtr_list_stat_dm", "db.ads_xtr_list_sample", "db.other_dm"],
-            )
-            hint = _pool_token_hint(
-                root,
-                ["db.dwd_xtr_list_stat", "db.dwd_b_dm"],
-                ["db.ads_xtr_list_sample"],
-            )
-            assert "为帮你把口径落到实处" in hint
-            assert "db.dwd_xtr_list_stat_dm" in hint
-            assert "get_table_schema" in hint
-            # 被拒表本身不进对照候选
-            assert "db.ads_xtr_list_sample_dm" not in hint.replace("db.ads_xtr_list_sample。", "")
-
-    def test_pool_token_hint_empty_without_pool_match(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _pool_token_hint,
-        )
-
-        tmp, root, semantic_dir, _ = self._workspace()
-        with tmp:
-            self._write_pool_context(semantic_dir, ["db.other_dm"])
-            hint = _pool_token_hint(
-                root, ["db.dwd_xtr_list_stat"], ["db.ads_xtr_list_sample"]
-            )
-            assert hint == ""
-
-    def test_pool_token_hint_empty_for_far_variant(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _pool_token_hint,
-        )
-
-        tmp, root, semantic_dir, _ = self._workspace()
-        with tmp:
-            self._write_pool_context(semantic_dir, ["db.dwd_xtr_list_stat_dm"])
-            hint = _pool_token_hint(root, ["db.dwd_a_dm"], ["db.zzz_yyy_xxx"])
-            assert hint == ""
-
-    def test_match_pool_tables_by_tokens_ranking_and_limit(self):
-        """命中 token 数降序（golden 型全 token 命中居首）、上限 3、被拒剔除。"""
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _match_pool_tables_by_tokens,
-        )
-
-        pool = [
-            "db.other_dm",
-            "db.dwd_stat_only",
-            "db.mid_xtr_list",
-            "db.dwd_xtr_list_stat_dm",
-            "db.dwd_xtr_list_stat_v2",
-            "db.ads_xtr_list_sample",  # 被拒，应剔除
-            "db.extra_stat_dm",
-        ]
-        matches = _match_pool_tables_by_tokens(
-            pool, ["xtr", "list", "stat"], ["db.ads_xtr_list_sample"]
-        )
-        assert len(matches) == 3
-        # 全 token 命中的 golden 型排最前（裸名序稳定）
-        assert matches[0] == "db.dwd_xtr_list_stat_dm"
-        assert all(not m.endswith("ads_xtr_list_sample") for m in matches)
-        assert "db.other_dm" not in matches
-
-    def test_rejection_reply_appends_pool_hint(self):
-        """完整拒绝流：答复含池内 token 对照段（P0-2 拒绝答复通道）。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
             _answer_table_confirm_programmatic,
         )
 
         tmp, root, semantic_dir, _ = self._workspace()
         with tmp:
-            self._write_pool_context(semantic_dir, ["db.dwd_xtr_list_stat_dm", "db.ads_xtr_list_sample"])
-            reply = _answer_table_confirm_programmatic(
-                self.GOLDEN_VARIANT,
-                "源表候选：db.ads_xtr_list_sample，是否可以？",
-                "开发序列特征",
-                None,
-                workspace_root=root,
+            semantic_dir.mkdir(parents=True, exist_ok=True)
+            (semantic_dir / "semantic_retrieve_context_fake001.json").write_text(
+                json.dumps({"query": "q", "tables": ["db.dwd_xtr_list_stat_dm"]}),
+                encoding="utf-8",
             )
-            assert "不是我想要的数据来源" in reply
-            assert "为帮你把口径落到实处" in reply
-            assert "db.dwd_xtr_list_stat_dm" in reply
-
-    def test_rejection_reply_without_pool_hint_when_no_match(self):
-        """池内无口径命中：答复回落原行为（无对照段，不硬造）。"""
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _answer_table_confirm_programmatic,
-        )
-
-        tmp, root, semantic_dir, _ = self._workspace()
-        with tmp:
-            self._write_pool_context(semantic_dir, ["db.other_dm"])
             reply = _answer_table_confirm_programmatic(
                 self.GOLDEN_VARIANT,
                 "源表候选：db.ads_xtr_list_sample，是否可以？",
@@ -2128,10 +2136,13 @@ class TestV45RejectedLedgerAndPoolHint:
             )
             assert "不是我想要的数据来源" in reply
             assert "为帮你把口径落到实处" not in reply
+            assert "db.dwd_xtr_list_stat_dm" not in reply
+            # 近变体口径词提示仍应在（概念词，不涉表名）
+            assert "另外把数据口径" in reply
 
-    def test_escalated_rejection_also_appends_pool_hint(self):
-        """升级答复（连续选错）同样带口径 token 对照段——两路拒绝共用 hint_tail。"""
-        import json as _json
+    def test_escalated_rejection_no_pool_table_hint_v61(self):
+        """回归：升级答复（连续选错）同样不带池内表名对照段。"""
+        import json
 
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
             _answer_table_confirm_programmatic,
@@ -2145,7 +2156,11 @@ class TestV45RejectedLedgerAndPoolHint:
         )
         tmp, root, semantic_dir, _ = self._workspace()
         with tmp:
-            self._write_pool_context(semantic_dir, ["db.dwd_xtr_list_stat_dm"])
+            semantic_dir.mkdir(parents=True, exist_ok=True)
+            (semantic_dir / "semantic_retrieve_context_fake001.json").write_text(
+                json.dumps({"query": "q", "tables": ["db.dwd_xtr_list_stat_dm"]}),
+                encoding="utf-8",
+            )
             reply = _answer_table_confirm_programmatic(
                 self.GOLDEN_VARIANT,
                 "源表候选：db.ads_xtr_list_v2，是否可以？",
@@ -2153,22 +2168,18 @@ class TestV45RejectedLedgerAndPoolHint:
                 [prior_reject],
                 workspace_root=root,
             )
-            # 升级答复或标准拒绝两路之一，均应带对照段（池内已有命中）
-            if "仍然不是我想要的数据来源" in reply:
-                assert "为帮你把口径落到实处" in reply
-            else:
-                assert "不是我想要的数据来源" in reply
-                assert "为帮你把口径落到实处" in reply
+            assert "为帮你把口径落到实处" not in reply
+            assert "db.dwd_xtr_list_stat_dm" not in reply
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v47：UNA 误路由修正（收敛确认→TABLE_CONFIRM / 列构成确认→OUTPUT）
+# UNA 误路由修正（收敛确认→TABLE_CONFIRM / 列构成确认→OUTPUT）
 #      + OUTPUT 纯粒度问退 LLM persona
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestTableProposalUnaOverride:
-    """v47 收敛确认误路由（q55 Q3 铁例）："候选池中最接近的表…请您确认"零关键词命中落 UNA。"""
+    """收敛确认误路由（铁例）："候选池中最接近的表…请您确认"零关键词命中落 UNA。"""
 
     Q55_Q3 = (
         "检索轮次已超限，需要收敛交付。基于已有候选池选择最接近的表向用户确认。\n"
@@ -2192,7 +2203,7 @@ class TestTableProposalUnaOverride:
         assert self._classify("候选池里的表字段我已经列好了") == "UNA"
 
     def test_post_completion_courtesy_stays_una(self):
-        """q50 Q2 铁例：交付后礼节性提问不含提案表述，保持 UNA。"""
+        """铁例：交付后礼节性提问不含提案表述，保持 UNA。"""
         q = (
             "任务已完成。所有步骤均已执行完毕，交付物已生成。\n\n"
             "请问您是否需要我展示SQL内容，或者您对交付结果有其他修改意见？"
@@ -2205,7 +2216,7 @@ class TestTableProposalUnaOverride:
         assert self._classify(q) == "TABLE_CONFIRM"
 
     def test_q64_interpretation_ask_stays_una(self):
-        """回放门 pin（q64）："我倾向于理解为…请确认这个理解是否正确"是口径
+        """回放门 pin："我倾向于理解为…请确认这个理解是否正确"是口径
         歧义问不是表提案——宽信号"我倾向"（_TABLE_PROPOSAL_RE）会误改判，
         收敛确认标记只认表为确认对象的签名。"""
         q = (
@@ -2217,7 +2228,7 @@ class TestTableProposalUnaOverride:
 
 
 class TestSchemaDerivationUnaOverride:
-    """v47 列构成确认误路由（q47 Q4 铁例）："输出schema"无空格 / "列构成"≠关键词"列结构"。"""
+    """列构成确认误路由（铁例）："输出schema"无空格 / "列构成"≠关键词"列结构"。"""
 
     Q47_Q4 = (
         "用户说期望输出11列，需要确认列构成。这是最后一次提问机会，"
@@ -2247,7 +2258,7 @@ class TestSchemaDerivationUnaOverride:
 
 
 class TestOutputPureGrainDeferToLlm:
-    """v47 OUTPUT 分支 3 细化：纯主体/主键/粒度问（golden 无 GROUP BY 特征）退 LLM persona。"""
+    """OUTPUT 分支 3 细化：纯主体/主键/粒度问（golden 无 GROUP BY 特征）退 LLM persona。"""
 
     GOLDEN_NO_GRAIN = (
         "INSERT OVERWRITE TABLE db.t_dm PARTITION(pt_d='$date') "
@@ -2263,13 +2274,13 @@ class TestOutputPureGrainDeferToLlm:
         return _answer_output_schema_programmatic(golden_sql or self.GOLDEN_NO_GRAIN, hil_question)
 
     def test_pure_grain_ask_defers_to_llm(self):
-        """q47 Q8 型：问主体/主键、golden 无 GROUP BY → None 退 persona
+        """问主体/主键、golden 无 GROUP BY → None 退 persona
         （OUTPUT persona 角色约束本就聚焦"一行代表什么/按什么粒度聚合"）。"""
         q = "我需要确认输出表的主体（主键）是什么：候选A 搜索词为主键，每行一个搜索词；候选B 用户为主键。"
         assert self._run(q) is None
 
     def test_mixed_grain_and_col_ask_keeps_programmatic(self):
-        """q50 型（主键+列构成 混合问）：保留列数程序化答复——PASS 路径不动。"""
+        """（主键+列构成 混合问）：保留列数程序化答复——PASS 路径不动。"""
         q = "需要确认输出表的主键和列构成：主键是 random_weight_key 字符串吗？"
         reply = self._run(q)
         assert reply is not None
@@ -2282,17 +2293,17 @@ class TestOutputPureGrainDeferToLlm:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# v53b 答非所问双病灶修复：用户变体请求形剥离 + WITH-CTE golden 输出列数 + 无标识 golden 粒度转向
-# （v52_r2 q34 三连实录：源表提案问/标识选择问被改判 AMBIGUITY 拿时间口径答复、
+# 答非所问双病灶修复：用户变体请求形剥离 + WITH-CTE golden 输出列数 + 无标识 golden 粒度转向
+# （三连实录：源表提案问/标识选择问被改判 AMBIGUITY 拿时间口径答复、
 #   17 列正确提案被"纠正"成首 CTE 的 4 列——agent 被带偏交付 4 列 KV 结构 FAIL）
 # ─────────────────────────────────────────────────────────────────────────────
 
 
 class TestUserVariantRequestFormV53b(TestMixedQuestionPolarityV48):
-    """v53b：确认请求形的"用户"变体（v48 只剥"您"）。
+    """确认请求形的"用户"变体（只剥"您"）。
 
-    v52_r2 q34 Q1 实录："需要用户确认使用哪个作为主源"——"用户"二字挡住
-    v48 请求形剥离，残余"确认使用"再度极性反转为已确认引用，全套表提案
+    实录："需要用户确认使用哪个作为主源"——"用户"二字挡住
+    请求形剥离，残余"确认使用"再度极性反转为已确认引用，全套表提案
     （我倾向选择 db.table + 数据源表选择字样）被 _mixed_question_override
     改判 AMBIGUITY，表判定无人应答，agent 把时间口径答复误读为默认同意。
     """
@@ -2324,23 +2335,187 @@ class TestUserVariantRequestFormV53b(TestMixedQuestionPolarityV48):
         assert self._confirmed_refs("用户确认使用方案A了，无需再问")
 
     def test_q34_q1_table_proposal_stays_table_confirm(self):
-        """铁例 pin：q34 Q1 源表提案 + 用户变体请求形 + 时间窗口子问 → TABLE_CONFIRM
+        """铁例 pin：源表提案 + 用户变体请求形 + 时间窗口子问 → TABLE_CONFIRM
         （拿 golden-grounded 表判定/拒绝，而非时间口径独占答复）。"""
         assert self._classify(self.Q34_Q1) == "TABLE_CONFIRM"
 
     def test_q34_q2_identifier_ask_not_confirmed_reference(self):
-        """q34 Q2：标识选择问 + 源表已默认同意（真引用形不受影响）+
+        """标识选择问 + 源表已默认同意（真引用形不受影响）+
         用户变体请求形 → 不再因残余"确认使用"判已确认引用整问改判。"""
         assert not self._confirmed_refs(self.Q34_Q2)
 
 
-class TestGoldenOutputColumnCountV53b:
-    """v53b：WITH-CTE golden 的输出列数取最终输出 SELECT（非首个 CTE）。
+class TestBareXuRequestFormV62(TestMixedQuestionPolarityV48):
+    """确认请求形的裸"需"缩略变体（同家族第三种措辞）。
 
-    v52_r2 q34 Q3 实录：agent 推导 17 列（2 主键+15 指标，与 golden 输出一致），
+    实录：agent 省"要"字写"需您确认选哪一套"/"需确认使用哪张
+    作为主源表"——"需"单字不在请求前缀集合（需要/要），剥离漏过，残余"您确认/
+    确认使用"第三度极性反转为已确认引用，表选型问（含口径子问）被改判
+    AMBIGUITY：三选一近变体问只拿到 imei 口径答复、错误变体默认锁定；
+    五表两方案问只拿到标识/时间答复、错误源表组合默认锁定。
+    """
+
+    Q58_Q1 = (
+        "任务需要同时获取\"应用安装时间\"和\"首次打开时间\"，涉及安装行为表和打开行为表的选型。"
+        "检索到两组同族候选：ads层聚合日表（字段精简、标识统一）vs dwd层事实明细表（字段丰富、"
+        "标识未统一）。两套方案的JOIN key和标识字段不同，影响后续SQL复杂度和口径一致性，"
+        "需您确认选哪一套。\n"
+        "倾向方案：安装行为表选 biads.ads_agalg_common_user_install_bhv_dm + "
+        "打开行为表选 biads.ads_agalg_common_user_open_bhv_dm + "
+        "应用维表选 agapdw.dim_hispace_app_info_ds。\n"
+        "候选方案B：安装表选 agapdw.dwd_hispace_client_install_tf_dm + "
+        "打开表选 bicoredata.dwd_onl_app_open_hasdk_tf_dm + "
+        "维表 agapdw.dim_hispace_app_info_ds。"
+    )
+
+    Q70_Q1 = (
+        "任务要求开发\"用户下载应用（剔除卸载后）的键值对序列特征\"。元数据检索发现3张近变体"
+        "候选源表（均为\"下载未卸载\"主题），需确认使用哪张作为主源表。\n"
+        "倾向选择候选C：`biads.ads_agrec_user_ubr_down_app_list_tail_dm` 作为主源表。"
+        "该表按 IMEI+尾号 聚合，字段已是键值对拼接列表，与任务要求高度吻合。"
+    )
+
+    def test_bare_xu_request_form_not_confirmed_reference(self):
+        """请求极性"需（您/用户）?确认(使用)"（省"要"缩略形）不是已确认引用。"""
+        assert not self._confirmed_refs("需您确认选哪一套")
+        assert not self._confirmed_refs("需确认使用哪张作为主源表")
+        assert not self._confirmed_refs(self.Q58_Q1)
+        assert not self._confirmed_refs(self.Q70_Q1)
+
+    def test_bare_xu_still_strips_with_yonghu_variant(self):
+        """裸"需"与"用户"变体叠加（需用户确认使用）同样剥离。"""
+        assert not self._confirmed_refs("需用户确认使用哪个作为主标识")
+
+    def test_true_reference_forms_with_xu_still_confirmed(self):
+        """真引用形不受裸"需"扩展影响："无需确认"非引用载体；"已确认"形照常命中。"""
+        assert self._confirmed_refs("源表已确认为 biads.t1，现在确认标识口径")
+        # "无需确认"否定形被剥离但剩余文本不含引用标记 → 不是已确认引用
+        assert not self._confirmed_refs("这些口径无需确认已按冻结表执行")
+
+    def test_q58_table_set_proposal_stays_table_confirm(self):
+        """铁例 pin：表组合选型问（"表选 db.table"提案形 + JOIN key/口径子问）
+        → TABLE_CONFIRM（拿 golden-grounded 全错拒绝 + 统一行为口径提示，
+        而非标识/时间口径独占答复）。"""
+        assert self._classify(self.Q58_Q1) == "TABLE_CONFIRM"
+
+    def test_q70_near_variant_proposal_stays_table_confirm(self):
+        """铁例 pin：近变体三选一问（需确认使用哪张）→ TABLE_CONFIRM。"""
+        assert self._classify(self.Q70_Q1) == "TABLE_CONFIRM"
+
+    def test_biaoxuan_table_form_is_proposal(self):
+        """"<角色>表选 db.table"（安装行为表选 X/应用维表选 Y）是表提案信号；
+        "总表选哪个字段"（表选后接疑问词）不是。"""
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
+            _proposes_table_candidates,
+        )
+
+        assert _proposes_table_candidates("安装行为表选 biads.ads_agalg_common_user_install_bhv_dm")
+        assert _proposes_table_candidates("应用维表选 agapdw.dim_hispace_app_info_ds")
+        assert not _proposes_table_candidates("总表选哪个字段作为主键")
+        assert not _proposes_table_candidates("分表选择策略请确认")
+
+    def test_true_reference_tablexuan_context_reroutes(self):
+        """真引用 + 表选（"已确认源表选 X，现在确认时间口径"）仍走引用分支改判
+        AMBIGUITY（branch 1 先行拦截，不因"表选"新支回潮）。"""
+        q = "已确认源表选 biads.ads_agalg_common_user_unified_bhv_dm，现在确认时间窗口口径是否包含当天"
+        assert self._classify(q) == "AMBIGUITY_CLARIFY"
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# 引用标记表域限定：标识/口径上的"已确认" ≠ 表已确认引用
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestMarkerScopeV62(TestMixedQuestionPolarityV48):
+    """表域限定（铁例）。
+
+    "用户已确认 user_id 标识和单日分区快照口径。需确认源表选择…"——"已确认"
+    落在标识口径上（±10 窗无表词、所在子句无 db.table 限定名），此前的全局
+    子串匹配把同问新表提案（方案A/B/C 三候选）误判已确认引用，改判
+    AMBIGUITY：表判定无人应答，agent 沿用已被拒的 dsid 30d 表直至最终交付。
+    表域限定后该问回 TABLE_CONFIRM（程序化答复逐候选对 golden 判定：拒 4 张
+    30d 明细/维表 + 确认 agent 自行检索到的 1y 列表表=golden 源）。
+    双信号：①±10 窗表语境词（表/数据源/方案/候选 或限定名）；②标记所在
+    分隔子句含完整 db.table 限定名（括注形"…ads_x_dm**（您已确认符合
+    需求）"——表名与标记同句但 40+ 字符在窗外，该问保持 AMBIGUITY 且回放
+    门零回归）。真引用形标记天然邻接表词/含限定名，不受影响（继承套件+下方 pin）。
+    """
+
+    Q65_R2 = (
+        "用户拒绝了之前的3张30天明细表候选，要求换用需求里的业务词重新检索。经多轮不同业务词检索后，"
+        "元数据系统中能作为\"30天使用明细\"源表的仍为这3张表（无其他30天使用明细表）。但本次分析有新进展："
+        "(1)确认目标产出表为 biads.ads_agalg_feature_userid_user_ubr_usedapp_list_1y_dm（28字段，user_id 主键）；"
+        "(2)ads_agalg_dsid_user_usage_detail_30d_dm 是唯一同时含 user_id + developer_id + app_third_type + "
+        "全部5指标的源表，与目标表主键直接对齐；(3)用户已确认 user_id 标识和单日分区快照口径。"
+        "需确认源表选择以推进SQL开发。\n"
+        "倾向方案A：源表选用 biads.ads_agalg_dsid_user_usage_detail_30d_dm（30天使用明细底表，"
+        "含 user_id + app_id + app_cn_name + app_type + app_third_type + app_package_name + developer_id + "
+        "5个统计指标：usage_cnt_avg_per_day/usage_cnt_max_per_day/usage_days/usage_duration_per_day/"
+        "last_open_time，跨12个月分区汇总后按 user_id + app_type 聚合，用 ConcatWithRank 拼接前7位应用序列）。"
+        "该表是池中唯一同时具备 user_id 主键和全部所需应用属性+指标的源表。\n"
+        "候选B：biads.ads_agrec_adv_common_up_usedapp_detail_30d_dm（30天明细，主键 up_id 非 user_id，"
+        "缺 developer_id 和 app_third_type，需 JOIN 维表 biads.ads_noah_fulllist_appinfo_ds 补齐）\n"
+        "候选C：biads.ads_agrec_adv_common_user_usedapp_detail_30d_dm（30天明细，主键 imei 非 user_id，"
+        "缺 developer_id 和 app_third_type，需 JOIN 维表补齐且需 imei→user_id 映射）\n"
+        "请确认源表选择。"
+    )
+
+    def test_q65_identifier_confirmed_not_table_reference(self):
+        """铁例 pin：标识/口径上的"已确认"不算表引用 → 新表提案保持 TABLE_CONFIRM。"""
+        assert not self._confirmed_refs(self.Q65_R2)
+        assert self._classify(self.Q65_R2) == "TABLE_CONFIRM"
+
+    def test_clause_char_word_alone_not_enough(self):
+        """子句含"表"字但无 db.table 限定名、±10 窗亦无表词 → 仍不算（子句级
+        信号只认限定名——裸标识 user_id 无点、字符表词必须邻接）。"""
+        q = "用户已确认 user_id 标识和单日分区快照表口径，需确认源表选择以推进"
+        assert not self._confirmed_refs(q)
+
+    def test_parenthetical_annotation_form_still_confirmed_reference(self):
+        """回放锚点：括注形"…ads_x_dm**（您已确认符合需求）"——表名与标记
+        同句但距 ±10 窗外（表名 40+ 字符），子句级限定名信号保真引用判定，
+        该问保持 AMBIGUITY_CLARIFY（实录 AMBIGUITY 答复正确："site_id
+        对应榜单维度，可以使用"；agent 已用对表，FAIL 在 SQL 细节非选表层）。"""
+        q = (
+            "用户确认了ads_agalg_adv_common_list_app_xtr_stat_dm是符合需求的表，"
+            "但该表没有list_id字段。需要确认site_id是否对应榜单维度，"
+            "或者用户是否有其他包含list_id的表源。\n"
+            "基于重新检索，我找到以下候选数据源：\n"
+            "**候选1：agapads.ads_agalg_adv_common_list_app_xtr_stat_dm**（您已确认符合需求）\n"
+            "- 关键字段：site_id、app_id、action_cnt\n"
+            "**候选2：agapdw.dim_hispace_app_info_ds**（您已确认符合需求）\n"
+            "- 关键字段：app_id（主键）、app_cn_name\n"
+            "请问：1. 候选1中的 site_id 是否就是您所说的\"各榜单\"的维度？"
+            "2. 或者您是否知道其他包含 list_id（榜单编号）字段且与CPD相关的表？"
+        )
+        assert self._confirmed_refs(q)
+        assert self._classify(q) == "AMBIGUITY_CLARIFY"
+
+    def test_clause_qualified_name_minimal_form(self):
+        """子句级限定名信号最小形：限定名与标记同句（无邻接表词）即计。"""
+        assert self._confirmed_refs("agapads.ads_x_dm（您已确认符合需求）")
+        assert self._confirmed_refs("先看 biads.t1 的字段，您已确认这张表可用")
+        # 限定名在另一子句（分隔符隔断）且 ±10 窗外 → 不计
+        assert not self._confirmed_refs("用户已确认 user_id 标识和单日分区快照口径。biads.t1 另议")
+
+    def test_identifier_confirm_with_far_table_proposal(self):
+        """标识已确认 + 远处（另一段落）新表提案：全局匹配曾误判的混合形。"""
+        q = (
+            "用户已确认 device_id 作为设备标识。"
+            "接下来需确认数据来源：候选源表为 biads.ads_evt_stat_dm 与 biads.ads_evt_detail_dm，"
+            "请选择。"
+        )
+        assert not self._confirmed_refs(q)
+        assert self._classify(q) == "TABLE_CONFIRM"
+
+
+class TestGoldenOutputColumnCountV53b:
+    """WITH-CTE golden 的输出列数取最终输出 SELECT（非首个 CTE）。
+
+    实录：agent 推导 17 列（2 主键+15 指标，与 golden 输出一致），
     _count_golden_output_columns 取首 CTE（pt_d/app_id/两个聚合列=4 列）回复
     "期望输出 4 列，你计划输出 17 列"——正确提案被带偏，agent 交付 4 列 KV 结构。
-    q48/q51/q58 同型（首 CTE 恰 5 列 vs 真输出 4/11/9 列）。
+    同型（首 CTE 恰 5 列 vs 真输出 4/11/9 列）。
     """
 
     GOLDEN_WITH_CTE = (
@@ -2398,7 +2573,7 @@ class TestGoldenOutputColumnCountV53b:
         ) == 2
 
     def test_q34_shape_correction_reply_uses_true_count(self):
-        """端到端 pin：q34 Q3 形态（17 列正确提案 + CTE golden）→ 期望输出=输出 SELECT 列数，
+        """端到端 pin：形态（17 列正确提案 + CTE golden）→ 期望输出=输出 SELECT 列数，
         不再把正确提案"纠正"成 CTE 列数。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
             _answer_output_schema_programmatic,
@@ -2415,9 +2590,9 @@ class TestGoldenOutputColumnCountV53b:
 
 
 class TestIdentifierlessGoldenGrainRedirectV53b:
-    """v53b：golden 无用户标识字段（应用/站点级聚合）时标识选择问的粒度转向。
+    """golden 无用户标识字段（应用/站点级聚合）时标识选择问的粒度转向。
 
-    v52_r2 q34 Q2 实录：agent 问 device_id/user_id/did 选哪个，golden 按应用
+    实录：agent 问 device_id/user_id/did 选哪个，golden 按应用
     聚合无任何标识字段——两条标识分支均因 golden_id 为空跳过，答复被时间
     口径段独占（答非所问）。现按 golden 聚合键给"非用户粒度"转向答复。
     """
@@ -2462,7 +2637,7 @@ class TestIdentifierlessGoldenGrainRedirectV53b:
         assert seg is None or "不按用户标识字段聚合" not in seg
 
     def test_user_grain_golden_unchanged(self):
-        """回归锁：golden 标识在 agent 选项中 → 原选定答复不变（v53 行为）。"""
+        """回归锁：golden 标识在 agent 选项中 → 原选定答复不变（行为）。"""
         q = "用户标识字段用 user_id 还是 imei 需要确认。"
         seg = self._parts(q, self.GOLDEN_USER_GRAIN)
         assert seg is not None

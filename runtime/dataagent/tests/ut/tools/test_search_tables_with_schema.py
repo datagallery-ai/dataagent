@@ -14,6 +14,7 @@
 
 import json
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -442,3 +443,67 @@ def test_enum_values_fallback_last_match_wins(
 
     assert "列枚举值" not in result["original_msg"]
     assert "enum_values" not in result["data"]["columns"][0]
+
+
+# ── get_table_schema 被拒表注记 ──────────────────────────────────
+
+
+def _write_rejected_ledger(tmp_path: Path, tables: list[str]) -> None:
+    (tmp_path / ".memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".memory" / "hitl_rejected_tables.json").write_text(
+        json.dumps({"rejected_tables": tables, "rounds": 1}, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_rejected_table_note_marks_rejected_table(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """台账中被拒表（全名/裸名宽松匹配）→ 注记持续提醒仅可对照参考。"""
+    monkeypatch.setattr(
+        stws, "get_current_sandbox", lambda: SimpleNamespace(workspace_root=tmp_path)
+    )
+    _write_rejected_ledger(tmp_path, ["db.ads_wrong_dm"])
+
+    note = stws._rejected_table_note("db.ads_wrong_dm")
+    assert "此前已被用户在源表确认中拒绝" in note
+    assert "仅可作对照参考" in note
+    assert "不要再把它作为候选数据源提案" in note
+    # 裸名/限定名混写容忍
+    assert "拒绝" in stws._rejected_table_note("ads_wrong_dm")
+    # 非被拒表无注记
+    assert stws._rejected_table_note("db.t_ok_dm") == ""
+
+
+def test_rejected_table_note_absent_without_ledger(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """无台账（非 HITL 场景）/损坏台账/无 sandbox → no-op 不炸。"""
+    monkeypatch.setattr(
+        stws, "get_current_sandbox", lambda: SimpleNamespace(workspace_root=tmp_path)
+    )
+    assert stws._rejected_table_note("db.ads_wrong_dm") == ""
+
+    (tmp_path / ".memory").mkdir(parents=True, exist_ok=True)
+    (tmp_path / ".memory" / "hitl_rejected_tables.json").write_text("bad{", encoding="utf-8")
+    assert stws._rejected_table_note("db.ads_wrong_dm") == ""
+
+    def _raise() -> None:
+        raise RuntimeError("no sandbox")
+
+    monkeypatch.setattr(stws, "get_current_sandbox", _raise)
+    assert stws._rejected_table_note("db.ads_wrong_dm") == ""
+
+
+def test_get_table_schema_prepends_rejected_note(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    """被拒表的完整 schema 检索：detail 头部带注记，其余结构照常。"""
+    cols_raw = _make_cols_raw([("status", None)])
+    _install(monkeypatch, cols_raw, tmp_path)
+    _write_rejected_ledger(tmp_path, ["db.ads_wrong_dm"])
+
+    result = stws.get_table_schema(
+        "db.ads_wrong_dm", _tool_context=ToolExecutionContext(tool_config={})
+    )
+    detail = result["original_msg"]
+    assert detail.startswith("注：表 db.ads_wrong_dm 此前已被用户在源表确认中拒绝")
+    assert "对照参考" in detail
+    assert result["data"]["table"] == "db.ads_wrong_dm"
+
+    # 非被拒表不带注记
+    result_ok = stws.get_table_schema("db.t", _tool_context=ToolExecutionContext(tool_config={}))
+    assert "已被用户在源表确认中拒绝" not in result_ok["original_msg"]

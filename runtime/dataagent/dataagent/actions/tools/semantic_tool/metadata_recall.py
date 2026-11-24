@@ -23,7 +23,9 @@ from dataagent.actions.tools.context import ToolExecutionContext
 from dataagent.actions.tools.local_tool.sandbox import get_current_sandbox
 from dataagent.actions.tools.local_tool.sub_agent_config import temporary_sub_agent_config
 from dataagent.actions.tools.local_tool.tools import _resolve_bound_llm_model_name, sub_agent_tool
-from dataagent.actions.tools.semantic_tool.search_tables_with_schema import inject_enum_values_config
+from dataagent.actions.tools.semantic_tool.search_tables_with_schema import (
+    inject_enum_values_config,
+)
 from dataagent.utils.constants import DEFAULT_SUBAGENT_TOOL_TIMEOUT
 from dataagent.utils.info_utils import get_current_query
 from dataagent.utils.runtime_paths import dataagent_package_root, resolve_history_sql_corpus_path
@@ -163,6 +165,12 @@ def _strip_history_sql_route_lines(instructions: str) -> str:
         result += "\n"
     return result
 
+# 口径对照提示的 workspace 锚点。台账由 hitl_auto_resolver 在源表
+# 被拒时写入（rejected_tables 跨轮 union、rounds 每次拒绝递增、
+# want_tokens/want_phrases = 近变体口径契约）。
+_MR_REJECTED_LEDGER_REL = Path(".memory") / "hitl_rejected_tables.json"
+_MAX_POOL_HINT_TABLES = 3
+
 
 _SEMANTIC_RETRIEVE_HOOK = "semantic_retrieve_context_loader"
 
@@ -211,7 +219,7 @@ async def metadata_recall(
       "检索历史SQL作为参考。要求：输出特征1：exposure_cnt_23d（用户行为：曝光）；本次输出主键：imei + app_id；加分项：统计特征、23填周期；源表必须包含：biads.ads_noah_common_user_exposure_cnt_one_day_dm"
 
     注意：
-    - 不可以频繁调用这个工具，需要全面理解用户意图并整理好所有的检索需求，再一次性调用这个工具，太多次调用这个工具会导致召回精度差，但是漏召回相关信息会导致召回准确率差
+    - 需要全面理解用户意图并整理好检索需求后调用；漏召回相关信息会导致召回准确率差，检索证据不足时可以继续用不同业务词组合补充检索，检索次数不受限制
     - add_user_query 参数最多只能有一次调用的时候传入 True，在需要广泛搜索与会话用户原始 query 直接相关的信息时才可以填 True
     - 如果只是局部检索/召回确定名称的表/列/UDF/检索 Join 关系时，只需要在 query 参数中描述检索需求，add_user_query 不需要填写
 
@@ -262,9 +270,133 @@ async def metadata_recall(
     ) as temp_config_path:
         res = await sub_agent_tool(query=enhanced_query, config_path=temp_config_path, timeout=timeout)
 
+    orig = res.get("original_msg") if isinstance(res, dict) else None
+    subagent_error = isinstance(orig, dict) and bool(orig.get("error"))
+
     # sub_agent_tool 返回 {"original_msg": <worker_result>, "state": <flex state dict>, ...}
     # state 包含完整的 messages 列表，需提取最后一条 AIMessage 的 content 作为干净结果
-    return _extract_recall_result_from_state(res)
+    result = _extract_recall_result_from_state(res)
+    # 口径对照提示（后置计算：本轮扩池 context 已落盘，台账口径 token
+    # 对照池内表名指名道姓给"优先核对"候选——死局中 golden 常在拒绝后才
+    # 经扩池入池，拒绝答复里的对照段此时还看不到它，mr 结果通道持续兜底）。
+    # 仅成功检索时前置注入；无台账/无口径 token/池内无命中时 no-op。
+    if not subagent_error:
+        note = _build_pool_caliber_note(workspace_path)
+        if note:
+            result = {
+                "original_msg": note + "\n\n" + str(result.get("original_msg") or ""),
+                "frontend_msg": str(result.get("frontend_msg") or ""),
+                "data": result.get("data"),
+            }
+    return result
+
+
+# ── 口径对照提示 ─────────────────────────────────────────────────
+
+
+def _load_rejected_ledger(workspace_path: Path) -> dict[str, Any]:
+    """读 hitl_auto_resolver 写入的被拒表台账（无/损坏 → 空 dict，视为无拒绝）。"""
+    try:
+        payload = json.loads(
+            (workspace_path / _MR_REJECTED_LEDGER_REL).read_text(encoding="utf-8")
+        )
+        return payload if isinstance(payload, dict) else {}
+    except Exception:
+        return {}
+
+
+def _load_pool_tables(workspace_path: Path) -> list[str]:
+    """读 workspace/.semantic/semantic_retrieve_context_*.json 的 tables 并集
+    （= agent 已检索池：基础池 + 扩池全部 context 文件的表清单）。"""
+    tables: list[str] = []
+    seen: set[str] = set()
+    try:
+        for path in sorted((workspace_path / ".semantic").glob("semantic_retrieve_context_*.json")):
+            try:
+                payload = json.loads(path.read_text(encoding="utf-8"))
+            except Exception:
+                continue
+            entries = payload.get("tables") if isinstance(payload, dict) else None
+            for t in entries if isinstance(entries, list) else []:
+                if isinstance(t, str) and t.strip() and t not in seen:
+                    seen.add(t)
+                    tables.append(t)
+    except Exception as exc:
+        logger.debug(f"[metadata_recall] 已检索池读取失败: {exc}")
+    return tables
+
+
+def _table_name_tokens(table: str) -> set[str]:
+    bare = str(table).lower().rsplit(".", 1)[-1]
+    return {tok for tok in bare.split("_") if tok}
+
+
+def _tables_loose_match(a: str, b: str) -> bool:
+    """表名宽松等价（与 resolver _tables_match / loader _tables_named_match 同语义）。"""
+    al, bl = str(a).lower(), str(b).lower()
+    if not al or not bl:
+        return False
+    return al == bl or bl.endswith("." + al) or al.endswith("." + bl)
+
+
+def _match_pool_tables_by_tokens(
+    pool_tables: list[str], want_tokens: list[str], rejected: list[str]
+) -> list[str]:
+    """池内表名 token 对照：含任一口径 token 的池内表（剔除被拒表），按命中
+    token 数降序（golden 通常命中全部口径 token 自然居首），上限 3 张。"""
+    want_set = set(want_tokens)
+    if not want_set or not pool_tables:
+        return []
+    matches: list[tuple[int, str]] = []
+    for table in pool_tables:
+        if any(_tables_loose_match(table, r) for r in rejected):
+            continue
+        hit = _table_name_tokens(table) & want_set
+        if hit:
+            matches.append((len(hit), table))
+    matches.sort(key=lambda kv: (-kv[0], kv[1]))
+    return [t for _, t in matches[:_MAX_POOL_HINT_TABLES]]
+
+
+def _build_pool_caliber_note(workspace_path: Path) -> str:
+    """mr 结果的口径对照提示（子代理返回后计算——本轮扩池 context
+    已落盘，口径 token 对照的是最新池态）。
+
+    台账口径契约（want_tokens/want_phrases，resolver 从 golden-vs-被拒 近变体
+    差集提炼）对照池内表名，指名道姓给"优先核对"候选：死局中 golden 常
+    在拒绝后才经扩池入池，拒绝答复里的对照段（同时写入）看不到它，本通道
+    在后续每轮 mr 结果头部持续兜底。对照表全部来自 agent 自己检索到的池与
+    台账口径词（agent 上下文内已有），无 golden 表名泄漏。
+    """
+    ledger = _load_rejected_ledger(workspace_path)
+    try:
+        rounds = int(ledger.get("rounds", 0) or 0)
+    except (TypeError, ValueError):
+        rounds = 0
+    if rounds <= 0:
+        return ""
+    want_tokens = [str(t) for t in ledger.get("want_tokens", []) if isinstance(t, str) and t.strip()]
+    if not want_tokens:
+        return ""
+    rejected = [
+        str(t)
+        for t in ledger.get("rejected_tables", [])
+        if isinstance(t, str) and t.strip()
+    ]
+    matches = _match_pool_tables_by_tokens(_load_pool_tables(workspace_path), want_tokens, rejected)
+    if not matches:
+        return ""
+    phrases = [str(p) for p in ledger.get("want_phrases", []) if isinstance(p, str) and p.strip()]
+    caliber_repr = "、".join(phrases) if phrases else "、".join(want_tokens)
+    note = (
+        "【检索口径对照】用户此前在源表确认中拒绝过部分候选并说明了口径：要的是"
+        f"{caliber_repr}口径的数据。你已检索到的候选中，表名 token 与该口径直接对应的表："
+        f"{'、'.join(matches)}——请优先用 get_table_schema 核对这几张的列级证据；"
+    )
+    if rejected:
+        note += f"已被用户拒绝的表（{'、'.join(rejected)}）不要再作为候选提案；"
+    note += "这只是核对建议，不排除其它未被拒绝的候选；若与你已收到的用户最新答复冲突，以用户答复为准。"
+    return note
 
 
 def _build_metadata_recall_sub_agent_config(

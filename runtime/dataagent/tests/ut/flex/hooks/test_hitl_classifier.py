@@ -120,9 +120,9 @@ class TestOverrideChain:
 
 
 class TestOverrideLogging:
-    """v47：override 生效时打 INFO 日志（``[hitl_classifier] override <name>: A -> B``）。
+    """：override 生效时打 INFO 日志（``[hitl_classifier] override <name>: A -> B``）。
 
-    追问式改判:在无人值守 run 里的观测缺口——下次 run 可直接
+    补 载体②（追问式改判）在无人值守 run 里的观测缺口——下次 run 可直接
     grep 统计各 override 的触发面，不再需要从 action 分布间接推断。
     """
 
