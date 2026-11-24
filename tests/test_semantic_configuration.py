@@ -124,6 +124,33 @@ def test_invalid_semantic_settings_fail_before_client_creation(config):
     assert "private-password" not in str(caught.value)
 
 
+@pytest.mark.parametrize(
+    "scenario",
+    [
+        "业务孪生",
+        "business_twin\nX-Injected: 1",
+        "business_twin\r\nX-Injected: 1",
+        "business_twin\x00traffic_insight",
+        "business_twin\x7f",
+    ],
+)
+def test_scenario_must_be_sendable_as_http_header(scenario):
+    """Reject header values httpx cannot encode, at startup rather than first use."""
+    with pytest.raises(ValidationError) as caught:
+        SemanticSettings.model_validate(
+            {"base_url": "http://semantic.test", "semantic_scenario": scenario}
+        )
+    assert "semantic.semantic_scenario" in str(caught.value)
+
+
+def test_scenario_validation_checks_the_stripped_value_and_keeps_configured_padding():
+    """Validate after stripping; the stored value stays as configured for the client."""
+    settings = SemanticSettings.model_validate(
+        {"base_url": "http://semantic.test", "semantic_scenario": " business_twin "}
+    )
+    assert settings.semantic_scenario == " business_twin "
+
+
 def test_tls_policy_is_explicit_and_independent_of_process_environment(monkeypatch):
     """Preserve the default and opt into verification without reading legacy globals."""
     monkeypatch.setenv("DATAAGENT_OUTBOUND_SSL_SERVICES", "semantic_layer")

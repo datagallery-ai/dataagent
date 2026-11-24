@@ -18,7 +18,7 @@ UDN 场景是 nl2sql 插件内置的两个场景包：`business_twin`（业务�
 3. 两场景共用的知识与机制（维度 join、LLM JSON 解析、时间粒度与当前日期规则）在命名空间共用目录 `scenarios/udn/common/`；
 4. 不配置 `scenario` 时走默认 `PerceptorNode`（full_schema / schema_linking），现有行为不变。
 
-边界：UDN 场景不启用 executor / selector（纯生成不执行）；不包含 cloud_core 执行引擎与旧观测设施（观测由宿主 tracing 体系承接）。宿主侧唯一配套是语义客户端的场景头：根级 `semantic.semantic_scenario` 配置让宿主客户端在除 health 外的请求上自动带 `X-Semantic-Scenario` 头，场景包原样透传宿主客户端；未配置时行为不变。
+边界：UDN 场景不启用 executor / selector（纯生成不执行）；不包含 cloud_core 执行引擎与旧观测设施（观测由宿主 tracing 体系承接）。宿主侧唯一配套是语义客户端的场景头：场景名在宿主 Agent 配置文件根级 `semantic.semantic_scenario` 配置（见 §5），宿主客户端据此在除 health 外的请求上自动带 `X-Semantic-Scenario` 头，场景包原样透传宿主客户端；未配置时，服务端按默认场景路由。
 
 一轮问题的运行流：
 
@@ -223,27 +223,18 @@ plugins:
 | `scenario` 缺省 | 默认模式，走现有 `PerceptorNode`（full_schema / schema_linking），行为不变 |
 | 取值 | 点分名，一段对应一级目录（`udn.business_twin` → `scenarios/udn/business_twin/`）；每段为标识符、一段及以上即合法，单段场景不设命名空间（`traffic` → `scenarios/traffic/`）；存在性 = 目录含 `scenario.py` 入口，装配时校验 |
 | 场景参数 | 不经配置：场景自带数据（选表旋钮、模式）为场景包常量或构造器默认值，改场景包一处代码即调整 |
-| 场景头 | `X-Semantic-Scenario` 由根级 `semantic.semantic_scenario` 提供（business_twin 部署为 `"business_twin"`、traffic_insight 部署为 `"traffic_insight"`）；未配置时不带场景头，语义请求打到服务端默认场景 |
+| 场景头 | `X-Semantic-Scenario` 由根级 `semantic.semantic_scenario` 提供（business_twin 部署为 `"business_twin"`、traffic_insight 部署为 `"traffic_insight"`）；未配置时不带场景头，服务端按默认场景路由 |
 | 节点段 | 复用现有逐节点段机制（`perceptor`…`selector`，出现时须构成前缀链）；两场景均启用四节点（无 executor / selector，纯生成不执行）。`validator.sql_security_enabled` 须显式开启——基座默认关；`generator.strategies` / `reflector.threshold` 的默认值与场景需求一致，显式写出仅为自述 |
 
 ## 6. 环境配置与启动示例
 
 ### 6.1 前置条件
 
-Linux 环境，需安装 uv 与 Node.js 22，Python 3.12 由 uv 在安装步骤中下载。
+需安装 uv 与 Node.js ≥22.12.0，Python 3.12 由安装流程自动下载。手动 npm 方式在 Linux / macOS / Windows 均可用；Linux 另有 `./deploy.sh` 一键部署（见仓库 README）。
 
-### 6.2 安装
+### 6.2 环境变量
 
-在仓库根目录：
-
-```bash
-npm install
-uv sync --project .
-```
-
-### 6.3 环境变量
-
-编辑 `$DATAAGENT_HOME/.env`（默认 `~/.dataagent/.env`，可用 `DATAAGENT_HOME` 改到其他目录）：
+编辑仓库根 `.env`，或 Home `.env`（`$DATAAGENT_HOME/.env`，默认 `~/.dataagent/.env`，可用 `DATAAGENT_HOME` 改到其他目录）：
 
 ```bash
 LLM_MODEL=your-model-name
@@ -252,30 +243,14 @@ LLM_API_KEY=replace-with-your-key
 SEMANTIC_BASE_URL=http://your-semantic-service
 ```
 
-### 6.4 启动
+### 6.3 启动方式
 
-后端默认地址 `http://127.0.0.1:8790`（来自配置文件 `server.host` / `server.port`），Web 界面默认 `http://127.0.0.1:3000`（`--web-host` / `--web-port` 可覆盖）；`examples/config-udn.yaml` 已设 `dataagent.entry = "nl2sql"` 直连对外与 `scenario = "udn.business_twin"`。
-
-#### 6.4.1 启动 GUI
+启动时指定 UDN 示例配置文件（已配置 business_twin 场景参数）：
 
 ```bash
 npm run start -- --config examples/config-udn.yaml
 ```
 
-#### 6.4.2 启动 TUI
+### 6.4 切换到 traffic_insight
 
-方式一：目前 TUI 不会自动加载根 `.env`，需要显式传给后端
-
-```bash
-npm run start:tui -- --config examples/config-udn.yaml --env-file .env
-```
-
-方式二：如果已经启动了 GUI，TUI 探测到后端会直接附着，此时只需
-
-```bash
-npm run start:tui
-```
-
-### 6.5 切换到 traffic_insight
-
-复制 `examples/config-udn.yaml` 后改三处：`plugins.config.nl2sql.scenario` → `"udn.traffic_insight"`，`database.db_id` → `"yunhe"`，`semantic.semantic_scenario` → `"traffic_insight"`，再按 §6.4 启动。
+复制 `examples/config-udn.yaml` 后改三处：`plugins.config.nl2sql.scenario` → `"udn.traffic_insight"`，`database.db_id` → `"yunhe"`，`semantic.semantic_scenario` → `"traffic_insight"`，再按 §6.3 启动。

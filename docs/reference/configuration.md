@@ -148,7 +148,7 @@ dataagent:
 | `username` | 字符串或省略 | 省略 | 与 `password` 成对。最短 1 |
 | `password` | 字符串或省略 | 省略 | 与 `username` 成对 |
 | `timeout_seconds` | 数 | `30` | 大于 0 的有限数 |
-| `semantic_scenario` | 字符串或省略 | 省略 | 去空白后非空。客户端把它作为 `X-Semantic-Scenario` 头标在除 health 外的每个请求上 |
+| `semantic_scenario` | 字符串或省略 | 省略 | 语义服务侧配置的场景名。客户端把它作为 `X-Semantic-Scenario` 头标在除 health 外的每个请求上；省略时不带该头，服务端按默认场景路由 |
 | `tls.verify_server` | 布尔 | `false` | `false` 且无客户端证书、无 cipher 时不校验服务端证书 |
 | `tls.ca_file` | 路径或省略 | 省略 | 仅在 `verify_server` 为 true 时作为 CA 文件 |
 | `tls.client_cert` | 路径或省略 | 省略 | 与 `client_key` 成对 |

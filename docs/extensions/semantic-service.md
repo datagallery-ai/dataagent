@@ -25,7 +25,7 @@ semantic:
 - `base_url` 不能为空白。客户端会规范成服务根，请求打到 `/api/semantic/v1/...`
 - `username` 和 `password` 必须同时出现或同时省略。出现时使用 HTTP Basic
 - `timeout_seconds` 默认 30 秒，必须是正的有限数
-- `semantic_scenario` 省略时请求不带场景头；配置时作为 `X-Semantic-Scenario` 头标在除 health 外的每个请求上
+- `semantic_scenario` 省略时请求不带场景头，服务端按默认场景路由；配置时作为 `X-Semantic-Scenario` 头标在除 health 外的每个请求上
 - TLS 文件路径相对声明它们的配置文件目录，支持 `~/`
 
 ## TLS
