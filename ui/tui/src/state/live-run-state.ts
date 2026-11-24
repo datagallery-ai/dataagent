@@ -28,7 +28,7 @@ export type LiveAudit = {
   elapsedMs?: number | undefined;
 };
 
-export type LiveRunStatus = "idle" | "running" | "completed" | "failed";
+export type LiveRunStatus = "idle" | "running" | "suspended" | "completed" | "failed";
 
 export type LiveToolCallStatus =
   | "pending"
@@ -233,11 +233,19 @@ export function reduceLiveRunEvent(state: LiveRun, event: AgUiLikeEvent): LiveRu
         ...createInitialLiveRun(),
         artifacts: state.artifacts,
         ...optionalRunId(runIdFromEvent(event)),
+        // HITL recovery has a new transport run ID, but continues the same
+        // tool calls. Keep their identity and original dispatch times.
+        ...(state.runStatus === "suspended" ? {
+          toolCalls: state.toolCalls.map(call => ({ ...call, ...optionalRunId(runIdFromEvent(event)) })),
+        } : {}),
         agentResponseComplete: false,
         runStatus: "running",
         runStartedAt: Date.now(),
       };
     case "RUN_FINISHED":
+      if ((event.metadata as Record<string, unknown> | undefined)?.status === "waiting_for_input") {
+        return { ...state, runStatus: "suspended", runFinishedAt: Date.now(), agentResponseComplete: false };
+      }
       if (isTerminalRunStatus(state.runStatus) && state.runStatus !== "completed") {
         return state;
       }

@@ -25,6 +25,7 @@ interface EnhancedInputBoxProps {
   onRestoreQueuedMessages?: () => string | null;
   ctrlCExitPending?: boolean | undefined;
   notice?: { message: string; kind: 'info' | 'error' } | null | undefined;
+  choices?: { id: string; options: readonly string[]; onSelect?: (value: string) => void } | undefined;
   cursorActive?: boolean | undefined;
   connectionStatus?: ConnectionStatus | undefined;
   onLayoutChange?: (rows: number) => void;
@@ -42,6 +43,7 @@ interface EnhancedInputBoxProps {
 }
 
 const MAX_INPUT_VIEWPORT_HEIGHT = 6;
+const MAX_CHOICE_VIEWPORT_ROWS = 4;
 const LARGE_PASTE_CHAR_THRESHOLD = 1000;
 const LARGE_PASTE_LINE_THRESHOLD = 10;
 
@@ -172,6 +174,7 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
   onRestoreQueuedMessages,
   ctrlCExitPending = false,
   notice,
+  choices,
   cursorActive = true,
   connectionStatus = 'connected',
   onLayoutChange,
@@ -204,6 +207,11 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
   const maxInputRows = Math.max(1, Math.min(MAX_INPUT_VIEWPORT_HEIGHT, Math.floor(terminalRows / 3)));
   const bufferRef = useRef<TextBuffer>(new TextBuffer('', 1, visualWidth));
   const buffer = bufferRef.current;
+  const choiceSelectionRef = useRef<{ id: string; index: number } | undefined>(undefined);
+  const choiceCount = choices?.options.length ?? 0;
+  const choiceRows = Math.min(choiceCount, MAX_CHOICE_VIEWPORT_ROWS);
+  const selectedChoice = choices && choiceSelectionRef.current?.id === choices.id
+    ? Math.min(choiceSelectionRef.current.index, choiceCount - 1) : -1;
   const inputIsActive = isRawModeSupported && cursorActive && !disabled;
   const inputRef = useRef<DOMElement>(null);
   useBoxMetrics(inputRef);
@@ -276,11 +284,14 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
   ), [availableCommands, getSlashQuery]);
 
   const hint = ctrlCExitPending ? 'Press Ctrl+C again to exit.'
-    : notice?.message ?? (!disabled && !showSlashPopover ? completionHint : '');
+    : (notice?.message ?? (!disabled && choiceCount > 0
+      ? '上下键选择，Enter 提交；也可直接输入回答。'
+      : !disabled && !showSlashPopover ? completionHint : '')).replace(/\s*[\r\n]+\s*/g, ' ');
   const currentLayoutRows = useCallback(() => (
     inputBoxRowsFor(Math.min(maxInputRows, buffer.allVisualLines.length))
       + (modelName ? 1 : 0) + (hint ? 1 : 0)
-  ), [buffer, maxInputRows, modelName, hint]);
+      + choiceRows
+  ), [buffer, maxInputRows, modelName, hint, choiceRows]);
 
   const syncChange = useCallback(() => {
     onChange(buffer.text);
@@ -358,7 +369,7 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
     );
   }, []);
 
-  const submitText = useCallback((rawText: string) => {
+  const submitText = useCallback((rawText: string, submit = onSubmit) => {
     const trimmed = rawText.trim();
     if (!trimmed) {
       return;
@@ -368,6 +379,7 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
     }
 
     const finalValue = expandPendingPastes(rawText);
+    choiceSelectionRef.current = undefined;
     commandHistory.add(finalValue);
     commandHistory.reset();
     completionRef.current.reset();
@@ -377,7 +389,7 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
     onChange('');
     reportLayoutRows(currentLayoutRows());
     redraw();
-    onSubmit(finalValue);
+    submit(finalValue);
   }, [
     buffer,
     clearPendingPastes,
@@ -560,6 +572,24 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
     (input, key) => {
       if (isMouseInput(input)) {
         return;
+      }
+
+      if (choices && choiceCount > 0 && !buffer.text
+        && !key.shift && !key.ctrl && !key.meta && !key.super) {
+        const selected = choiceSelectionRef.current?.id === choices.id
+          ? Math.min(choiceSelectionRef.current.index, choiceCount - 1) : -1;
+        if (key.upArrow || key.downArrow) {
+          const step = key.upArrow ? -1 : 1;
+          const index = selected < 0 ? (step > 0 ? 0 : choiceCount - 1)
+            : (selected + step + choiceCount) % choiceCount;
+          choiceSelectionRef.current = { id: choices.id, index };
+          redraw();
+          return;
+        }
+        if (isPlainReturn(key)) {
+          if (selected >= 0) submitText(choices.options[selected]!, choices.onSelect);
+          return;
+        }
       }
 
       const backspaceCount = rawBackspaceCount(input);
@@ -835,6 +865,11 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
   const layoutRows = currentLayoutRows();
   const layoutSignature = [layoutRows, visualWidth].join(':');
   const isBufferEmpty = buffer.text.length === 0;
+  // A bounded vertical list keeps the selected option visible and leaves room for input.
+  const choiceLabels = choices?.options.map(option => `[${option}]`) ?? [];
+  const activeChoice = isBufferEmpty ? selectedChoice : -1;
+  const firstChoice = Math.max(0, Math.min(choiceCount - choiceRows, activeChoice - choiceRows + 1));
+  const lastChoice = firstChoice + choiceRows;
 
   useLayoutEffect(() => {
     reportLayoutRows(layoutRows);
@@ -928,10 +963,24 @@ export const EnhancedInputBox: React.FC<EnhancedInputBoxProps> = ({
         </Box>
       )}
 
-      {hint && <Text color={ctrlCExitPending ? inkColors.warning : notice?.kind === 'error' ? inkColors.error : inkColors.muted} wrap="truncate-end">{hint}</Text>}
+      {hint && <Box height={1} flexShrink={0} overflowY="hidden">
+        <Text color={ctrlCExitPending ? inkColors.warning : notice?.kind === 'error' ? inkColors.error : inkColors.muted} wrap="truncate-end">{hint}</Text>
+      </Box>}
+      {choiceCount > 0 && <Box flexDirection="column" height={choiceRows} flexShrink={0} overflowY="hidden">
+        {choiceLabels.slice(firstChoice, lastChoice).map((label, offset) => {
+          const index = firstChoice + offset;
+          const active = index === activeChoice && inputIsActive;
+          return <Box key={index} height={1} flexShrink={0}>
+            <Text bold={active} color={active ? inkColors.accent : inkColors.muted} wrap="truncate-end">
+              {active ? `› ${label}` : `  ${label}`}
+            </Text>
+          </Box>;
+        })}
+      </Box>}
       <Box
         flexDirection="column"
         width="100%"
+        flexShrink={0}
         backgroundColor={inkColors.surface}
         paddingY={1}
       >

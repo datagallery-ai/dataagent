@@ -10,6 +10,7 @@ import { buildChatLines, chatContentWidth } from './transcript-lines.js';
 import { textWidth } from './text-width.js';
 import { StatusBar } from './StatusBar.js';
 import { SubagentProgressLine } from './SubagentProgress.js';
+import { InlineToolCall } from './InlineToolCall.js';
 import type { SubagentProgress } from '../state/subagent-progress.js';
 
 const text = (id: string, role: 'user' | 'assistant', content: string): DisplayMessage => ({
@@ -28,6 +29,15 @@ const action: DisplayMessage = {
 const renderPlain = (node: React.ReactNode, columns: number) => stripVTControlCharacters(
   renderToString(<Box width={columns} flexDirection="column">{node}</Box>, { columns }),
 );
+
+it('labels an unresolved feedback call as waiting for input, not queued', () => {
+  const feedback: LiveToolCallRecord = { id: 'ask', name: 'request_human_feedback', status: 'running' };
+  const waiting = renderPlain(<InlineToolCall toolCall={feedback} />, 100);
+  assert.match(waiting, /Waiting for input/);
+  assert.doesNotMatch(waiting, /Queued/);
+  const completed = renderPlain(<InlineToolCall toolCall={{ ...feedback, status: 'success' }} />, 100);
+  assert.doesNotMatch(completed, /Waiting for input|Queued/);
+});
 
 for (const [agentName, stepName] of [['nl2sql', 'validator'], ['report_writer', 'generator']] as const)
 for (const columns of [60, 80, 160]) it(`${agentName} progress uses backend step names, one bounded row and retry history at ${columns} columns`, (t) => {

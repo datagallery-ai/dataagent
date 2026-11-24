@@ -520,16 +520,25 @@ export type SessionActiveRunDto = {
   userInputPreview: string;
 };
 
+export type PendingInteraction = {
+  type: "human_feedback";
+  interruptId: string;
+  message: string;
+  options?: string[];
+  validationError?: string;
+};
+
 /** Same document as `GET /sessions/{threadId}`. */
 export type NativeSessionDetail = {
   threadId: string;
   title: string;
   createdAt: string;
   updatedAt: string;
-  status: "running" | "completed" | "error" | "interrupted";
+  status: "running" | "completed" | "error" | "interrupted" | "waiting_for_input";
   hasCheckpoint: boolean;
   messages: Array<{ id?: string; role?: string; content?: unknown }>;
   notice: string | null;
+  pendingInteractions?: PendingInteraction[];
 };
 
 export type SessionConversationDto = {

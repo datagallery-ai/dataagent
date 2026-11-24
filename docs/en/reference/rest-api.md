@@ -25,6 +25,7 @@ Unknown paths return 404 with `RESOURCE_NOT_FOUND`; a wrong method returns 405 w
 | GET, HEAD | `/healthz` | Always 200. When the engine is ready, `data.conversation` includes `ready`, `protocol`, `instanceId`, `model`, `plugins`, `home`, `entry`, `user`, and `timeoutSeconds`; `ready` is the only readiness flag. Otherwise `conversation` is only `ready: false`. |
 | GET, HEAD | `/ready` | 200 when the engine is ready, with `data.status` set to `ready`. Otherwise 503. |
 | GET | `/api/v1/me` | The current `--user`. The id is `default` when the engine is not ready. There is no signed-in account. |
+| GET | `/api/v1/capabilities` | `interaction.resume`, `conversation.memory`, and `artifact.list` are true; `artifact.export` is false. |
 
 `/healthz` does not return input directories, the state directory, or the configuration body.
 
@@ -33,12 +34,12 @@ Unknown paths return 404 with `RESOURCE_NOT_FOUND`; a wrong method returns 405 w
 | Method | Path | Purpose |
 | --- | --- | --- |
 | GET | `/api/v1/sessions?limit=` | Sessions for the current user. Web and TUI both use this route. `limit` is 1 to 100, default 50. |
-| GET | `/api/v1/sessions/{threadId}` | List fields plus `messages` and `notice`. Messages come from the saved checkpoint when the row has one, otherwise from the latest graph state on that thread. 409 when the binding cannot be opened. 404 for another user's session. A running turn can still be read. |
+| GET | `/api/v1/sessions/{threadId}` | List fields plus `messages`, `notice`, and `pendingInteractions`. Messages come from the saved checkpoint when the row has one, otherwise from the latest graph state on that thread. 409 when the binding cannot be opened. 404 for another user's session. A running turn can still be read. |
 | GET | `/api/v1/sessions/{threadId}/outputs` | Output files. Skips symlinks, `artifacts/conversation_history`, and `artifacts/large_tool_results`. 404 when the session does not exist. |
 | GET | `/api/v1/sessions/{threadId}/outputs/preview?path=` | UTF-8 text, at most 64 KiB; `truncated` is `true` when cut. Non-text is 415. |
 | POST | `/api/v1/runs/{runId}/cancel` | Cancel the active turn. `runId` comes from the `POST /api/v1/runs` request body. Returns an empty 204 on success, 404 when that run does not exist or has finished. After a cancel the event stream ends with `RUN_ERROR` whose `code` is `CANCELLED`; the session is marked `interrupted` and the next turn continues from the saved checkpoint. |
 
-These paths are not implemented: login, `/api/v1/capabilities`, `/api/copilotkit`, `/api/copilotkit/info`, datasources, knowledge bases, workspace configuration, session rename, delete, branches, or a trace DAG. They return the 404 envelope.
+These paths are not implemented: login, `/api/copilotkit`, `/api/copilotkit/info`, datasources, knowledge bases, workspace configuration, session rename, delete, branches, or a trace DAG. They return the 404 envelope.
 
 ## Conversation
 
@@ -49,10 +50,34 @@ These paths are not implemented: login, `/api/v1/capabilities`, `/api/copilotkit
 Constraints for `POST /api/v1/runs`:
 
 - `threadId` and `runId` are safe ids of at most 128 characters
-- `messages` is exactly one item with an `id`, `role` is `user`, and `content` is a nonempty string
+- For a new message, `messages` is exactly one item with an `id`, `role` is `user`, and `content` is a nonempty string
 - `state` is `null` or `{}`
 - `tools`, `context`, and `forwardedProps` are required and empty (`[]`, `[]`, `{}`)
 - `resume` and `parentRunId` are not accepted
+
+For HITL, keep the same `threadId`, generate a new `runId`, and send `messages: []`
+with a nonempty `answers` map instead of a new message:
+
+```json
+{
+  "threadId": "thread-1", "runId": "reply-1",
+  "messages": [], "answers": {"<interruptId>": "user_id"},
+  "state": {}, "tools": [], "context": [], "forwardedProps": {}
+}
+```
+
+A paused turn ends its SSE stream with `CUSTOM name="human_feedback"`, whose value
+is the current pending interaction array, followed by `MESSAGES_SNAPSHOT` and
+`RUN_FINISHED` with `metadata.status="waiting_for_input"`. Each interaction contains
+`type: "human_feedback"`, `interruptId`, `message`, and optional `options` and
+`validationError`. Session detail exposes the same array as `pendingInteractions`,
+including after a server restart. Parallel questions can be answered in batches.
+Successful completion sends an empty interaction array and `metadata.status="completed"`.
+Session status can be `running`, `waiting_for_input`, `completed`, `error`, or `interrupted`.
+
+New messages while waiting, unknown or resolved interrupt IDs, and reuse of a
+submitted `runId` in the same session return 409. Empty text answers ask again with
+`validationError`. Waiting for user input does not consume the execution timeout.
 
 One session runs one turn at a time. Validation failures are 422 with `BAD_REQUEST`. Business rejections are usually 409 with `CONFLICT`. Both use the error envelope. Other codes: 400 `BAD_REQUEST`, 404 `RESOURCE_NOT_FOUND`, 415 `UNSUPPORTED_FILE_TYPE`, 5xx `INTERNAL_ERROR`. After the stream has started with 200, a run failure is an event, not a changed HTTP status.
 

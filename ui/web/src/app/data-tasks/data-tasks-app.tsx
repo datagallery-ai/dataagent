@@ -278,6 +278,7 @@ import { useSessionNotice } from "./components/chat/session-notice";
 import { SessionConversationScrollRestore } from "./components/chat/SessionConversationScrollRestore";
 import { SessionArtifactsRestore } from "./components/chat/SessionArtifactsRestore";
 import { CollaborationInterruptHandler } from "./components/chat/CollaborationInterruptHandler";
+import { HitlInteractionHandler } from "./components/chat/HitlInteractionHandler";
 import { RestoredInterruptHandler } from "./components/chat/RestoredInterruptHandler";
 import { CollaborationPendingInterruptSlot } from "./components/chat/CollaborationPendingInterruptSlot";
 import { usePendingCollaborationInterrupt } from "./components/chat/pending-collaboration-interrupt";
@@ -7651,6 +7652,7 @@ function SessionChatRuntime({
         agentId={agentId}
         threadId={threadId}
       />
+      <HitlInteractionHandler agentId={agentId} threadId={threadId} />
       <RestoredInterruptHandler
         key={`restored-${threadId}`}
         agentId={agentId}

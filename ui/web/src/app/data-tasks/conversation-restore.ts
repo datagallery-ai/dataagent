@@ -1456,6 +1456,9 @@ export function liveRunFromNativeMessages(
     }
   }
 
+  if (status === "waiting_for_input") {
+    return reduceLiveRunEvent(next, { type: "RUN_FINISHED", metadata: { status } });
+  }
   if (!sawTool && !messages.some((message) => message.role === "assistant")) {
     return createInitialLiveRun();
   }

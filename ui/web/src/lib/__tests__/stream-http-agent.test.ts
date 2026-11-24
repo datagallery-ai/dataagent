@@ -25,6 +25,23 @@ function frame(event: unknown): string {
 }
 
 describe("StreamHttpAgent", () => {
+  it("posts HITL answers and preserves the waiting terminal status", async () => {
+    let body: unknown;
+    const pending = [{ type: "human_feedback", interruptId: "ask", message: "Which ID?" }];
+    const agent = new StreamHttpAgent({ fetch: async (_url, init) => {
+      body = JSON.parse(String(init.body));
+      return sseResponse([frame(started), frame({ type: "CUSTOM", name: "human_feedback", value: pending }),
+        frame({ ...finished, metadata: { status: "waiting_for_input" } })]);
+    } });
+    const events = await firstValueFrom(agent.run({
+      threadId: "thread-1", runId: "run-1", messages: [], tools: [], context: [], state: {},
+      forwardedProps: { hitlAnswers: { first: "user_id" } },
+    }).pipe(toArray()));
+    expect(body).toEqual({ threadId: "thread-1", runId: "run-1", messages: [],
+      answers: { first: "user_id" }, tools: [], context: [], state: {}, forwardedProps: {} });
+    expect(events[1]).toMatchObject({ name: "human_feedback", value: pending });
+    expect(events.at(-1)).toMatchObject({ metadata: { status: "waiting_for_input" } });
+  });
   it("posts one user message and rewrites child progress for the old client", async () => {
     let captured: { url: string; body: unknown; accept: string | null } | undefined;
     const agent = new StreamHttpAgent({

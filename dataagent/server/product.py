@@ -46,6 +46,17 @@ def register_product_routes(app: FastAPI) -> None:
             return error("CONVERSATION_UNAVAILABLE", "Conversation engine is not ready.", 503)
         return success({"status": "ready", "conversation": conversation})
 
+    @app.get("/api/v1/capabilities")
+    async def capabilities() -> JSONResponse:
+        return success(
+            {
+                "interaction.resume": True,
+                "conversation.memory": True,
+                "artifact.export": False,
+                "artifact.list": True,
+            }
+        )
+
     @app.get("/api/v1/me")
     async def me() -> JSONResponse:
         user_id = _local_user_id(app)

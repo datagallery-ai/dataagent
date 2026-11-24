@@ -4,6 +4,7 @@ import {
   runIdFromEvent,
   type LiveRun,
   type LiveToolCallRecord,
+  isTerminalToolCallStatus,
   createInitialSessionUsage,
   deriveRunUsage,
   accumulateSessionUsage,
@@ -422,7 +423,13 @@ class StateStore {
     const byId = new Map(results.map((result) => [result.id, result]));
     const toolCalls = this.state.toolCalls.map((call) => {
       const saved = byId.get(call.id);
-      return saved ? { ...call, status: saved.status, result: saved.result } : call;
+      // A call without its ToolMessage is still in progress. The snapshot's
+      // placeholder "pending" must not undo a streamed running/result state.
+      if (!saved || !isTerminalToolCallStatus(saved.status)) return call;
+      return {
+        ...call, status: saved.status, result: saved.result,
+        finishedAtMs: call.finishedAtMs ?? Date.now(),
+      };
     });
     let next = this.state;
     for (const call of toolCalls) {

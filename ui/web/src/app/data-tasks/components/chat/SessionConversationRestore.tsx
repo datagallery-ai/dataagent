@@ -23,6 +23,7 @@ import {
   useLiveRunSetters,
 } from "../../use-data-gallery-run";
 import { clearConversationBranchSnapshot } from "../../conversation-branch-store";
+import { setHitlPending } from "../../../../lib/hitl-state";
 import { setSessionNotice } from "./session-notice";
 
 export function SessionConversationRestore({
@@ -119,6 +120,7 @@ export function SessionConversationRestore({
           return;
         }
         setSessionNotice(threadId, session.notice);
+        setHitlPending(threadId, session.pendingInteractions ?? []);
 
         const currentAgent = agentRef.current;
         if (

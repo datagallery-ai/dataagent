@@ -41,6 +41,7 @@
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
 | `GET` | `/api/v1/me` | 当前用户。引擎未就绪时 id 为 `default` |
+| `GET` | `/api/v1/capabilities` | `interaction.resume`、`conversation.memory`、`artifact.list` 为 true，`artifact.export` 为 false |
 
 未知路径返回 404 信封，错误码 `RESOURCE_NOT_FOUND`。路径存在但方法不对时返回 405，错误码 `METHOD_NOT_ALLOWED`。`/healthz` 和 `/ready` 也接受 `HEAD`，其状态码与 `GET` 一致、响应体为空；OpenAPI 只列出 `GET` 操作。对话路径（`/api/v1/runs`、`/sessions*`、`/runs/*`、`/a2a/jsonrpc`）在引擎未就绪时返回 503；Agent Card 不受影响。
 
@@ -51,11 +52,26 @@
 约束：
 
 - `threadId`、`runId` 是最长 128 的安全 ID
-- `messages` 恰好一条，带 `id`，`role` 为 `user`，`content` 为非空字符串
+- 普通输入的 `messages` 恰好一条，带 `id`，`role` 为 `user`，`content` 为非空字符串
 - 不接受子代理消息
 - `state` 只能是 `null` 或 `{}`
 - `tools`、`context`、`forwardedProps` 必须出现，且为空（`[]`、`[]`、`{}`）
 - `resume` 和 `parentRunId` 不能使用
+
+回答 HITL 时复用此接口，保持 `threadId`，生成新的 `runId`，发送空 `messages`
+和非空 `answers`。键是待回答项的 `interruptId`，值是文本回答，可以一次回答部分或全部问题：
+
+```json
+{
+  "threadId": "thread-1", "runId": "reply-1",
+  "messages": [], "answers": {"<interruptId>": "user_id"},
+  "state": {}, "tools": [], "context": [], "forwardedProps": {}
+}
+```
+
+等待回答时普通输入返回 409；未知或已解决的交互 ID、同一会话重复使用已提交的
+`runId` 也返回 409。客户端不能同时提交新消息和回答。空白回答由 HITL 重新提问，
+并返回 `validationError`。服务重启后仍可查询并回答待处理交互。
 
 成功响应是 `text/event-stream`，带 `Cache-Control: no-cache` 和 `X-Accel-Buffering: no`。事件见 [事件](events.md)。
 
@@ -106,7 +122,7 @@
 }
 ```
 
-`status` 为 `running`、`completed`、`error` 或 `interrupted`。进程启动时，索引里仍为 `running` 的行会改成 `interrupted`，旧版本写入的 `complete` 会改成 `completed`。
+`status` 为 `running`、`waiting_for_input`、`completed`、`error` 或 `interrupted`。进程启动时，索引里仍为 `running` 的行会改成 `interrupted`，旧版本写入的 `complete` 会改成 `completed`。
 
 ## `GET /api/v1/sessions/{threadId}`
 
@@ -115,6 +131,7 @@
 | 字段 | 含义 |
 | --- | --- |
 | `messages` | 下一轮 `POST /api/v1/runs` 接着用的消息。行上有 `last_checkpoint_id` 时读该 Checkpoint，否则读这个线程的最新图状态 |
+| `pendingInteractions` | 待回答项数组；每项仅含 `type: "human_feedback"`、`interruptId`、`message`，以及可选 `options`、`validationError`。无待回答项时为 `[]` |
 | `notice` | 中断或失败且有 Checkpoint 时说明已恢复到保存点；中断或失败但没有 Checkpoint 时说明继续当前对话；完成或仍在运行时为 null |
 
 运行中也可以读。绑定缺失或打不开时返回 409。当前用户没有该会话时返回 404。网页和 TUI 都读这份文档。

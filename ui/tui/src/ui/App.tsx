@@ -36,7 +36,7 @@ import { classifyError, formatErrorMessage, errorLogger } from '../protocol/erro
 import { commandProcessor } from '../commands/index.js';
 import type { CommandContext, CommandResult } from '../commands/types.js';
 import { ConfigClientError, type ConfigClient, type Datasource, type SessionListItem, type Skill } from '../config/index.js';
-import { restoreMessages, type TuiContext } from '../protocol/session-client.js';
+import { interaction, type PendingInteraction, restoreMessages, type TuiContext } from '../protocol/session-client.js';
 import type { Message } from '@ag-ui/core';
 import { TUI_COMMANDS } from '../connect.js';
 import { useTerminalLifecycle } from '../terminal-lifecycle.js';
@@ -345,6 +345,27 @@ export const App: React.FC<AppProps> = ({
   const appRows = Math.max(1, terminalRows);
   const workspaceRows = appRows;
   const [state, setState] = useState<TuiAppState>(store.getState());
+  const pendingHitl = useRef<{ threadId: string; items: PendingInteraction[] }>({ threadId: '', items: [] });
+  const checkpointMessageIds = useRef<{ threadId: string; ids: Set<string> }>({ threadId: '', ids: new Set() });
+  const showPendingHitl = (threadId: string, items: PendingInteraction[]) => {
+    const previous = pendingHitl.current;
+    pendingHitl.current = { threadId, items };
+    const first = items[0];
+    if (!first) return;
+    if (previous.threadId !== threadId || JSON.stringify(previous.items[0]) !== JSON.stringify(first)) {
+      store.finalizeAssistantMessage();
+      store.addAssistantMessage([
+        first.message, first.options?.length ? `候选：${first.options.join(' / ')}` : '',
+        first.validationError ?? '',
+      ].filter(Boolean).join('\n'));
+      chatAreaRef.current?.scrollToBottom();
+    }
+    const hint = first.options?.length
+      ? '请回答上方问题：上下键选择，Enter 提交；也可直接输入回答。'
+      : '请回答上方问题后按 Enter 继续。';
+    setCommandNotice({ kind: 'info', message: `${hint}${items.length > 1 ? `（还有 ${items.length - 1} 个问题待回答）` : ''}` });
+  };
+
   const [inputFocused, setInputFocused] = useState(false);
   const [commandNotice, setCommandNotice] = useState<CommandNotice | null>(null);
   const [activeDatasourceId, setActiveDatasourceId] = useState<string | undefined>(
@@ -465,6 +486,12 @@ export const App: React.FC<AppProps> = ({
   const scrollableRowCount = availableContentRows(workspaceRows, controlsRowCountForViewport);
   const chatViewportRowCount = scrollableRowCount;
   const inputDisabled = isRestoringSession;
+  const pendingInteraction = state.runStatus !== 'running' && pendingHitl.current.threadId === state.threadId
+    ? pendingHitl.current.items[0] : undefined;
+  const hitlChoices = pendingInteraction?.options?.length ? {
+    id: `${state.threadId}:${pendingInteraction.interruptId}`, options: pendingInteraction.options,
+    onSelect: (value: string) => { void handleAgentQuery(value); },
+  } : undefined;
   const inputCommands = useMemo(
     () => tui ? TUI_COMMANDS : uniqueStrings([
       ...DEFAULT_COMMANDS,
@@ -778,8 +805,14 @@ export const App: React.FC<AppProps> = ({
         const session = await tui.sessions.getSession(id);
         clearQueuedPrompts();
         store.restoreSession({ threadId: id, ...restoreMessages(session.messages) });
+        checkpointMessageIds.current = { threadId: id, ids: new Set(session.messages.map(message => message.id)) };
+        pendingHitl.current = { threadId: id, items: [] };
+        showPendingHitl(id, session.pendingInteractions);
+        if (session.pendingInteractions.length) {
+          store.handleLiveRunEvent({ type: 'RUN_FINISHED', metadata: { status: 'waiting_for_input' } });
+        }
         chatAreaRef.current?.reset();
-        setCommandNotice({ kind: 'info', message: session.notice ?? `Restored: ${session.title}` });
+        if (!session.pendingInteractions.length) setCommandNotice({ kind: 'info', message: session.notice ?? `Restored: ${session.title}` });
       } catch (error) {
         setCommandNotice({ kind: 'error', message: `Resume failed: ${error instanceof Error ? error.message : String(error)}` });
       } finally {
@@ -1267,6 +1300,8 @@ export const App: React.FC<AppProps> = ({
 
   // Handle agent query execution
   const handleAgentQuery = async (input: string) => {
+    const hitl = pendingHitl.current.threadId === store.getState().threadId ? pendingHitl.current.items[0] : undefined;
+    const hitlAnswers = hitl ? { [hitl.interruptId]: input } : undefined;
     setCommandNotice(null);
     const resolvedActiveDatasourceId = activeDatasourceId ?? await resolveDefaultDatasourceId();
     store.addUserMessage(input);
@@ -1293,7 +1328,8 @@ export const App: React.FC<AppProps> = ({
       const runId = `run-${Date.now()}-${Math.random().toString(36).substring(7)}`;
       if (tui) {
         return {
-          threadId, runId, messages: messages.filter((message) => message.role === 'user').slice(-1),
+          threadId, runId, messages: hitlAnswers ? [] : messages.filter((message) => message.role === 'user').slice(-1),
+          ...(hitlAnswers ? { answers: hitlAnswers } : {}),
           tools: [], context: [], state: {}, forwardedProps: {},
         };
       }
@@ -1443,6 +1479,13 @@ export const App: React.FC<AppProps> = ({
             continue;
           }
 
+          if (runtimeEvent.type === 'CUSTOM' && runtimeEvent.name === 'human_feedback') {
+            // Commit any preceding model text before appending the question,
+            // so a delayed text flush cannot overwrite the interaction.
+            flushTextBuffer(false);
+            const values = Array.isArray(runtimeEvent.value) ? runtimeEvent.value : [];
+            showPendingHitl(threadId, values.map(value => interaction.parse(value)));
+          }
           // Handle specific event types for message streaming
           if (isReasoningStartEvent(runtimeEvent)) {
             flushTextBuffer();
@@ -1485,7 +1528,7 @@ export const App: React.FC<AppProps> = ({
             flushTextBuffer(false);
             store.finalizeReasoningMessage();
             storeCurrentRunEvent(runtimeEvent);
-            if (tui) {
+            if (tui && !pendingHitl.current.items.length) {
               store.addRunSummary(threadId, runId, 'completed', performance.now() - startedAt);
             }
           } else if (event.type === 'RUN_ERROR') {
@@ -1524,11 +1567,14 @@ export const App: React.FC<AppProps> = ({
             // result rules, without replacing the streamed text.
             store.reconcileToolResults(restoreMessages(runtimeEvent.messages as Message[]).toolCalls);
             const snapshot = runtimeEvent.messages as Message[];
+            const previousIds = checkpointMessageIds.current.threadId === threadId ? checkpointMessageIds.current.ids : new Set<string>();
             const boundary = snapshot.findIndex((message) => message.role === 'user' && message.id === userMessageId);
-            if (boundary < 0) {
+            checkpointMessageIds.current = { threadId, ids: new Set(snapshot.map(message => message.id)) };
+            if (!hitlAnswers && boundary < 0) {
               getLogger().warn('Snapshot missing current user boundary', { threadId, runId, userMessageId });
             } else {
-              for (const answer of snapshot.slice(boundary + 1)) {
+              const replies = hitlAnswers ? snapshot.filter(message => !previousIds.has(message.id)) : snapshot.slice(boundary + 1);
+              for (const answer of replies) {
                 if (answer.role !== 'assistant' || typeof answer.content !== 'string'
                   || !answer.content || streamedMessageIds.has(answer.id)) continue;
                 streamedMessageIds.add(answer.id);
@@ -1670,6 +1716,7 @@ export const App: React.FC<AppProps> = ({
   useEffect(() => {
     if (drainingQueuedPromptRef.current) return;
     if (isRestoringSession || state.runStatus === 'running') return;
+    if (pendingHitl.current.threadId === state.threadId && pendingHitl.current.items.length) return;
 
     const runQueuedPrompt = handleAgentQueryRef.current;
     if (!runQueuedPrompt) return;
@@ -1687,12 +1734,13 @@ export const App: React.FC<AppProps> = ({
         await runQueuedPrompt(nextPrompt);
       } finally {
         drainingQueuedPromptRef.current = false;
-        if (queuedPromptsRef.current.length > 0 && store.getState().runStatus !== 'running') {
+        if (queuedPromptsRef.current.length > 0 && store.getState().runStatus !== 'running'
+          && !(pendingHitl.current.threadId === store.getState().threadId && pendingHitl.current.items.length)) {
           setQueuedPrompts([...queuedPromptsRef.current]);
         }
       }
     })();
-  }, [isRestoringSession, queuedPrompts, state.runStatus]);
+  }, [isRestoringSession, queuedPrompts, state.runStatus, state.threadId]);
 
   // Handle input change (no-op - InputBox manages its own local state)
   const handleInputChange = (value: string) => {
@@ -1872,6 +1920,7 @@ export const App: React.FC<AppProps> = ({
                           onRestoreQueuedMessages={popAllQueuedPrompts}
                           ctrlCExitPending={ctrlCPressedOnce}
                           notice={commandNotice}
+                          choices={hitlChoices}
                           connectionStatus={state.connectionStatus}
                           cursorActive={!pickerOpen && !suspended}
                           disabled={inputDisabled}
@@ -1974,6 +2023,7 @@ export const App: React.FC<AppProps> = ({
                   onRestoreQueuedMessages={popAllQueuedPrompts}
                   ctrlCExitPending={ctrlCPressedOnce}
                   notice={commandNotice}
+                  choices={hitlChoices}
                   connectionStatus={state.connectionStatus}
                   cursorActive={!pickerOpen && !suspended}
                   onLayoutChange={requestControlsMeasurement}

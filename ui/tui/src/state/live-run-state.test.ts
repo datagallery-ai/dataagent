@@ -9,6 +9,26 @@ it('duplicate starts retain dispatch time and all in-progress tool state', () =>
   assert.equal(reduceLiveRunEvent(state, { type: 'RUN_STARTED', runId: 'root' }), state);
 });
 
+it('HITL recovery keeps tool identity and timing until its result, while a new task starts clean', () => {
+  let state = reduceLiveRunEvent(createInitialLiveRun(), { type: 'RUN_STARTED', runId: 'question' });
+  state = reduceLiveRunEvent(state, { type: 'TOOL_CALL_START', toolCallId: 'ask', toolCallName: 'request_human_feedback' });
+  const startedAt = state.toolCalls[0]!.startedAtMs;
+  state = reduceLiveRunEvent(state, { type: 'RUN_FINISHED', metadata: { status: 'waiting_for_input' } });
+  state = reduceLiveRunEvent(state, { type: 'RUN_STARTED', runId: 'answer' });
+  assert.equal(state.toolCalls.length, 1);
+  assert.equal(state.toolCalls[0]?.runId, 'answer');
+  assert.equal(state.toolCalls[0]?.startedAtMs, startedAt);
+  state = reduceLiveRunEvent(state, { type: 'TOOL_CALL_RESULT', toolCallId: 'ask', content: 'user_id' });
+  assert.equal(state.toolCalls[0]?.name, 'request_human_feedback');
+  assert.equal(state.toolCalls[0]?.status, 'success');
+  const finishedAt = state.toolCalls[0]?.finishedAtMs;
+  assert.ok(finishedAt !== undefined);
+  state = reduceLiveRunEvent(state, { type: 'RUN_FINISHED' });
+  assert.equal(state.toolCalls[0]?.finishedAtMs, finishedAt);
+  state = reduceLiveRunEvent(state, { type: 'RUN_STARTED', runId: 'next-task' });
+  assert.deepEqual(state.toolCalls, []);
+});
+
 it('snapshots and deltas cannot finish an active root run', () => {
   let state = reduceLiveRunEvent(createInitialLiveRun(), { type: 'RUN_STARTED', runId: 'root' });
   for (const event of [
