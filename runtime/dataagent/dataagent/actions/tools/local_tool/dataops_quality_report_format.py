@@ -16,15 +16,16 @@
 小节                          内容
 ============================  ==================================================
 ① 校验概况                    这一轮查了什么、查没查完
-② 校验项执行情况              **每一个**校验项一行状态
+② 校验项执行情况              **每一个**校验项一行状态 + 实际查出来的值
 ③ 字段级指标                  逐字段覆盖率 / 单一值比率 / 异常值占比
 ④ 表级指标                    数据行数 / 主键重复率
 ⑤ 数据示例                    **查出来的数据示例**（本轮抽到的原始行）
-⑥ 正确性违规明细              结构化违规表 + 纵向明细
-⑦ 告警明细                    可读的告警文案列表
-⑧ 流程型校验明细              常识检测 / 回源比对（含抽样数据）
-⑨ 自修正结果                  收敛 / 未收敛 / 误报 / 已关闭 / 执行失败
-⑩ 交付结论                    可否交付 + 还需要人工做什么
+⑥ 各校验项数据示例            **每一项**校验实际查出来的取值（逐字段）
+⑦ 正确性违规明细              结构化违规表 + 纵向明细
+⑧ 告警明细                    可读的告警文案列表
+⑨ 流程型校验明细              常识检测 / 回源比对（含抽样数据）
+⑩ 自修正结果                  收敛 / 未收敛 / 误报 / 已关闭 / 执行失败
+⑪ 交付结论                    可否交付 + 还需要人工做什么
 ============================  ==================================================
 
 **为什么必须固定形状**：报告格式每次都不一样时，用户每次都要重新扫一遍
@@ -34,6 +35,11 @@
 **为什么必须有「数据示例」小节**：校验结论（「非空率 0.9500」「抽样 20 行，
 发现 0 处违规」）是没有内容支撑的 —— 用户看不到一行业务数据，无从判断
 「这批数据到底长什么样」「指标是不是算在正确的数据上」。
+
+**为什么必须有「各校验项数据示例」小节**：「数据示例」给的是**整行**原始
+数据，用户得自己从行里找「哪个值算出了非空率 0.9500」。这一节把**每一项
+校验**的实际取值单独拎出来 —— 哪个字段的空值长什么样、哪个字段有越界
+取值、哪几组主键重复了 —— 结论与证据**逐项对应**。
 
 **小节顺序固定，且「数据示例」紧跟指标表** —— 指标表说「这个字段的覆盖率
 是多少」，数据示例说「这个字段的实际取值长什么样」，两者必须挨着，
@@ -55,6 +61,7 @@ from dataagent.actions.tools.local_tool.dataops_quality_check import (
 
 __all__ = [
     "FIXED_SECTIONS",
+    "render_check_examples",
     "render_fixed_report",
     "render_sample_rows",
 ]
@@ -67,6 +74,7 @@ FIXED_SECTIONS: tuple[str, ...] = (
     "字段级指标",
     "表级指标",
     "数据示例",
+    "各校验项数据示例",
     "正确性违规明细",
     "告警明细",
     "流程型校验明细",
@@ -90,6 +98,17 @@ _CHECK_LABELS: dict[str, str] = {
 _FLOW_CHECK_LABELS: dict[str, str] = {
     "common_sense": "常识违规检测",
     "source_reconciliation": "抽样回源比对",
+}
+
+#: 字段来源的中文名 —— 报告的「校验概况」小节要能说清字段是从哪来的。
+#:
+#: 用户显式给字段 / 给 DDL 时，结论的口径取决于**用户给的字段**，不是平台
+#: 元数据 —— 必须让用户看到这一点。
+_FIELD_SOURCE_LABELS: dict[str, str] = {
+    "user_fields": "用户显式指定的字段",
+    "ddl": "用户提供的建表 DDL",
+    "semantic": "元数据（semantic-service）",
+    "insert_projection": "交付物 SELECT 投影",
 }
 
 #: 严重级别 → 中文标签。
@@ -171,6 +190,16 @@ def _render_overview(
     if partition:
         rows.append(("分区日期", str(partition)))
 
+    # **字段来源** —— 必须写清楚「字段是从哪来的」。
+    #
+    # 字段由**用户显式指定**时（`fields` / `ddl`），这跟「从元数据解析出来的」
+    # 是**两种口径**：用户给的是他当下最确定的信息，但如果字段名写错了
+    # （或表结构后来变了），结论会不对。报告里点明来源，用户才知道
+    # 「这轮校验的字段是我给的」。
+    field_source = quality.get("field_source")
+    if field_source:
+        rows.append(("字段来源", _FIELD_SOURCE_LABELS.get(str(field_source), str(field_source))))
+
     lines = ["| 项 | 值 |", "|---|---|"]
     lines.extend(f"| {label} | {value} |" for label, value in rows)
     return "\n".join(lines)
@@ -187,37 +216,44 @@ def _render_check_status(
 
     不允许用「小节消失」表达「没查」—— 完成 / 未完成 / 已跳过，各带原因，
     全都在这张表里。
+
+    每一行还带上**这一项实际查出来的值**（取值示例）—— 状态说明「查没查」，
+    取值示例说明「查出来的是什么」，两者缺一不可。
     """
     completed = [str(c) for c in (quality.get("completed_checks") or [])]
     failed = [c for c in (quality.get("failed_checks") or []) if isinstance(c, dict)]
     skipped = [c for c in (quality.get("skipped_checks") or []) if isinstance(c, dict)]
+    examples = quality.get("check_examples") or {}
 
     # 全部校验项（配置里启用的）—— 状态表要覆盖全集，不能只列跑过的。
     known = set(completed)
     known.update(str(item.get("name")) for item in failed)
     known.update(str(item.get("name")) for item in skipped)
 
-    lines = ["| 校验项 | 状态 | 说明 |", "|---|---|---|"]
+    lines = ["| 校验项 | 状态 | 实际查出来的值 | 说明 |", "|---|---|---|---|"]
     seen: set[str] = set()
     for name in sorted(known):
         seen.add(name)
         label = _CHECK_LABELS.get(name, name)
+        sample = _check_example_summary(examples, name)
         if name in completed:
-            lines.append(f"| {label}（`{name}`） | ✅ 完成 | |")
+            lines.append(f"| {label}（`{name}`） | ✅ 完成 | {sample} | |")
             continue
         failure = next((item for item in failed if str(item.get("name")) == name), None)
         if failure is not None:
             lines.append(
-                f"| {label}（`{name}`） | ❌ 未完成 | {failure.get('reason') or failure.get('status') or '未知原因'} |"
+                f"| {label}（`{name}`） | ❌ 未完成 | {sample} | "
+                f"{failure.get('reason') or failure.get('status') or '未知原因'} |"
             )
             continue
         skip = next((item for item in skipped if str(item.get("name")) == name), None)
         if skip is not None:
             lines.append(
-                f"| {label}（`{name}`） | ⚪ 已跳过 | {skip.get('reason') or '信息不足'} |"
+                f"| {label}（`{name}`） | ⚪ 已跳过 | {sample} | "
+                f"{skip.get('reason') or '信息不足'} |"
             )
             continue
-        lines.append(f"| {label}（`{name}`） | ❔ 未执行 | |")
+        lines.append(f"| {label}（`{name}`） | ❔ 未执行 | {sample} | |")
 
     # 配置里启用、但这一轮压根没进任何名单的校验项 —— 也要有一行。
     for name in quality.get("correctness_checks") or []:
@@ -225,9 +261,23 @@ def _render_check_status(
         if name in seen:
             continue
         label = _CHECK_LABELS.get(name, name)
-        lines.append(f"| {label}（`{name}`） | ❔ 未执行 | |")
+        sample = _check_example_summary(examples, name)
+        lines.append(f"| {label}（`{name}`） | ❔ 未执行 | {sample} | |")
 
     return "\n".join(lines)
+
+
+def _check_example_summary(examples: Any, name: str) -> str:
+    """取某个校验项的取值摘要（状态表里那一列）。"""
+    if not isinstance(examples, dict):
+        return "—"
+    item = examples.get(name)
+    if not isinstance(item, dict):
+        return "—"
+    summary = str(item.get("summary") or "").strip()
+    if not summary:
+        return "—"
+    return summary.replace("|", "\\|")
 
 
 def _render_field_metrics(
@@ -241,11 +291,20 @@ def _render_field_metrics(
     details = quality.get("details") or {}
     if not details:
         return "（无字段级指标）"
+    examples = quality.get("check_examples") or {}
+    field_examples = {}
+    if isinstance(examples, dict):
+        null_item = examples.get("null_rate")
+        if isinstance(null_item, dict):
+            fields = null_item.get("fields")
+            if isinstance(fields, dict):
+                field_examples = fields
     return render_metrics_table(
         details,
         quality.get("warnings") or [],
         quality.get("failed_metrics") or {},
         empty_table=bool(quality.get("empty_table")),
+        field_examples=field_examples,
     )
 
 
@@ -359,6 +418,101 @@ def _render_sample_section(
         return body
     # **没有数据也要说明为什么** —— 空着不写，用户会以为「这一小节忘了」。
     return "（本轮未抽到数据示例 —— 抽样未执行或未返回数据；不影响各项校验结论）"
+
+
+def render_check_examples(quality: dict[str, Any] | None) -> str:
+    """渲染「每一项校验实际查出来的值」这一小节的内容。
+
+    试算链路的 post-hook 与直连链路的 ``dataops_validate_data`` 共用这个
+    渲染器 —— 两边都要给出同样的证据。
+
+    Args:
+        quality: ``quality_check`` 段。
+
+    Returns:
+        Markdown 文本；没有取值示例时返回一句占位说明。
+    """
+    quality = quality if isinstance(quality, dict) else {}
+    examples = quality.get("check_examples") or {}
+    if not isinstance(examples, dict) or not examples:
+        return "（本轮未产出各校验项的取值示例 —— 校验未执行或抽样未返回数据）"
+
+    lines: list[str] = []
+    for name, item in examples.items():
+        if not isinstance(item, dict):
+            continue
+        label = str(item.get("label") or name)
+        summary = str(item.get("summary") or "").strip()
+        lines.append(f"**{label}**（`{name}`）")
+        if summary:
+            lines.append(f"- 实际查出来的值：{summary}")
+
+        fields = item.get("fields")
+        if isinstance(fields, dict) and fields:
+            lines.append("")
+            lines.append("| 字段 | 实际取值示例 |")
+            lines.append("|---|---|")
+            for field, text in fields.items():
+                lines.append(f"| `{field}` | {_escape_cell(text)} |")
+
+        # **流程型校验抽到的原始行** —— 常识检测 / 回源比对各自抽样，
+        # 口径与统一抽样不同，数据必须在这一项里摊开。
+        rows = item.get("rows")
+        if isinstance(rows, list) and rows:
+            lines.append("")
+            lines.append("抽样到的实际数据：")
+            for row in rows:
+                cells = row.get("cells") if isinstance(row, dict) else None
+                if not isinstance(cells, dict):
+                    continue
+                pairs = "，".join(
+                    f"{key}={_cell_text(value)}" for key, value in cells.items()
+                )
+                index = row.get("row_index") if isinstance(row, dict) else None
+                lines.append(f"- 第 {index} 行：{pairs}")
+
+        groups = str(item.get("groups") or "").strip()
+        if groups:
+            lines.append("")
+            lines.append("重复主键明细：" if name == "pk_duplicate_rate" else "逐行比对明细：")
+            lines.extend(f"- {line}" for line in groups.splitlines())
+
+        sql = str(item.get("sql") or "").strip()
+        if sql:
+            lines.append("")
+            lines.append("该校验项实际提交的 SQL：")
+            lines.append("```sql")
+            lines.append(sql)
+            lines.append("```")
+        lines.append("")
+
+    return "\n".join(lines).strip() or "（本轮未产出各校验项的取值示例）"
+
+
+def _escape_cell(text: Any) -> str:
+    """把文本压成表格单元格（换行变空格、竖线转义）。"""
+    value = str(text or "").replace("\r\n", " ").replace("\n", " ").replace("|", "\\|")
+    return value.strip() or "—"
+
+
+def _render_check_examples(
+    quality: dict[str, Any],
+    *,
+    scope: str,
+    mode: str,
+    result: dict[str, Any],
+) -> str:
+    """⑥ 各校验项数据示例 —— **每一项**校验实际查出来的值。
+
+    「数据示例」小节给的是**整行**原始数据，用户得自己从行里找「哪个值算出了
+    非空率 0.9500」。这一节把每一项校验的取值**逐项**摊开：
+
+    - 字段级校验（非空率 / 单一值比率 / 异常值占比 / 负值）→ 逐字段的取值；
+    - 主键重复率 → 具体哪几组主键重复、各出现几行；
+    - 数据行数 → 实测行数；
+    - 流程型校验 → 抽了几行（明细在「流程型校验明细」小节）。
+    """
+    return render_check_examples(quality)
 
 
 def _render_violations(
@@ -667,6 +821,7 @@ _SECTION_RENDERERS = {
     "字段级指标": _render_field_metrics,
     "表级指标": _render_table_metrics,
     "数据示例": _render_sample_section,
+    "各校验项数据示例": _render_check_examples,
     "正确性违规明细": _render_violations,
     "告警明细": _render_warnings,
     "流程型校验明细": _render_flow_notes,

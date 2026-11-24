@@ -59,12 +59,29 @@ from dataagent.actions.tools.local_tool.dataops_quality_report_format import (
     render_fixed_report,
 )
 from dataagent.actions.tools.local_tool.dataops_self_correct import run_self_correct
+from dataagent.actions.tools.local_tool.dataops_sql_identifiers import (
+    UnsafeIdentifierError,
+    quote_table,
+    validate_partition_filter,
+)
 from dataagent.actions.tools.local_tool.dataops_table_schema import (
     SchemaResolutionError,
+    UserFieldError,
     exclude_columns,
+    extract_ddl_target_table,
     fetch_semantic_columns,
+    fetch_semantic_primary_key_columns,
+    resolve_columns,
 )
 from dataagent.utils.log import logger
+
+# ``fetch_semantic_columns`` 本身在直连路径里**不再直接调用**（字段解析统一
+# 走 :func:`resolve_columns`，它多来源兜底），但这里**必须保留这个导入**：
+# 下游测试用 ``patch.object(tool, "fetch_semantic_columns", ...)`` 把元数据
+# 查询打桩掉。删掉这个名字会让那些打桩直接抛
+# ``AttributeError: module ... does not have the attribute 'fetch_semantic_columns'``，
+# 与被测逻辑无关地失败。保留导入 = 保留可打桩的符号。
+__all__ = ["fetch_semantic_columns", "validate_data"]
 
 # 报告前缀：让前端一眼看出这是「数据校验」的结果，而不是 agent 自己的叙述。
 _REPORT_PREFIX = "【数据校验】"
@@ -92,6 +109,8 @@ async def validate_data(
     target_table: str = "",
     dml_path: str | None = None,
     partition_filter: str = "",
+    fields: list[str] | None = None,
+    ddl: str = "",
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """对一份交付物做**试算 + 数据正确性校验**（必要时自修正）。
@@ -109,6 +128,14 @@ async def validate_data(
             直连真实目标表的兜底路径生效** —— 试算链路查的是临时表，里面
             只有本次试算的数据，不需要（也不能）加分区过滤。留空时直连模式
             查「一周之前」那一天。
+        fields: **显式指定**要校验的字段名列表（如 ``["udid", "pay_cnt_7d"]``）。
+            **元数据里查不到这张表时的兜底** —— 用户亲眼看着这张表，直接把
+            字段告诉工具就能做校验，不必等元数据同步。
+            只在**直连兜底路径**生效（试算链路的字段来自交付物的 SELECT 投影）。
+            也接受逗号/空格分隔的字符串。
+        ddl: 建表 DDL（如 ``CREATE TABLE biads.x (a STRING, b BIGINT)``）。
+            提供它就等于同时给了**字段名 + 列类型 + 分区列** —— 比只给
+            ``fields`` 更完整（列类型决定判空写法）。同样只在直连兜底路径生效。
         _tool_context: 工具执行上下文。
 
     Returns:
@@ -122,6 +149,8 @@ async def validate_data(
             target_table=target_table,
             dml_path=dml_path,
             partition_filter=partition_filter,
+            fields=fields,
+            ddl=ddl,
             _tool_context=_tool_context,
         )
     except Exception as exc:  # noqa: BLE001
@@ -147,6 +176,8 @@ async def _run_validation(
     target_table: str,
     dml_path: str | None,
     partition_filter: str,
+    fields: list[str] | None,
+    ddl: str,
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """试算 + 校验 + 自修正的主流程。"""
@@ -187,13 +218,15 @@ async def _run_validation(
     else:
         sql_text = inline_sql
         if not sql_text:
-            # --- 兜底：workspace 里没有交付物，但用户给了表名 ----------------
+            # --- 兜底：workspace 里没有交付物，但用户给了表名 / 字段 ----------
             # 只知道表名 → 没有「这份交付物」可试算 → 走**直连真实目标表**
             # 的校验路径（只读，不建表不插入）。
-            if target_table.strip():
+            if target_table.strip() or fields or ddl:
                 return await _validate_direct_table(
                     target_table=target_table.strip(),
                     partition_filter=partition_filter,
+                    fields=fields,
+                    ddl=ddl,
                     _tool_context=_tool_context,
                 )
             return _fmt(
@@ -294,6 +327,8 @@ async def _validate_direct_table(
     *,
     target_table: str,
     partition_filter: str,
+    fields: list[str] | None = None,
+    ddl: str = "",
     _tool_context: ToolExecutionContext,
 ) -> dict[str, Any]:
     """直连真实目标表做只读校验（兜底路径）。
@@ -302,14 +337,67 @@ async def _validate_direct_table(
     """
     config = resolve_config(_tool_context)
 
-    # --- 字段解析：只有表名 → 走 semantic 元数据 -------------------------
+    # --- 表名解析：显式 > DDL 里声明的 -------------------------------------
+    #
+    # **表名是必须有的一张表** —— 直连校验的每一条 SQL 都 ``FROM <表名>``，
+    # 表名为空会拼出 ``FROM ``` 这种语法错误。用户只给 ``fields`` / ``ddl``
+    # 而忘了给 ``target_table`` 时，**DDL 里声明的表名就是权威来源**
+    # （用户手上那份建表语句写的就是这张表）。
+    if not target_table.strip() and ddl.strip():
+        target_table = extract_ddl_target_table(ddl) or ""
+    if not target_table.strip():
+        return _fmt(
+            f"{_REPORT_PREFIX}缺少目标表名，无法直连校验，已跳过。"
+            "请传入 `target_table`（形如 `db.table`）；"
+            "若只提供了 DDL，请确保 DDL 里写的是带库名的表名。",
+            {
+                "ok": True,
+                "skipped": True,
+                "reason": "missing_target_table",
+                "target_table": target_table,
+                "warnings": [],
+                "details": {},
+            },
+        )
+
+    # --- 字段解析：多来源兜底 -------------------------------------------
+    #
+    # **用户显式字段 > 用户给的 DDL > semantic 元数据**。
+    #
+    # 为什么要有前两条：元数据里**没有**这张表、但数据库里**实际有** ——
+    # 新表刚上线 / 元数据同步延迟 / 这张表不在采集范围内。早先这里一失败
+    # 整条校验就断了，用户明明能提供字段却做不了试算。
     try:
-        fields, column_types = fetch_semantic_columns(
-            target_table, _tool_context=_tool_context
+        resolved_fields, column_types, semantic_primary_keys, source = resolve_columns(
+            target_table=target_table,
+            user_fields=fields,
+            ddl_sql=ddl,
+            _tool_context=_tool_context,
+            # 把**本模块**的名字传进去 —— 字段解析统一走 resolve_columns
+            # （多来源兜底），但 semantic 查询必须能从**调用方**这个模块打桩。
+            # 直接在 resolve_columns 内部调本模块的函数，测试在工具模块上
+            # patch 就拦不住（patch 打的是「谁的名字被查找」）。
+            semantic_columns_fetcher=fetch_semantic_columns,
+            semantic_primary_keys_fetcher=fetch_semantic_primary_key_columns,
+        )
+    except UserFieldError as exc:
+        # 用户给的字段不合法 —— 直接把原因说清楚，别让他猜。
+        return _fmt(
+            f"{_REPORT_PREFIX}{exc}",
+            {
+                "ok": True,
+                "skipped": True,
+                "reason": "invalid_fields",
+                "target_table": target_table,
+                "error": str(exc),
+                "warnings": [],
+                "details": {},
+            },
         )
     except SchemaResolutionError as exc:
         return _fmt(
-            f"{_REPORT_PREFIX}{exc} 请提供 `insert_*.sql` 或建表 DDL 以便校验交付物。",
+            f"{_REPORT_PREFIX}{exc} 请提供 `insert_*.sql` 或建表 DDL 以便校验交付物；"
+            "也可以直接用 `fields` 列出这张表的字段名（即使元数据里查不到这张表）。",
             {
                 "ok": True,
                 "skipped": True,
@@ -322,7 +410,7 @@ async def _validate_direct_table(
         )
     except Exception as exc:  # noqa: BLE001
         # 本工具的契约是**永不抛异常**。
-        logger.warning(f"[validate_data] semantic column lookup failed: {exc!r}")
+        logger.warning(f"[validate_data] column lookup failed: {exc!r}")
         return _fmt(
             f"{_REPORT_PREFIX}查询表 `{target_table}` 的字段元数据时发生未预期的错误：{exc}。",
             {
@@ -338,11 +426,11 @@ async def _validate_direct_table(
 
     # 排除名单只影响「覆盖率统计」的字段集 —— **主键匹配要用未排除的字段**
     # （``udid`` / ``id`` 这些恰恰经常就是主键本身）。
-    unexcluded_fields = list(fields)
-    fields = exclude_columns(fields, config.exclude_fields)
+    unexcluded_fields = list(resolved_fields)
+    resolved_fields = exclude_columns(resolved_fields, config.exclude_fields)
     # 表级校验（数据行数）不依赖字段 —— 字段解析不出来时它仍然可以跑。
     has_table_checker = any(c.scope == _SCOPE_TABLE for c in config.checkers)
-    if not fields and not has_table_checker:
+    if not resolved_fields and not has_table_checker:
         return _fmt(
             f"{_REPORT_PREFIX}无法解析出可校验的字段，已跳过。"
             "请确认输入里有具名的输出列，或换一张字段更明确的表。",
@@ -357,20 +445,50 @@ async def _validate_direct_table(
         )
 
     # --- 直连校验（只读） -------------------------------------------------
+    #
+    # **表名与分区过滤条件在进 SQL 之前必须过白名单** —— 直连校验的每一条
+    # SQL 都直接引用这两个值，而它们可能来自用户/agent 的显式输入。
+    # 校验不过就**整轮跳过**（不执行任何 SQL），并把原因说清楚。
+    #
+    # **传下去的是「未加反引号的原表名」** —— 下游要用它做 semantic 元数据
+    # 查询和 DDL 匹配（字符串比较），加了反引号就匹配不上。加反引号的事
+    # 交给各个 SQL 构造器自己（它们知道表名在 SQL 里的位置）。
+    try:
+        quote_table(target_table)
+        safe_partition_filter = validate_partition_filter(partition_filter)
+    except UnsafeIdentifierError as exc:
+        return _fmt(
+            f"{_REPORT_PREFIX}{exc}",
+            {
+                "ok": True,
+                "skipped": True,
+                "reason": "invalid_target_table",
+                "target_table": target_table,
+                "error": str(exc),
+                "warnings": [],
+                "details": {},
+            },
+        )
+
     result = await run_quality_check(
         "",
         _tool_context=_tool_context,
         config=config,
         direct_table=target_table,
-        partition_filter=partition_filter or None,
+        partition_filter=safe_partition_filter or None,
         # 空的字段列表也是「显式指定」—— 表级校验项（数据行数）仍要跑。
-        fields=fields,
+        fields=resolved_fields,
         column_types=column_types,
         # 主键匹配用「未排除」的字段集（与试算链路同一口径）。
         unexcluded_fields=unexcluded_fields,
         # semantic 元数据里的主键标记 —— 直连模式没有 DDL、没有 IR 声明，
         # 这是**唯一**能拿到主键的来源（不传 → 主键重复率与回源比对整项跳过）。
         # 查不到时由校验器内部兜底（按 ``direct_table`` 再查一次）。
+        semantic_primary_keys=semantic_primary_keys,
+        # 用户显式给的 DDL —— 提供分区列名与字段注释（判定口径更准）。
+        ddl_sql=ddl,
+        # 字段来源 —— 报告的「校验概况」小节要能说清字段是从哪来的。
+        field_source=source,
     )
     if result is None:
         return _fmt(
@@ -1073,11 +1191,32 @@ def _render_summary_samples(quality: dict[str, Any]) -> list[str]:
     看出「常识检测 / 回源比对这两项到底跑没跑」。标题在，结论和抽样行在，
     截断窗口里就完整了。
     """
+    lines: list[str] = []
+
+    # **每一项校验实际查出来的值** —— 摘要区里最重要的「证据」。
+    # 报告正文里的「各校验项数据示例」小节是完整版，但正文很长，
+    # 终端渲染层会截断 —— 摘要区先给一行紧凑版，用户立刻能看到
+    # 「非空率 0.95 是算在哪几行上的」。
+    examples = quality.get("check_examples") or {}
+    if isinstance(examples, dict) and examples:
+        lines.append("各校验项实际查出来的值：")
+        for name, item in examples.items():
+            if not isinstance(item, dict):
+                continue
+            label = str(item.get("label") or name)
+            summary = str(item.get("summary") or "").strip()
+            if summary:
+                lines.append(f"- {label}：{summary}")
+            # 流程型校验的抽样行 —— 结论后面必须紧跟数据。
+            sample_text = str(item.get("sample_text") or "").strip()
+            if sample_text:
+                lines.append(f"  {label}抽样明细：{sample_text}")
+
     flow_notes = quality.get("flow_notes") or {}
     if not isinstance(flow_notes, dict) or not flow_notes:
-        return []
+        return lines
 
-    lines: list[str] = ["流程型校验明细："]
+    lines.append("流程型校验明细：")
     for name, notes in flow_notes.items():
         if not isinstance(notes, dict):
             continue

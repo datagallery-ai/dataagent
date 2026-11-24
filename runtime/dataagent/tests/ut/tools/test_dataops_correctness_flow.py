@@ -140,6 +140,28 @@ class TestBuildSampleSql:
     def test_empty_columns_returns_empty(self):
         assert flow.build_sample_sql("adhoctemp.tmp_x", [], limit=3) == ""
 
+    def test_unsafe_table_name_returns_empty(self):
+        """表名不合法 → 不拼 SQL。"""
+        assert flow.build_sample_sql("db.tbl; DROP TABLE x", ["a"], limit=3) == ""
+        assert flow.build_sample_sql("db.", ["a"], limit=3) == ""
+
+    def test_unsafe_column_name_returns_empty(self):
+        """列名不合法 → 不拼 SQL。"""
+        assert flow.build_sample_sql("db.tbl", ["a`; DROP TABLE x"], limit=3) == ""
+        assert flow.build_sample_sql("db.tbl", ["*"], limit=3) == ""
+
+    def test_unsafe_partition_filter_returns_empty(self):
+        """分区条件不合法 → 不拼 SQL。"""
+        assert (
+            flow.build_sample_sql(
+                "db.tbl",
+                ["a"],
+                partition_filter="pt_d = '20261010'; DROP TABLE x",
+                limit=3,
+            )
+            == ""
+        )
+
 
 # ============================================================================
 # FlowContext

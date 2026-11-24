@@ -134,8 +134,10 @@ class TestGracefulExit:
         """workspace 里没有交付物，但给了表名 → 走直连真实目标表的兜底路径。"""
         with patch.object(
             tool,
-            "fetch_semantic_columns",
-            new=MagicMock(return_value=(["udid", "pay_cnt"], {"udid": "STRING"})),
+            "resolve_columns",
+            new=MagicMock(
+                return_value=(["udid", "pay_cnt"], {"udid": "STRING"}, ("udid",), "semantic")
+            ),
         ), patch.object(
             tool, "run_quality_check", new=AsyncMock(return_value=_quality())
         ) as spy:
@@ -166,8 +168,8 @@ class TestGracefulExit:
 
         with patch.object(
             tool,
-            "fetch_semantic_columns",
-            new=MagicMock(return_value=(["udid"], {"udid": "STRING"})),
+            "resolve_columns",
+            new=MagicMock(return_value=(["udid"], {"udid": "STRING"}, (), "semantic")),
         ), patch.object(
             tool, "run_quality_check", new=AsyncMock(return_value=errored)
         ), patch.object(
@@ -194,8 +196,10 @@ class TestGracefulExit:
 
         with patch.object(
             tool,
-            "fetch_semantic_columns",
-            new=MagicMock(side_effect=SchemaResolutionError("表不在元数据里")),
+            "resolve_columns",
+            new=MagicMock(
+                side_effect=SchemaResolutionError("表不在元数据里"),
+            ),
         ):
             result = await tool.validate_data(
                 "", target_table="biads.nope", _tool_context=_ctx(tmp_path)
@@ -204,6 +208,213 @@ class TestGracefulExit:
         assert result["data"]["skipped"] is True
         assert result["data"]["reason"] == "schema_unavailable"
         assert "表不在元数据里" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_user_fields_allow_validation_when_metadata_misses(self, tmp_path):
+        """元数据里没有这张表，但用户给了字段 → 校验照跑。
+
+        这是本改动的主场景：新表刚上线 / 元数据同步延迟 / 这张表压根不在
+        采集范围内 —— 数据库里实际有表，用户能提供字段，校验就不该被卡死。
+        """
+        with patch.object(
+            tool,
+            "resolve_columns",
+            new=MagicMock(
+                return_value=(["user_id", "pay_cnt"], {"user_id": "string"}, (), "user_fields")
+            ),
+        ) as resolver, patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=_quality())
+        ) as spy:
+            result = await tool.validate_data(
+                "",
+                target_table="biads.ads_user_profile_ds",
+                fields=["user_id", "pay_cnt"],
+                _tool_context=_ctx(tmp_path),
+            )
+
+        assert result["data"]["mode"] == "direct_table"
+        assert result["data"]["skipped"] is False
+        # 用户给的字段确实传到了校验器。
+        assert spy.await_args.kwargs["fields"] == ["user_id", "pay_cnt"]
+        # 字段来源是「用户显式指定」—— 不是 semantic。
+        assert resolver.call_args.kwargs["user_fields"] == ["user_id", "pay_cnt"]
+
+    @pytest.mark.asyncio
+    async def test_user_fields_still_honor_the_exclude_list(self, tmp_path):
+        """排除名单对用户给的字段同样生效 —— 排除只影响**覆盖率**口径。
+
+        ``udid`` 在默认排除名单里（做覆盖率统计没业务含义），但它**仍然**
+        参与主键匹配 —— 所以「未排除的字段集」要原样传给校验器。
+        """
+        with patch.object(
+            tool,
+            "resolve_columns",
+            new=MagicMock(
+                return_value=(["udid", "pay_cnt"], {"udid": "string"}, (), "user_fields")
+            ),
+        ), patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=_quality())
+        ) as spy:
+            result = await tool.validate_data(
+                "",
+                target_table="biads.ads_x",
+                fields=["udid", "pay_cnt"],
+                _tool_context=_ctx(tmp_path),
+            )
+
+        assert result["data"]["skipped"] is False
+        # 覆盖率口径：``udid`` 被排除了。
+        assert spy.await_args.kwargs["fields"] == ["pay_cnt"]
+        # 主键匹配口径：未排除的字段集原样传下去。
+        assert spy.await_args.kwargs["unexcluded_fields"] == ["udid", "pay_cnt"]
+
+    @pytest.mark.asyncio
+    async def test_user_ddl_allow_validation_when_metadata_misses(self, tmp_path):
+        """用户给了建表 DDL → 字段名 + 列类型 + 分区列都能拿到。"""
+        ddl = (
+            "CREATE TABLE biads.ads_x (udid STRING, pay_cnt BIGINT) "
+            "PARTITIONED BY (pt_d STRING)"
+        )
+        with patch.object(
+            tool,
+            "resolve_columns",
+            new=MagicMock(
+                return_value=(["udid", "pay_cnt"], {"udid": "string"}, (), "ddl")
+            ),
+        ) as resolver, patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=_quality())
+        ) as spy:
+            result = await tool.validate_data(
+                "",
+                target_table="biads.ads_x",
+                ddl=ddl,
+                _tool_context=_ctx(tmp_path),
+            )
+
+        assert result["data"]["mode"] == "direct_table"
+        assert result["data"]["skipped"] is False
+        # DDL 透传给校验器 —— 它决定分区列与字段注释。
+        assert spy.await_args.kwargs["ddl_sql"] == ddl
+        assert resolver.call_args.kwargs["ddl_sql"] == ddl
+
+    @pytest.mark.asyncio
+    async def test_invalid_user_fields_are_a_friendly_skip(self, tmp_path):
+        """字段名不合法 → 说清楚原因，不抛异常。"""
+        from dataagent.actions.tools.local_tool.dataops_table_schema import (
+            UserFieldError,
+        )
+
+        with patch.object(
+            tool,
+            "resolve_columns",
+            new=MagicMock(side_effect=UserFieldError("字段名不能是 `*`")),
+        ):
+            result = await tool.validate_data(
+                "",
+                target_table="biads.ads_x",
+                fields=["*"],
+                _tool_context=_ctx(tmp_path),
+            )
+
+        assert result["data"]["skipped"] is True
+        assert result["data"]["reason"] == "invalid_fields"
+        assert "不能是 `*`" in result["frontend_msg"]
+
+    @pytest.mark.asyncio
+    async def test_fields_without_target_table_is_a_friendly_skip(self, tmp_path):
+        """只给字段不给表名 → 直连路径无从下手（没有表可查），友好跳过。
+
+        直连校验的每条 SQL 都 ``FROM <表名>`` —— 没有表名就拼不出 SQL。
+        早先这里把空表名传下去，会拼出 ``FROM ``` 这种坏 SQL。
+        """
+        with patch.object(
+            tool,
+            "resolve_columns",
+            new=MagicMock(
+                return_value=(["udid"], {"udid": "string"}, (), "user_fields")
+            ),
+        ), patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=_quality())
+        ) as spy:
+            result = await tool.validate_data(
+                "",
+                fields=["udid"],
+                _tool_context=_ctx(tmp_path),
+            )
+
+        assert result["data"]["skipped"] is True
+        assert result["data"]["reason"] == "missing_target_table"
+        # **一条 SQL 都不该发出去** —— 表名不合法时必须整轮停下。
+        spy.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_table_name_comes_from_the_user_ddl(self, tmp_path):
+        """只给 DDL 不给表名 → 表名从 DDL 里解析出来（用户手上那份建表语句）。"""
+        ddl = "CREATE TABLE biads.ads_x (udid STRING) PARTITIONED BY (pt_d STRING)"
+        with patch.object(
+            tool,
+            "resolve_columns",
+            new=MagicMock(
+                return_value=(["udid"], {"udid": "string"}, (), "ddl")
+            ),
+        ), patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=_quality())
+        ) as spy:
+            result = await tool.validate_data(
+                "",
+                ddl=ddl,
+                _tool_context=_ctx(tmp_path),
+            )
+
+        assert result["data"]["mode"] == "direct_table"
+        assert result["data"]["skipped"] is False
+        # 表名从 DDL 里来 —— 而且是**未加反引号的原名**（下游要做字符串匹配）。
+        assert spy.await_args.kwargs["direct_table"] == "biads.ads_x"
+
+    @pytest.mark.asyncio
+    async def test_unsafe_target_table_is_rejected_before_any_sql(self, tmp_path):
+        """表名不合法 → 整轮跳过，一条 SQL 都不发。"""
+        with patch.object(
+            tool,
+            "resolve_columns",
+            new=MagicMock(
+                return_value=(["udid"], {"udid": "string"}, (), "user_fields")
+            ),
+        ), patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=_quality())
+        ) as spy:
+            result = await tool.validate_data(
+                "",
+                target_table="biads.t; DROP TABLE x",
+                _tool_context=_ctx(tmp_path),
+            )
+
+        assert result["data"]["skipped"] is True
+        assert result["data"]["reason"] == "invalid_target_table"
+        spy.assert_not_awaited()
+
+    @pytest.mark.asyncio
+    async def test_unsafe_partition_filter_is_rejected_before_any_sql(self, tmp_path):
+        """分区过滤条件不合法 → 整轮跳过，一条 SQL 都不发。"""
+        with patch.object(
+            tool,
+            "resolve_columns",
+            new=MagicMock(
+                return_value=(["udid"], {"udid": "string"}, (), "semantic")
+            ),
+        ), patch.object(
+            tool, "run_quality_check", new=AsyncMock(return_value=_quality())
+        ) as spy:
+            result = await tool.validate_data(
+                "",
+                target_table="biads.ads_x",
+                partition_filter="pt_d = '20261020'; DROP TABLE x",
+                _tool_context=_ctx(tmp_path),
+            )
+
+        assert result["data"]["skipped"] is True
+        assert result["data"]["reason"] == "invalid_target_table"
+        spy.assert_not_awaited()
 
     @pytest.mark.asyncio
     async def test_missing_explicit_path_falls_back_to_workspace(self, tmp_path):

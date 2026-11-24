@@ -34,6 +34,12 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from dataagent.actions.tools.local_tool.dataops_quality_check import CorrectnessViolation
+from dataagent.actions.tools.local_tool.dataops_sql_identifiers import (
+    UnsafeIdentifierError,
+    quote_column,
+    quote_table,
+    validate_partition_filter,
+)
 from dataagent.utils.log import logger
 
 # ============================================================================
@@ -375,12 +381,21 @@ def build_sample_sql(
 
     **必须显式列出列名** —— DataOps 平台禁止 ``SELECT *``。
     表名按段加反引号（``db.tbl`` → ``` `db`.`tbl` ```），避免被解析成单段标识符。
+
+    **标识符与分区条件都过白名单**（见 :mod:`dataops_sql_identifiers`）——
+    抽样列里可能混着**用户显式指定的字段**，不校验就是一条可注入的 SQL。
+    校验不过时返回**空串**（调用方据此当「没抽到」处理），不抛异常。
     """
     if not columns:
         return ""
-    cols_clause = ", ".join(f"`{c}`" for c in columns)
-    table_clause = ".".join(f"`{part}`" for part in str(table or "").split("."))
-    where_clause = f" WHERE {partition_filter}" if partition_filter else ""
+    try:
+        cols_clause = ", ".join(quote_column(c) for c in columns)
+        table_clause = quote_table(table)
+        safe_filter = validate_partition_filter(partition_filter)
+    except UnsafeIdentifierError as exc:
+        logger.warning(f"[correctness_flow] sample sql rejected: {exc}")
+        return ""
+    where_clause = f" WHERE {safe_filter}" if safe_filter else ""
     limit_clause = f" LIMIT {int(limit)}" if limit and limit > 0 else ""
     return f"SELECT {cols_clause} FROM {table_clause}{where_clause}{limit_clause}"
 
