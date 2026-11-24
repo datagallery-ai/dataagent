@@ -760,6 +760,92 @@ class TestResolveConfig:
         assert config.sample_size == 42
         assert config.threshold_for(qc.NULL_RATE_CHECKER) == 0.5
 
+    def test_flat_tool_threshold_wins_over_flat_resource_threshold(self):
+        """回归：扁平写法的阈值也必须「tool_config 优先」。
+
+        曾经的实现对 ``(tool_cfg, resource_cfg)`` 依次做 dict 赋值，后写者胜，
+        导致低优先级的 resource metadata 反过来盖掉了 tools.yaml 的配置
+        （AC-03「用户调参生效」被违反）。
+        """
+        tool_cfg = {"quality_check": {"null_rate_threshold": 0.99}}
+        resource_cfg = {"quality_check": {"null_rate_threshold": 0.50}}
+        config = qc.resolve_config(
+            _StubContext(tool_cfg=tool_cfg, resource_cfg=resource_cfg)
+        )
+        assert config.threshold_for(qc.NULL_RATE_CHECKER) == 0.99
+
+    def test_nested_tool_threshold_wins_over_flat_resource_threshold(self):
+        """回归：嵌套 ``thresholds`` 段同样优先于 resource 侧的扁平写法。"""
+        tool_cfg = {"quality_check": {"thresholds": {"null_rate_threshold": 0.99}}}
+        resource_cfg = {"quality_check": {"null_rate_threshold": 0.50}}
+        config = qc.resolve_config(
+            _StubContext(tool_cfg=tool_cfg, resource_cfg=resource_cfg)
+        )
+        assert config.threshold_for(qc.NULL_RATE_CHECKER) == 0.99
+
+    def test_nested_tool_threshold_wins_over_nested_resource_threshold(self):
+        tool_cfg = {"quality_check": {"thresholds": {"null_rate_threshold": 0.99}}}
+        resource_cfg = {"quality_check": {"thresholds": {"null_rate_threshold": 0.50}}}
+        config = qc.resolve_config(
+            _StubContext(tool_cfg=tool_cfg, resource_cfg=resource_cfg)
+        )
+        assert config.threshold_for(qc.NULL_RATE_CHECKER) == 0.99
+
+    def test_resource_threshold_applies_when_tool_config_omits_it(self):
+        """resource metadata 在 tool_config 没给该阈值时仍然生效。"""
+        tool_cfg = {"quality_check": {"sample_size": 42}}
+        resource_cfg = {"quality_check": {"null_rate_threshold": 0.50}}
+        config = qc.resolve_config(
+            _StubContext(tool_cfg=tool_cfg, resource_cfg=resource_cfg)
+        )
+        assert config.threshold_for(qc.NULL_RATE_CHECKER) == 0.50
+
+    def test_every_threshold_key_follows_tool_config_priority(self):
+        """六个阈值键全部遵循 tool_config > resource metadata。"""
+        keys = (
+            "null_rate_threshold",
+            "single_value_threshold",
+            "outlier_ratio_threshold",
+            "row_count_threshold",
+            "pk_duplicate_rate_threshold",
+            "negative_count_threshold",
+        )
+        tool_cfg = {"quality_check": {"thresholds": dict.fromkeys(keys, 0.11)}}
+        resource_cfg = {"quality_check": {"thresholds": dict.fromkeys(keys, 0.22)}}
+        config = qc.resolve_config(
+            _StubContext(tool_cfg=tool_cfg, resource_cfg=resource_cfg)
+        )
+        resolved = {
+            key: config.thresholds.get(key)
+            for key in keys
+        }
+        assert resolved == dict.fromkeys(keys, 0.11)
+
+    def test_tool_threshold_produces_warning_at_expected_text(self):
+        """回归：0.99 阈值下非空率 0.95 必须告警，且文案显示「阈值 0.99」。"""
+        tool_cfg = {"quality_check": {"null_rate_threshold": 0.99}}
+        resource_cfg = {"quality_check": {"null_rate_threshold": 0.50}}
+        config = qc.resolve_config(
+            _StubContext(tool_cfg=tool_cfg, resource_cfg=resource_cfg)
+        )
+        assert config.threshold_for(qc.NULL_RATE_CHECKER) == 0.99
+
+        parsed = qc.parse_checker_result(
+            {"data": [{"col1": 0.95}]},
+            qc.NULL_RATE_CHECKER,
+            ["col1"],
+            config=config,
+        )
+        merged = qc.merge_checker_results(
+            [("null_rate", parsed)],
+            ["col1"],
+            config=config,
+            checkers=[qc.NULL_RATE_CHECKER],
+        )
+        assert merged["ok"] is False
+        assert len(merged["warnings"]) == 1
+        assert "阈值 0.99" in merged["warnings"][0]
+
     def test_flat_threshold_keys_are_supported(self):
         tool_cfg = {"quality_check": {"null_rate_threshold": 0.7}}
         config = qc.resolve_config(_StubContext(tool_cfg=tool_cfg, resource_cfg={}))
@@ -958,6 +1044,40 @@ class TestRunQualityCheckWiring:
             "outlier_ratio",
             "row_count",
         ]
+
+    @pytest.mark.asyncio
+    async def test_user_ddl_drives_the_partition_column_in_direct_mode(self, monkeypatch):
+        """直连模式下，用户给的 DDL 决定分区列 —— 不是硬编码 ``pt_d``。
+
+        分区列名错了 → 直连查询查不到行 → 报「空表」（假空表）。
+        用户手上正好有这张表的 DDL 时，那份 DDL 是权威来源。
+        """
+        monkeypatch.setenv("DATAOPS_ENV", "integration")
+        ctx = ToolExecutionContext(runtime=self._fake_runtime(), tool_config={})
+
+        executed: list[str] = []
+
+        async def fake_exec(check_sql, coordinator, timeout_sec, poll_interval):
+            executed.append(check_sql)
+            return "completed", f"job-{len(executed)}", {"data": [{"col1": 1.0}]}
+
+        ddl = (
+            "CREATE TABLE biads.t (col1 BIGINT) PARTITIONED BY (ds STRING)"
+        )
+        with patch.object(qc, "_execute_check_sql_integration", side_effect=fake_exec):
+            result = await qc.run_quality_check(
+                "",
+                _tool_context=ctx,
+                direct_table="biads.t",
+                fields=["col1"],
+                column_types={"col1": "bigint"},
+                ddl_sql=ddl,
+            )
+
+        assert result is not None
+        # 分区列来自用户 DDL 的 ``ds``，不是默认的 ``pt_d``。
+        assert any("ds = '" in sql for sql in executed), executed
+        assert not any("pt_d = '" in sql for sql in executed), executed
 
     @pytest.mark.asyncio
     async def test_checks_are_submitted_concurrently(self, monkeypatch):
@@ -1590,6 +1710,22 @@ class _StubContext:
         self.tool_config = tool_cfg
         self._resource_cfg = resource_cfg
         self.runtime = None
+        if resource_cfg:
+            # 真实的 resource metadata 路径：``_resource_quality_check_metadata``
+            # 经由 ``runtime.ensure_resource_coordinator().catalog["dataops"].metadata``
+            # 读取 ``quality_check`` 段。stub 必须真的把这段数据喂进去，
+            # 否则「tool_config 优先于 resource metadata」这条断言是假阳性 ——
+            # resource 侧永远是空的，测不出覆盖顺序的问题。
+            #
+            # ``resource_cfg`` 与 ``tool_cfg`` 同形：``{"quality_check": {...}}`` ——
+            # 前者整体是 resource 的 metadata，后者整体是 tool 的 config。
+            resource = MagicMock()
+            resource.metadata = dict(resource_cfg)
+            coordinator = MagicMock()
+            coordinator.catalog = {"dataops": resource}
+            runtime = MagicMock()
+            runtime.ensure_resource_coordinator.return_value = coordinator
+            self.runtime = runtime
 
     # ``_resource_quality_check_metadata`` swallows exceptions and returns {},
     # so a resource-less stub is enough to exercise the tool_config path.

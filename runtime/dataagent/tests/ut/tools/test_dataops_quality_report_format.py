@@ -194,6 +194,112 @@ class TestCheckStatus:
 
 
 # ============================================================================
+# 各校验项数据示例
+# ============================================================================
+class TestCheckExamples:
+    def _quality(self, **overrides):
+        examples = {
+            "null_rate": {
+                "label": "空值覆盖率",
+                "summary": "`cnt`=3（空 1/3 行）",
+                "sql": "SELECT null_rate FROM t",
+                "fields": {"cnt": "3（空 1/3 行）"},
+                "groups": "",
+            },
+            "pk_duplicate_rate": {
+                "label": "主键重复率",
+                "summary": "重复的udid：u1（3 行）",
+                "sql": "SELECT pk FROM t",
+                "fields": {},
+                "groups": "u1（3 行）",
+            },
+        }
+        quality = _quality(check_examples=examples)
+        quality.update(overrides)
+        return quality
+
+    def test_every_check_gets_its_actual_values(self):
+        """**每一项**校验都要展示实际查出来的值 —— 缺一项就少一份证据。"""
+        report = fmt.render_fixed_report(self._quality(), scope="t")
+
+        assert "### 各校验项数据示例" in report
+        assert "3（空 1/3 行）" in report
+        assert "u1（3 行）" in report
+
+    def test_the_section_is_always_present(self):
+        """形状固定 —— 没有取值示例时也要有这一小节。"""
+        report = fmt.render_fixed_report(_quality(check_examples={}), scope="t")
+
+        assert "### 各校验项数据示例" in report
+        assert "未产出各校验项的取值示例" in report
+
+    def test_check_status_table_carries_the_actual_values(self):
+        """状态表里也要能看出「查出来的是什么」 —— 不用翻到下一小节。"""
+        report = fmt.render_fixed_report(self._quality(), scope="t")
+
+        assert "实际查出来的值" in report
+        assert "重复的udid：u1（3 行）" in report
+
+    def test_the_sql_of_each_check_is_shown(self):
+        """每项校验的 SQL 要能追溯 —— 用户要验证结论怎么算出来的。"""
+        report = fmt.render_fixed_report(self._quality(), scope="t")
+
+        assert "该校验项实际提交的 SQL" in report
+        assert "SELECT null_rate FROM t" in report
+
+    def test_field_metrics_table_has_an_examples_column(self):
+        """字段级指标表要给一行取值示例 —— 指标与证据并排。"""
+        report = fmt.render_fixed_report(self._quality(), scope="t")
+
+        assert "实际取值示例" in report
+
+    def test_example_values_escape_pipes(self):
+        """值里有 ``|`` 会把表格列冲散 —— 必须转义。"""
+        quality = self._quality()
+        quality["check_examples"]["null_rate"]["fields"] = {"cnt": "a|b"}
+        report = fmt.render_fixed_report(quality, scope="t")
+
+        assert "a\\|b" in report
+
+    def test_flow_check_sampled_rows_are_rendered(self):
+        """**流程型校验**抽到的行也要在这一项里摊开 —— 结论后面必须跟数据。"""
+        quality = self._quality()
+        quality["check_examples"]["common_sense"] = {
+            "label": "常识违规检测",
+            "summary": "抽样 2 行",
+            "sql": "",
+            "fields": {},
+            "groups": "",
+            "rows": [
+                {"row_index": 1, "cells": {"udid": "u1", "cnt": 3}},
+                {"row_index": 2, "cells": {"udid": "u2", "cnt": 0}},
+            ],
+            "sample_text": "udid=u1，cnt=3",
+        }
+        report = fmt.render_fixed_report(quality, scope="t")
+
+        assert "抽样到的实际数据" in report
+        assert "第 1 行：udid=u1，cnt=3" in report
+
+    def test_reconciliation_shows_both_sides(self):
+        """回源比对的逐行明细要展示**两侧取值** —— 差在哪一眼可见。"""
+        quality = self._quality()
+        quality["check_examples"]["source_reconciliation"] = {
+            "label": "抽样回源比对",
+            "summary": "抽样 1 行；比对 1 行",
+            "sql": "",
+            "fields": {},
+            "groups": "第 1 行：cnt：特征表=3 / 回源=7 ⚠️不一致",
+            "rows": [],
+            "sample_text": "",
+        }
+        report = fmt.render_fixed_report(quality, scope="t")
+
+        assert "逐行比对明细" in report
+        assert "特征表=3 / 回源=7" in report
+
+
+# ============================================================================
 # 结论
 # ============================================================================
 class TestConclusion:
@@ -277,3 +383,26 @@ class TestOverview:
 
         assert "未提供" in report
         assert "已跳过" in report
+
+    def test_overview_states_the_field_source(self):
+        """字段来源必须写出来。
+
+        字段由**用户显式指定**时，结论的口径取决于用户给的字段（可能写错、
+        可能表结构后来变了）—— 用户必须看到「这一轮的字段是我给的」。
+        """
+        report = fmt.render_fixed_report(
+            _quality(field_source="user_fields"), scope="t"
+        )
+
+        assert "字段来源" in report
+        assert "用户显式指定的字段" in report
+
+    def test_overview_omits_the_field_source_when_unknown(self):
+        report = fmt.render_fixed_report(_quality(), scope="t")
+
+        assert "字段来源" not in report
+
+    def test_overview_names_a_ddl_field_source(self):
+        report = fmt.render_fixed_report(_quality(field_source="ddl"), scope="t")
+
+        assert "用户提供的建表 DDL" in report

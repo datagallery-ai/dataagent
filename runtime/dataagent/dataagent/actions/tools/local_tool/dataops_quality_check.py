@@ -1510,6 +1510,31 @@ def _column_types_for_table(runtime: Any, target_table: str) -> dict[str, str]:
     return parse_ddl_column_types(ddl_sql)
 
 
+def _column_types_ddl_for_table(runtime: Any, target_table: str) -> str:
+    """从 workspace 里取**指定那张表**匹配的 DDL 原文（表名对不上就返回空串）。
+
+    与 :func:`_column_types_for_table` 同源，但返回 **DDL 原文**而不是解析后的
+    类型映射 —— 原文里还有**分区列声明**与**字段注释**，这两样分别决定
+    「分区过滤用哪一列」与「常识判定有没有依据」，都��要。
+
+    直连真实目标表时，workspace 里的 ``create_*.sql`` 可能是**另一张表**的
+    （比如 agent 这次只交付了 DML，或者同时交付了多张表的 DDL）。拿别表的
+    DDL 套到目标表上，分区列会认错 → 直连查询查不到行 → 报「空表」。
+    """
+    ddl_sql = _find_ddl_in_workspace(runtime, target_table)
+    if not ddl_sql:
+        return ""
+    # 延迟导入避免循环依赖（dataops_table_schema → dataops_quality_check）。
+    from dataagent.actions.tools.local_tool.dataops_table_schema import (
+        extract_ddl_table_ref,
+    )
+
+    ddl_table = extract_ddl_table_ref(ddl_sql)
+    if not ddl_table or not _table_refs_match(ddl_table, str(target_table or "")):
+        return ""
+    return ddl_sql
+
+
 # ============================================================================
 # Configuration
 # ============================================================================
@@ -1652,12 +1677,20 @@ def _resolve_config_locked(tool_cfg: dict[str, Any], resource_cfg: dict[str, Any
     sections: tuple[dict[str, Any], ...] = (tool_cfg, resource_cfg)
 
     # --- 阈值（支持 {"thresholds": {...}} 嵌套与扁平两种写法） ---
-    raw_thresholds: dict[str, Any] = {}
-    for source in (tool_cfg, resource_cfg):
-        candidate = source.get("thresholds")
-        if isinstance(candidate, dict):
-            raw_thresholds.update(candidate)
-    for source in (tool_cfg, resource_cfg):
+    #
+    # **优先级：tool_config (tools.yaml) > resource metadata**。
+    # 曾经的实现是 ``for source in (tool_cfg, resource_cfg): raw_thresholds[key] = source[key]``，
+    # 按「先 tool 后 resource」顺序做 dict 赋值 —— **后写者胜**，导致低优先级的
+    # resource metadata 反过来覆盖了高优先级的 tools.yaml 配置（AC-03「用户调参生效」
+    # 的不可接受结果）。修复方式：按优先级顺序遍历，**先出现的值即胜出**，
+    # 与 ``_pick`` 的语义保持一致。
+    #
+    # 单个来源内部：先取嵌套 ``thresholds`` 段，再用扁平键覆盖（扁平写法更显式）。
+    def _collect(source: dict[str, Any]) -> dict[str, Any]:
+        collected: dict[str, Any] = {}
+        nested = source.get("thresholds")
+        if isinstance(nested, dict):
+            collected.update(nested)
         for key in (
             "null_rate_threshold",
             "single_value_threshold",
@@ -1667,7 +1700,14 @@ def _resolve_config_locked(tool_cfg: dict[str, Any], resource_cfg: dict[str, Any
             "negative_count_threshold",
         ):
             if key in source:
-                raw_thresholds[key] = source[key]
+                collected[key] = source[key]
+        return collected
+
+    raw_thresholds: dict[str, Any] = {}
+    for source in (tool_cfg, resource_cfg):
+        for key, value in _collect(source).items():
+            # 高优先级来源已提供该阈值时，低优先级来源不再覆盖。
+            raw_thresholds.setdefault(key, value)
 
     thresholds = {c.threshold_key: c.default_threshold for c in _BUILTIN_CHECKERS}
     for checker in _BUILTIN_CHECKERS:
@@ -2820,6 +2860,7 @@ def render_metrics_table(
     warnings: Sequence[str] | None = None,
     failed_metrics: dict[str, Sequence[str]] | None = None,
     empty_table: bool = False,
+    field_examples: dict[str, str] | None = None,
 ) -> str:
     """把质量校验的 ``details`` 渲染成 Markdown 表格（前端可直接渲染）。
 
@@ -2834,6 +2875,8 @@ def render_metrics_table(
             **「无数据」**而不是 ``—`` —— ``—`` 读起来像「该指标不适用」，
             而空表下所有指标都是 ``0/0 = NULL``，真实语义是「**一行数据都
             没校验到**」。两者的区别就是「没查」和「不用查」。
+        field_examples: ``{字段名: 取值示例文本}``。渲染成一列 —— 指标表说
+            「覆盖率 0.95」，这一列说「实际抽到的取值长什么样」。
 
     Returns:
         Markdown 表格文本；``details`` 为空时返回一句占位说明。
@@ -2843,10 +2886,14 @@ def render_metrics_table(
 
     warned_fields = _warned_field_names(details, warnings or [])
     failed_by_field = {k: set(v or []) for k, v in (failed_metrics or {}).items()}
-    lines = [
-        "| 字段名 | 非空率(覆盖率) | 单一值比率 | 异常值占比 | 状态 |",
-        "|---|---|---|---|---|",
-    ]
+    examples = field_examples or {}
+    has_examples = bool(examples)
+    header = "| 字段名 | 非空率(覆盖率) | 单一值比率 | 异常值占比 | 状态 |"
+    separator = "|---|---|---|---|---|"
+    if has_examples:
+        header += " 实际取值示例 |"
+        separator += "---|"
+    lines = [header, separator]
     for field_name, metrics in details.items():
         metrics = metrics if isinstance(metrics, dict) else {}
         missing = failed_by_field.get(field_name, set())
@@ -2872,13 +2919,16 @@ def render_metrics_table(
             # 空表 → 状态列明说「无数据」，不能留「通过」或「—」。
             status = "⚠️ 无数据"
 
-        lines.append(
+        row = (
             f"| {field_name} "
             f"| {_cell('null_rate')} "
             f"| {_cell('single_value_ratio')} "
             f"| {_cell('outlier_ratio')} "
             f"| {status} |"
         )
+        if has_examples:
+            row += f" {_escape_cell(examples.get(field_name) or '—')} |"
+        lines.append(row)
     return "\n".join(lines)
 
 
@@ -3547,6 +3597,8 @@ async def run_quality_check(
     column_types: dict[str, str] | None = None,
     unexcluded_fields: list[str] | None = None,
     semantic_primary_keys: Sequence[str] = (),
+    ddl_sql: str = "",
+    field_source: str = "",
 ) -> dict[str, Any] | None:
     """对 INSERT 落地的表跑一轮数据正确性校验。
 
@@ -3588,6 +3640,13 @@ async def run_quality_check(
             解析出来的原始列名）。用于**主键匹配** —— 排除名单里有 ``udid`` /
             ``id`` / ``uuid`` / ``guid``，而这些恰恰经常就是主键本身；拿
             「已排除」的字段去匹配主键会匹配不上 → 主键重复率整项被跳过。
+        ddl_sql: **用户显式给的建表 DDL**。直连模式下用户手上可能就有这张表
+            的 DDL（元数据里查不到这张表时）—— 它提供**分区列名**（分区列名
+            错了就查不到行 → 报「空表」）与**字段注释**（常识判定靠它给依据）。
+            非空时**优先于** workspace 里匹配到的 DDL。
+        field_source: 字段来源标记（``"user_fields"`` / ``"ddl"`` /
+            ``"semantic"``）。报告的「校验概况」小节用它说明字段是从哪来的
+            —— 用户显式给字段时，结论的口径由用户负责，必须说清楚。
 
     Returns:
         ``None`` 表示跳过；否则返回
@@ -3608,6 +3667,8 @@ async def run_quality_check(
             column_types=column_types,
             unexcluded_fields=unexcluded_fields,
             semantic_primary_keys=semantic_primary_keys,
+            ddl_sql=ddl_sql,
+            field_source=field_source,
         )
     except Exception as exc:  # noqa: BLE001
         logger.warning(f"[quality_check] unexpected failure (ignored): {exc}")
@@ -3628,6 +3689,8 @@ async def _run_quality_check_impl(
     column_types: dict[str, str] | None = None,
     unexcluded_fields: list[str] | None = None,
     semantic_primary_keys: Sequence[str] = (),
+    ddl_sql: str = "",
+    field_source: str = "",
 ) -> dict[str, Any] | None:
     if not config.enabled:
         logger.debug("[quality_check] disabled by config")
@@ -3760,24 +3823,36 @@ async def _run_quality_check_impl(
         real_target = extract_insert_target_table(sql)
         if real_target:
             ddl_lookup_table = real_target
-    ddl_sql = _find_ddl_in_workspace(runtime, ddl_lookup_table)
-    if column_types is not None:
-        resolved_column_types = dict(column_types)
-        _, resolved_column_comments = parse_ddl_columns_with_comments(ddl_sql)
+    # **用户显式给的 DDL 优先于 workspace 里匹配到的 DDL** ——
+    # 直连模式下用户手上可能就有这张表的 DDL（元数据里查不到这张表时），
+    # 那份 DDL 才是这张表的权威描述（分区列名 + 列类型 + 字段注释）。
+    workspace_ddl = _find_ddl_in_workspace(runtime, ddl_lookup_table)
+    if ddl_sql:
+        effective_ddl = ddl_sql
     elif direct_table:
         # 直连模式：workspace 里的 DDL **可能是另一张表的** —— 拿它的类型套到
         # 目标表的同名列上，会把 STRING 列判成数值（判空口径直接错）。
         # 所以只认「表名对得上」的那份 DDL。
-        resolved_column_types = _column_types_for_table(runtime, direct_table)
-        _, resolved_column_comments = parse_ddl_columns_with_comments(ddl_sql)
+        effective_ddl = _column_types_ddl_for_table(runtime, direct_table)
     else:
         # 临时表模式：临时表就是按 workspace 的 DDL 建的，那份 DDL 是权威来源。
         #
         # 但**仍然要按目标表名校验** —— 万一匹配不上（DDL 缺失 / 裸表名解析不出），
         # 宁可退回 ``IS NOT NULL``（对所有类型都成立），也不要把**别张表**的
         # 类型套上来（STRING 被当成数值 → 判空口径直接错）。
-        resolved_column_types = _column_types_for_table(runtime, ddl_lookup_table)
+        effective_ddl = _column_types_ddl_for_table(runtime, ddl_lookup_table)
+
+    if column_types is not None:
+        resolved_column_types = dict(column_types)
+        _, resolved_column_comments = parse_ddl_columns_with_comments(effective_ddl)
+    elif ddl_sql:
+        # 用户给了 DDL —— 列类型直接来自它（不需要再跟目标表名比对：
+        # 用户给的就是这张表的 DDL）。
+        resolved_column_types = parse_ddl_column_types(ddl_sql)
         _, resolved_column_comments = parse_ddl_columns_with_comments(ddl_sql)
+    else:
+        resolved_column_types = parse_ddl_column_types(effective_ddl)
+        _, resolved_column_comments = parse_ddl_columns_with_comments(effective_ddl)
 
     # --- 分区列解析（**不能硬编码 pt_d**）--------------------------------
     #
@@ -3786,7 +3861,7 @@ async def _run_quality_check_impl(
     #
     # 优先级：DDL 里声明的分区列 > 配置的 ``partition_col``。
     resolved_partition_col = config.partition_col
-    ddl_partition_cols = parse_ddl_partition_columns(ddl_sql)
+    ddl_partition_cols = parse_ddl_partition_columns(effective_ddl)
     if ddl_partition_cols:
         resolved_partition_col = ddl_partition_cols[0]
         if len(ddl_partition_cols) > 1:
@@ -3986,11 +4061,29 @@ async def _run_quality_check_impl(
             limit=_SAMPLE_EXAMPLE_ROWS,
         )
     )
+    # **重复主键明细** —— 主键重复率那条聚合 SQL 只给比率，重复的是哪几组
+    # 主键它给不出来。报告里要能直接列出「重复的主键长什么样」，所以另查
+    # 一条 ``GROUP BY ... HAVING COUNT(1) > 1``。
+    #
+    # **只在本轮真的跑了主键重复率时才查** —— 没跑就查等于白查。
+    duplicate_task: asyncio.Task | None = None
+    if primary_key_columns and any(name == "pk_duplicate_rate" for name, _ in all_statements):
+        duplicate_task = asyncio.create_task(
+            _capture_duplicate_key_rows(
+                execute=_sample_executor(coordinator, timeout_sec, poll_interval),
+                target_table=target_table,
+                primary_key_columns=primary_key_columns,
+                partition_filter=filter_expr,
+            )
+        )
     outcomes = await asyncio.gather(
         *(_run_one(name, sql) for name, sql in all_statements),
         return_exceptions=True,
     )
     sample_rows_payload = await sample_task
+    duplicate_ok, duplicate_rows_payload = (False, [])
+    if duplicate_task is not None:
+        duplicate_ok, duplicate_rows_payload = await duplicate_task
 
     parsed_results: list[tuple[str, dict[str, Any]]] = []
     correctness_parsed: list[tuple[str, dict[str, Any]]] = []
@@ -4136,6 +4229,36 @@ async def _run_quality_check_impl(
         if not item.get("reason"):
             item["reason"] = item.get("status") or "未完成"
 
+    # --- **每一项校验的实际查出来的值** -----------------------------------
+    #
+    # 指标是聚合值（「非空率 0.9500」），用户看不到这个数字算在哪几行上。
+    # 这里把每个校验项的**实际取值**配齐：字段级校验给逐字段的取值示例，
+    # 主键重复率给重复的主键明细，行数给实测行数，流程型校验给抽样行数。
+    #
+    # **每一项只列它自己适用的字段** —— 异常值占比只对比率类字段、负值校验
+    # 只对计数型字段。混着列会让「计数 3 > 1」被当成越界取值报给用户。
+    check_fields = _applicable_fields_by_check(
+        checkers=[*checkers, *config.correctness_checkers],
+        fields=resolved_fields,
+        config=config,
+        ctx=ctx,
+    )
+    check_examples = _build_check_examples(
+        check_sqls=dict(all_statements),
+        fields=resolved_fields,
+        check_fields=check_fields,
+        sample_rows=sample_rows_payload,
+        table_metrics={
+            **(merged.get("table_metrics") or {}),
+            **(correctness_merged.get("table_metrics") or {}),
+        },
+        duplicate_rows=duplicate_rows_payload,
+        duplicate_ok=duplicate_ok,
+        primary_key_columns=primary_key_columns,
+        flow_notes=flow_result.get("notes") or {},
+        check_names=[name for name, _ in all_statements],
+    )
+
     return {
         # 有 checker 没跑完就不能说「全部通过」——但**已经跑出来的指标照常给结论**。
         "ok": not warnings and not incomplete_checks,
@@ -4181,12 +4304,26 @@ async def _run_quality_check_impl(
         # **本次校验查到的数据示例**（统一口径抽样）—— 报告的「数据示例」
         # 小节渲染它。空列表表示抽样没成功（不影响任何校验结论）。
         "sample_rows": sample_rows_payload,
+        # **每一项校验的实际查出来的值** —— 报告的「校验项执行情况」与
+        # 「各校验项数据示例」小节渲染它。
+        "check_examples": check_examples,
+        # 重复主键明细（主键重复率这项校验的示例）—— 空列表表示没查到重复。
+        "duplicate_key_rows": duplicate_rows_payload,
         # 本轮是部分完成（有的跑成了、有的没跑成）。
         "partial": bool(incomplete_checks),
         "temp_table": target_table,
         "partition_date": pt_date,
         # 直连模式额外标记：本轮校验的是真实目标表（没走临时表）。
         "direct": bool(direct_table),
+        # **字段来源** —— 报告的「校验概况」小节要能说清字段是从哪来的。
+        # 用户显式给字段 / 给 DDL 时，结论的口径取决于**用户给的字段**，
+        # 不是平台元数据 —— 必须让用户看到这一点。
+        "field_source": _resolve_field_source(
+            explicit_fields=explicit_fields,
+            ddl_sql=ddl_sql,
+            direct_table=direct_table,
+            declared_source=field_source,
+        ),
         # 主键列（主键重复率校验用了哪几列）。
         "primary_key_columns": list(primary_key_columns),
         # 试算链路写入被截断（只写了前 N 行）—— 此时行数只是**下界**，
@@ -4202,6 +4339,71 @@ async def _run_quality_check_impl(
 
 #: 报告里「数据示例」小节展示多少行 —— 多了报告会被撑爆，用户也读不完。
 _SAMPLE_EXAMPLE_ROWS = 5
+
+
+def _resolve_field_source(
+    *,
+    explicit_fields: list[str] | None,
+    ddl_sql: str,
+    direct_table: str | None,
+    declared_source: str = "",
+) -> str:
+    """本轮校验的字段是从哪来的（报告的「校验概况」小节用）。
+
+    **说清楚来源很重要**：字段由用户显式指定时，结论的口径取决于**用户给的
+    字段**（可能写错、可能表结构后来变了），跟「从元数据解析出来的」不是
+    一回事。用户看到「字段来源：用户显式指定的字段」才知道这一轮该由他
+    自己负责。
+
+    ``declared_source`` 是调用方**已经知道**的来源（``resolve_columns`` 的
+    返回值）—— 有它就直接用，没它才按下面的线索推断。
+    """
+    if declared_source:
+        return declared_source
+    if explicit_fields is not None:
+        # 调用方显式传了字段 —— 分不清是「用户给的」还是「元数据解析的」，
+        # 但两者都是「外部指定的字段」，语义上等价：不是从 INSERT 投影推的。
+        return "user_fields"
+    if ddl_sql and direct_table:
+        return "ddl"
+    return "insert_projection"
+
+
+def _applicable_fields_by_check(
+    *,
+    checkers: list[QualityChecker],
+    fields: list[str],
+    config: QualityCheckConfig,
+    ctx: CheckContext,
+) -> dict[str, list[str]]:
+    """每一项校验**实际适用于**哪些字段。
+
+    异常值占比只对比率类字段、负值校验只对计数型字段 —— 取值示例必须按
+    同样的口径过滤，否则「计数字段 3 > 1」会被当成越界取值报给用户。
+    """
+    result: dict[str, list[str]] = {}
+    for checker in checkers:
+        if checker.scope != _SCOPE_FIELD:
+            continue
+        result[checker.name] = [
+            name
+            for name in fields
+            if checker.applies_to_field_ctx(name, config, ctx)
+        ]
+    return result
+
+
+def _build_check_examples(**kwargs: Any) -> dict[str, Any]:
+    """组装「每一项校验的实际查出来的值」。
+
+    委托给 :mod:`dataops_quality_examples` —— 这里只做一层薄封装，把模块级
+    的延迟导入（避免循环依赖）收在一处。
+    """
+    from dataagent.actions.tools.local_tool.dataops_quality_examples import (
+        build_check_examples,
+    )
+
+    return build_check_examples(**kwargs)
 
 
 def _sample_executor(
@@ -4288,6 +4490,39 @@ async def _capture_sample_rows(
     if status != "completed" or not rows:
         return []
     return record_sample_rows(list(rows), limit=limit)
+
+
+async def _capture_duplicate_key_rows(
+    *,
+    execute: Any,
+    target_table: str,
+    primary_key_columns: tuple[str, ...],
+    partition_filter: str,
+    limit: int = 0,
+) -> tuple[bool, list[dict[str, Any]]]:
+    """查「哪些主键重复了」—— 主键重复率这项校验的**实际取值示例**。
+
+    Returns:
+        ``(是否查到, 明细行)`` —— 「查过了没重复」与「没查成」必须能区分。
+    """
+    if execute is None or not target_table or not primary_key_columns:
+        return False, []
+    try:
+        from dataagent.actions.tools.local_tool.dataops_quality_examples import (
+            MAX_DUPLICATE_GROUPS,
+            capture_duplicate_keys,
+        )
+
+        return await capture_duplicate_keys(
+            execute=execute,
+            table=target_table,
+            primary_key_columns=primary_key_columns,
+            partition_filter=partition_filter,
+            limit=limit or MAX_DUPLICATE_GROUPS,
+        )
+    except Exception as exc:  # noqa: BLE001
+        logger.warning(f"[quality_check] duplicate key capture failed: {exc!r}")
+        return False, []
 
 
 async def _run_flow_checks(
