@@ -419,9 +419,36 @@ export const App: React.FC<AppProps> = ({
   const queuedPromptsRef = useRef<string[]>([]);
   const drainingQueuedPromptRef = useRef(false);
   const handleAgentQueryRef = useRef<((input: string) => Promise<void>) | null>(null);
+  const hitlRefreshRequired = useRef<string | null>(null);
   const runClockRef = useRef<{ runId: string; startedAt: number } | null>(null);
   const stopRequestedRef = useRef<string | null>(null);
   const [queuedPrompts, setQueuedPrompts] = useState<string[]>([]);
+  const refreshPendingHitl = async (threadId: string, wakeQueue: boolean): Promise<boolean> => {
+    if (!tui) return false;
+    const runId = store.getState().runId;
+    const stillCurrent = () => store.getState().threadId === threadId && store.getState().runId === runId;
+    try {
+      const session = await tui.sessions.getSession(threadId);
+      if (!stillCurrent()) return false;
+      // A disconnected stream may still be settling its checkpoint server-side.
+      if (session.status === 'running') {
+        setCommandNotice({ kind: 'info', message: 'The previous run is still stopping. Try again shortly.' });
+        return false;
+      }
+      showPendingHitl(threadId, session.pendingInteractions);
+      if (wakeQueue) {
+        hitlRefreshRequired.current = null;
+        setQueuedPrompts([...queuedPromptsRef.current]);
+      }
+      // Manual preflight keeps the queue held until its own RUN_STARTED.
+      return true;
+    } catch (error) {
+      if (stillCurrent()) {
+        setCommandNotice({ kind: 'error', message: `Unable to refresh pending questions: ${error instanceof Error ? error.message : String(error)}. Retry your input or use /resume.` });
+      }
+      return false;
+    }
+  };
   const modelName = tui?.model ?? resolveModelName(state);
   const directory = formatDirectory(tui?.home ?? process.env.PWD ?? process.cwd());
   const startup = {
@@ -807,6 +834,7 @@ export const App: React.FC<AppProps> = ({
         store.restoreSession({ threadId: id, ...restoreMessages(session.messages) });
         checkpointMessageIds.current = { threadId: id, ids: new Set(session.messages.map(message => message.id)) };
         pendingHitl.current = { threadId: id, items: [] };
+        hitlRefreshRequired.current = null;
         showPendingHitl(id, session.pendingInteractions);
         if (session.pendingInteractions.length) {
           store.handleLiveRunEvent({ type: 'RUN_FINISHED', metadata: { status: 'waiting_for_input' } });
@@ -1300,6 +1328,10 @@ export const App: React.FC<AppProps> = ({
 
   // Handle agent query execution
   const handleAgentQuery = async (input: string) => {
+    const pendingThreadId = store.getState().threadId;
+    if (pendingThreadId && hitlRefreshRequired.current === pendingThreadId) {
+      if (!await refreshPendingHitl(pendingThreadId, false)) return;
+    }
     const hitl = pendingHitl.current.threadId === store.getState().threadId ? pendingHitl.current.items[0] : undefined;
     const hitlAnswers = hitl ? { [hitl.interruptId]: input } : undefined;
     setCommandNotice(null);
@@ -1383,6 +1415,7 @@ export const App: React.FC<AppProps> = ({
 
       // Set run status to running
       store.handleLiveRunEvent({ type: 'RUN_STARTED', runId });
+      if (hitlRefreshRequired.current === threadId) hitlRefreshRequired.current = null;
 
       const isCurrentRun = () => {
         const currentRunId = store.getState().runId;
@@ -1532,6 +1565,7 @@ export const App: React.FC<AppProps> = ({
               store.addRunSummary(threadId, runId, 'completed', performance.now() - startedAt);
             }
           } else if (event.type === 'RUN_ERROR') {
+            if (tui && hitlAnswers) hitlRefreshRequired.current = threadId;
             receivedTerminal = true;
             flushTextBuffer();
             store.finalizeReasoningMessage();
@@ -1615,6 +1649,8 @@ export const App: React.FC<AppProps> = ({
         if (!isCurrentRun()) {
           return;
         }
+
+        if (tui && hitlAnswers) hitlRefreshRequired.current = threadId;
 
         if (tui && stopRequestedRef.current === runId) {
           stopRequestedRef.current = null;
@@ -1703,6 +1739,10 @@ export const App: React.FC<AppProps> = ({
           );
           setRetryCount(0);
         }
+      } finally {
+        if (tui && hitlAnswers && isCurrentRun() && hitlRefreshRequired.current === threadId) {
+          await refreshPendingHitl(threadId, true);
+        }
       }
     };
 
@@ -1716,6 +1756,7 @@ export const App: React.FC<AppProps> = ({
   useEffect(() => {
     if (drainingQueuedPromptRef.current) return;
     if (isRestoringSession || state.runStatus === 'running') return;
+    if (hitlRefreshRequired.current === state.threadId) return;
     if (pendingHitl.current.threadId === state.threadId && pendingHitl.current.items.length) return;
 
     const runQueuedPrompt = handleAgentQueryRef.current;
@@ -1735,6 +1776,7 @@ export const App: React.FC<AppProps> = ({
       } finally {
         drainingQueuedPromptRef.current = false;
         if (queuedPromptsRef.current.length > 0 && store.getState().runStatus !== 'running'
+          && hitlRefreshRequired.current !== store.getState().threadId
           && !(pendingHitl.current.threadId === store.getState().threadId && pendingHitl.current.items.length)) {
           setQueuedPrompts([...queuedPromptsRef.current]);
         }

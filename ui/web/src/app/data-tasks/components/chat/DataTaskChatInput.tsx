@@ -69,6 +69,8 @@ type DataTaskChatInputProps = CopilotChatInputProps & {
   submitError?: string | null;
   /** Session lock / remote-busy prompt rendered above the composer. */
   sessionLockSlot?: ReactNode;
+  /** Question and choices rendered inside the composer, above its textarea. */
+  interactionSlot?: ReactNode;
 };
 
 export function DataTaskChatInput({
@@ -100,6 +102,7 @@ export function DataTaskChatInput({
   onSendQueuedPromptNow,
   submitError = null,
   sessionLockSlot = null,
+  interactionSlot = null,
   textArea,
   onChange,
   ...props
@@ -166,6 +169,7 @@ export function DataTaskChatInput({
           onSendQueuedPromptNow={onSendQueuedPromptNow}
           submitError={submitError}
           sessionLockSlot={sessionLockSlot}
+          interactionSlot={interactionSlot}
         />
       )}
     </CopilotChatInput>
@@ -214,6 +218,7 @@ function DataTaskChatInputLayout({
   onSendQueuedPromptNow,
   submitError = null,
   sessionLockSlot = null,
+  interactionSlot = null,
 }: {
   textArea: ReactNode;
   sendButton: ReactNode;
@@ -257,6 +262,7 @@ function DataTaskChatInputLayout({
   onSendQueuedPromptNow?: (id: string) => void;
   submitError?: string | null;
   sessionLockSlot?: ReactNode;
+  interactionSlot?: ReactNode;
 }) {
   const t = useT();
   const { chatColumnWidth, draftPromptRequest, onDraftPromptConsumed } =
@@ -403,6 +409,7 @@ function DataTaskChatInputLayout({
               {t("chatInput.dropFiles")}
             </div>
           )}
+          {interactionSlot}
           <div className="w-full px-3.5 pt-2">
             <div
               ref={columnRef}

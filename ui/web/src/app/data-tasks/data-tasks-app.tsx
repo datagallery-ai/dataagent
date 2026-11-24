@@ -278,7 +278,7 @@ import { useSessionNotice } from "./components/chat/session-notice";
 import { SessionConversationScrollRestore } from "./components/chat/SessionConversationScrollRestore";
 import { SessionArtifactsRestore } from "./components/chat/SessionArtifactsRestore";
 import { CollaborationInterruptHandler } from "./components/chat/CollaborationInterruptHandler";
-import { HitlInteractionHandler } from "./components/chat/HitlInteractionHandler";
+import { HitlInteractionHandler, HitlQuestion, useHitlInteraction } from "./components/chat/HitlInteractionHandler";
 import { RestoredInterruptHandler } from "./components/chat/RestoredInterruptHandler";
 import { CollaborationPendingInterruptSlot } from "./components/chat/CollaborationPendingInterruptSlot";
 import { usePendingCollaborationInterrupt } from "./components/chat/pending-collaboration-interrupt";
@@ -446,6 +446,10 @@ function StableDataTaskChatInput({
   const bindings = useDataTaskChatInputBindings();
   const { agent } = useAgent({ agentId: bindings.agentId });
   const { copilotkit } = useCopilotKit();
+  const hitl = useHitlInteraction(bindings.agentId, bindings.activeThreadId);
+  const hasPendingInteraction = hitl.pending.length > 0;
+  const activeThreadRef = useRef(bindings.activeThreadId);
+  activeThreadRef.current = bindings.activeThreadId;
   const [queuedPrompts, setQueuedPrompts] = useState<QueuedChatPrompt[]>([]);
   const [draftText, setDraftText] = useState("");
   const [submitError, setSubmitError] = useState<string | null>(null);
@@ -696,7 +700,18 @@ function StableDataTaskChatInput({
     queuedPrompts.length,
   ]);
 
+  const handleFeedbackAnswer = (value: string) => {
+    const threadId = bindings.activeThreadId;
+    void hitl.submitAnswer(value).then((submitted) => {
+      if (activeThreadRef.current === threadId) setDraftText(submitted ? "" : value);
+    });
+  };
+
   const handleSubmitMessage = (value: string) => {
+    if (hasPendingInteraction) {
+      handleFeedbackAnswer(value);
+      return;
+    }
     setDraftText("");
     setSubmitError(null);
     invokeWithReportedError(() => {
@@ -718,6 +733,7 @@ function StableDataTaskChatInput({
         const submitMode = resolveQueuedSubmitMode({
           agentIsRunning: Boolean(agent.isRunning),
           liveRunStatus: bindings.liveRunStatus,
+          hasPendingInteraction,
         });
         if (submitMode === "queue") {
           setQueuedPrompts((current) => [
@@ -824,10 +840,11 @@ function StableDataTaskChatInput({
     if (remoteActiveRun) {
       return;
     }
-    const activeRun =
-      Boolean(agent.isRunning) ||
-      bindings.liveRunStatus === "running" ||
-      bindings.liveRunStatus === "suspended";
+    const activeRun = resolveQueuedSubmitMode({
+      agentIsRunning: Boolean(agent.isRunning),
+      liveRunStatus: bindings.liveRunStatus,
+      hasPendingInteraction,
+    }) === "queue";
     if (awaitingQueuedRunCompletionRef.current) {
       if (activeRun) {
         queuedRunSawActiveRef.current = true;
@@ -850,7 +867,7 @@ function StableDataTaskChatInput({
     setQueuedPrompts(next.queue);
     const runInput = queuedPromptToRunInput(next.prompt);
     dispatchRun(runInput);
-  }, [agent, bindings.liveRunStatus, dispatchRun, queuedPrompts, remoteActiveRun]);
+  }, [agent, bindings.liveRunStatus, dispatchRun, hasPendingInteraction, queuedPrompts, remoteActiveRun]);
 
   const handleEditQueuedPrompt = useCallback((id: string, text: string) => {
     setQueuedPrompts((current) => editQueuedChatPrompt(current, id, text));
@@ -898,7 +915,24 @@ function StableDataTaskChatInput({
       onChange={handleInputChange}
       onSubmitMessage={handleSubmitMessage}
       onStop={handleStop}
-      isRunning={showStopControl}
+      isRunning={hasPendingInteraction ? false : showStopControl}
+      textArea={hasPendingInteraction ? {
+        ...(typeof inputProps.textArea === "object" ? inputProps.textArea : {}),
+        placeholder: t("chatInput.feedbackPlaceholder"),
+        "aria-label": t("chatInput.feedbackSend"),
+        disabled: hitl.disabled,
+      } : inputProps.textArea}
+      sendButton={hasPendingInteraction ? {
+        disabled: hitl.disabled || !draftText.trim(),
+        "aria-label": t("chatInput.feedbackSend"),
+      } : inputProps.sendButton}
+      interactionSlot={hitl.current ? <HitlQuestion
+        interaction={hitl.current}
+        pendingCount={hitl.pending.length}
+        disabled={hitl.disabled}
+        error={hitl.error}
+        onAnswer={handleFeedbackAnswer}
+      /> : null}
       queuedPrompts={queuedPrompts}
       onEditQueuedPrompt={handleEditQueuedPrompt}
       onDeleteQueuedPrompt={handleDeleteQueuedPrompt}

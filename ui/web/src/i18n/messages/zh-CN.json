@@ -171,6 +171,10 @@
   },
   "chatInput": {
     "placeholder": "输入数据问题…",
+    "feedbackTitle": "等待你的回答",
+    "feedbackRemaining": "还有 {{count}} 个问题",
+    "feedbackPlaceholder": "输入回复，或点击上方选项…",
+    "feedbackSend": "提交回答",
     "add": "添加",
     "addMenu": "添加内容",
     "uploadFile": "上传文件",

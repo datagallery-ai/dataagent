@@ -38,6 +38,7 @@ import {
 } from "./conversation-restore";
 import { reconcileSuspendedLiveRunState } from "./collaboration-recap";
 import { getCollaborationResponsesForThread } from "./components/chat/collaboration-responses";
+import { getHitlPending } from "../../lib/hitl-state";
 
 type LiveRunThreadSnapshot = {
   liveRun: LiveRun;
@@ -428,6 +429,7 @@ export function LiveRunEventSubscriber({
             ? reconcileSuspendedLiveRunState(
                 next,
                 getCollaborationResponsesForThread(threadId),
+                getHitlPending(threadId).length > 0,
               )
             : next;
         syncRunningThreadStatus(threadId, reconciled.runStatus);
@@ -515,6 +517,7 @@ export function LiveRunEventSubscriber({
       const reconciled = reconcileSuspendedLiveRunState(
         next,
         getCollaborationResponsesForThread(threadId),
+        getHitlPending(threadId).length > 0,
       );
       syncRunningThreadStatus(threadId, reconciled.runStatus);
       return reconciled;
