@@ -211,7 +211,7 @@ async def test_rewrites_dimension_deterministically_and_augments_downstream_cont
     assert state["schema"]["dim_exp_county"]["columns"].keys() >= {"county_key", "county_value"}
     assert ("fact_metric.county", "dim_exp_county.county_key") in state["joins"]
     assert "## Dimension Lookup Schema" in state["schema_str"]
-    assert "CREATE TABLE `dim_exp_county`" in state["schema_str"]
+    assert "CREATE TABLE dim_exp_county" in state["schema_str"]
     assert "## Required Dimension Value Mappings" in state["sql_rules"]
     assert "WHERE/HAVING predicates remain on the fact key" in state["sql_rules"]
     assert results[0].prompt.startswith("generator prompt")
@@ -403,8 +403,8 @@ async def test_dimension_context_appends_only_newly_discovered_dimensions() -> N
     assert "When `city` is projected" in repaired[0].prompt
     assert "When `county` is projected" not in repaired[0].prompt
     assert "dim_exp_county" not in repaired[0].prompt
-    assert state["schema_str"].count("CREATE TABLE `dim_exp_county`") == 1
-    assert state["schema_str"].count("CREATE TABLE `dim_exp_city`") == 1
+    assert state["schema_str"].count("CREATE TABLE dim_exp_county (") == 1
+    assert state["schema_str"].count("CREATE TABLE dim_exp_city (") == 1
     assert state["sql_rules"].count("When `county` is projected") == 1
     assert state["sql_rules"].count("When `city` is projected") == 1
     assert state["joins"] == [

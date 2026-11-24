@@ -32,7 +32,7 @@ nl2sql/                      插件根
     ├── hooks.py             场景钩子位契约（点位常量、SchemaContext/HookContext）与 load_scenario 加载器
     ├── prompt_manager.py    PromptTemplate（包内相对路径解析）
     ├── errors.py / constants.py
-    ├── nodes/               BaseNL2SQLNode 基类 + 6 个工作流节点（perceptor→…→selector）
+    ├── nodes/               BaseNL2SQLNode 基类、原六个节点及可选 bird-validator
     ├── security/            SQLGlot 安全规则与检查
     ├── utils/               解析、SQL 服务（受限取数）
     ├── examples/sql_rules/  场景示例 SQL 规则（bird、bio_lab，默认不启用）
@@ -100,8 +100,7 @@ plugins:
 
 ## 会话结果文件
 
-每次查询执行成功后，子代理把 executor 取到的全部行（受 `executor.limit`
-约束，单元格保留原值）写入当前会话输出目录：
+查询成功后，子代理把选中候选的已取行写入当前会话输出目录。原链路受 `executor.limit` 约束，BIRD 链路取完整结果用于投票。
 
 ```
 <session>/outputs/nl2sql/
@@ -116,12 +115,11 @@ plugins:
   或 `result_files: false` 时不写文件，回复不含这两个字段。
 - 执行失败（无结果列）不写文件。写入失败不影响查询结果，回复带 `result_file_error`。
 - 文件随会话目录保留和删除；meta 不含连接参数，但 CSV 含查询到的业务数据。
-  数据敏感的部署可关闭 `result_files`，并应给 `executor.limit` 设正数上限。
+  可用 `result_files: false` 关闭文件输出。原链路还可用 `executor.limit` 限制取行数。
 
 ## 配置
 
-全部配置进入 Agent 配置文件的 `plugins.config.nl2sql` 段（JSON；不再
-读取独立的 YAML 文件）。`model` 必须是同配置 `models` 里的别名。
+插件参数写在宿主配置（如 schema_version 4 YAML）的 `plugins.config.nl2sql` 段。`model` 必须是同配置 `models` 里的别名。
 语义层服务在根级 `semantic` 段配置（由宿主创建客户端并注入，生命周期
 归宿主管理），不属于本插件参数：
 
@@ -161,20 +159,61 @@ plugins:
 | `database.dialect` | 必填。生成与 SQLGlot 校验使用的 SQL 方言，例如 `sqlite`、`mysql`、`postgres`；GaussVector 使用 `postgres` |
 | `database.engine` | 执行引擎：`sqlite`、`mysql`、`gaussvector`、`hive`/`spark`；省略时取 dialect，二者不同时必须显式填写，例如 GaussVector |
 | `database.*`（其余键） | 引擎连接参数，如 sqlite 的 `path`、mysql 的 `host/port/user/password/database` |
-| `perceptor.schema_mode` | `full_schema` 或 `schema_linking` |
+| `perceptor.schema_mode` | 可选 `full_schema`、`schema_linking` 或 `bird`。BIRD 按当前 `database.db_id` 从语义服务检索表 |
 | `perceptor.user_schema` | schema .md 文件路径，注入 schema 绕过语义服务（测试后门） |
 | `perceptor.user_sql_rules` | SQL 规则文件名；内置示例见 `nl2sql/examples/sql_rules/`（`sql_rules_bird` 等，默认不启用） |
 | `generator.strategies` | `prompt`、`icl`、`skeleton`、`dc`；候选数 = num_workers × (num_samples×prompt + icl + skeleton + dc) |
+| `emit_reasoning_tag` | 显式设置时统一控制 Generator 和 BIRD 修复 prompt 是否要求输出 `<reasoning>`。省略时 BIRD 根据模型的 thinking 配置选择 metavisor 模板 |
+| `generator.parse_retries` | 每个生成任务遇到回复截断或 SQL 解析失败后的额外重试次数，默认 3；设为 0 时只请求一次 |
 | `generator.num_workers` | 每策略并行度，**非常昂贵** |
 | `validator.sql_security_enabled` | SQLGlot 确定性安全检查，默认关；开启需启用 reflector |
 | `validator.db_explain` | 用 `EXPLAIN` 校验 SQL 模式与语法 |
+| `validator.semantic_check` | 原 Validator 的 LLM 语义检查，默认 `true`。设为 `false` 时跳过此项，其他已启用的检查照常执行。BIRD 链使用独立的 `bird-validator.checkers` 配置 |
 | `reflector.threshold` / `ref_retries` | 反思置信度阈值 / 生成-校验-反思重试次数 |
 | `executor.limit` / `preview_limit` | 取行上限，也是结果文件的行数上限（-1 全量；引擎最多取 limit+1 行以判定截断）/ 预览行数（Selector 评分、日志与回复的 `rows_preview` 共用） |
 | `selector.shortcut` / `threshold` / `sel_retries` | 多数票捷径（-1 关）/ 置信度阈值 / 重试次数 |
 
-节点段（`perceptor`…`selector`）全部可省略——省略时启用完整六节点链；
-出现时必须构成 `perceptor→generator→validator→reflector→executor→selector`
-前缀链（在链中第一个缺失的节点处截断），且 `generator` 及其之前的节点必填。
+### 选择工作流
+
+`plugins.config.nl2sql.nodes` 可显式选择以下链路。原六节点流程也支持截断为至少包含 Perceptor、Generator 的前缀。省略 `nodes` 时沿用原规则，根据已配置的节点段推断前缀；所有节点段均省略则运行完整六节点链。
+
+```yaml
+# 原流程，保留原有的校验、执行和重试路由
+nodes: [perceptor, generator, validator, reflector, executor, selector]
+```
+
+```yaml
+# BIRD 流程，以下字段均位于 plugins.config.nl2sql 下
+nodes: [perceptor, generator, bird-validator, selector]
+perceptor:
+  schema_mode: bird
+generator:
+  strategies: [dc, skeleton, icl]
+selector:
+  shortcut: 1
+```
+
+完整宿主配置见 [BIRD 工作流配置示例](../../../examples/nl2sql-bird-workflow.yaml)。`schema_mode: bird` 使用根级 `semantic` 客户端。启用 `icl` 策略时，Perceptor 按题召回一次 few-shot 示例，写入 `state["few_shot_examples"]`，供 Generator 的所有 ICL worker 共用。两条流程均可使用这些 Perceptor 和 Generator 配置。
+
+#### 选择 BIRD checker 及执行顺序
+
+`nl2sql/nodes/checkers/` 下的 BIRD 校验实现使用 metavisor `BIRD_schema_link` 分支、提交 `6c0dcf4` 的八个 v2 checker。在 `plugins.config.nl2sql.bird-validator.checkers` 中按执行顺序列出要启用的 checker。省略此字段时，每条候选 SQL 默认只运行 `syntax → result`。可在列表中按需加入 `join`、`order_by_limit`、`time`、`select`、`max_min`、`order_by_null`。列表只接受这八个名称，每项最多出现一次；未知或重复名称会在加载配置时报错。
+
+例如，下面的配置先修复语法，再让 `select` 先于 `join` 检查，最后检查执行结果。其余四项跳过。
+
+```yaml
+# 位于 plugins.config.nl2sql 下
+bird-validator:
+  checkers: [syntax, select, join, result]
+```
+
+设置 `checkers: []` 会跳过全部 checker。BIRD 节点仍执行最终 SQL，并把执行结果交给 Selector。每次执行前都会检查 SQL 是否为单条只读查询。
+
+每个启用的 checker 检查上一步得到的 SQL。需要模型修复时，只把当前 checker 的建议或执行反馈随问题、schema 等上下文发给模型，按 metavisor 的 `<result>` XML 协议提取 SQL。两类提示都从 `database.dialect` 取目标方言，例如 GaussVector 配置 `postgres` 时要求返回 PostgreSQL SQL。`result` 遇到执行错误、超时、空结果或全 NULL 时请求三个候选，从成功且有非 NULL 值的结果中投票。
+
+BIRD 节点把每条最终 SQL 的完整执行结果交给原 Selector，同一题内相同 SQL 复用执行结果。`selector.shortcut: 1` 指最高票组至少一票就直接选出结果；所有候选都执行失败时，沿用原 Selector 的模型评分。BIRD 流程在 Selector 结束，`selector.sel_retries` 使用默认值 0。
+
+可选的 `bird-validator` 段支持 `temperature`（默认 0.3）、`repair_attempts`（默认 10，限制一次修复中整批 XML 都解析失败的次数）、`preview_limit`（限制展示行数）和 `sql_security_enabled`（启用插件的额外 SQL 安全策略）。生成和修复共享单题 `model_call_budget`。
 
 ### GaussVector 配置
 

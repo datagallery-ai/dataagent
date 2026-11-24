@@ -65,6 +65,7 @@ class NL2SQLState(MessagesState):
     joins: list[tuple[str, str]]
     schema_str: str  # backdoor for schema injection
     few_shot_examples: str
+    few_shot_error: dict[str, Any] | None
     sql_rules: str
     evidence: str
 
@@ -111,6 +112,7 @@ def get_default_state(question: str, **override) -> NL2SQLState:
         "joins": [],
         "schema_str": "",
         "few_shot_examples": "",
+        "few_shot_error": None,
         "evidence": "",
         "sql_rules": "",
         "generation_results": [],

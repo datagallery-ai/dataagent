@@ -23,6 +23,7 @@ with nothing to repair would send an unrepairable SQL round-tripping through
 the Reflector.
 """
 
+import pytest
 from nl2sql.config_manager import NL2SQLConfig
 from nl2sql.nodes.validator import ValidatorNode
 from nl2sql.state import Result
@@ -113,3 +114,32 @@ async def test_reported_issues_keep_their_score() -> None:
     (result,) = state["validation_results"]
     assert result.score == 0.5
     assert result.issues == ["missing county column"]
+
+
+async def test_disabled_semantic_check_preserves_syntax_issues() -> None:
+    config = NL2SQLConfig(
+        {
+            "model": "primary",
+            "database": {"dialect": "sqlite"},
+            "validator": {"semantic_check": False},
+        }
+    )
+    node = ValidatorNode(config=config, **config.section("validator"))
+    node.bind_model(scripted_model())
+    state = validator_state()
+    state["generation_results"].append(Result(id=1, sql="DELETE FROM employees"))
+    valid, invalid = (await node.run(state))["validation_results"]
+    assert not node.model.requests
+    assert valid.score == 1 and not valid.issues
+    assert invalid.score == 0 and "read-only" in invalid.issues[0]
+
+
+def test_semantic_check_requires_boolean() -> None:
+    with pytest.raises(ValueError, match="validator.semantic_check"):
+        NL2SQLConfig(
+            {
+                "model": "primary",
+                "database": {"dialect": "sqlite"},
+                "validator": {"semantic_check": "false"},
+            }
+        )

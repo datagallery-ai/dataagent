@@ -40,7 +40,8 @@ if TYPE_CHECKING:
 
 _SCHEMA_MODE_FULL = "full_schema"
 _SCHEMA_MODE_LINKING = "schema_linking"
-_SUPPORTED_SCHEMA_MODES = (_SCHEMA_MODE_FULL, _SCHEMA_MODE_LINKING)
+_SCHEMA_MODE_BIRD = "bird"
+_SUPPORTED_SCHEMA_MODES = (_SCHEMA_MODE_FULL, _SCHEMA_MODE_LINKING, _SCHEMA_MODE_BIRD)
 
 
 class PerceptorNode(BaseNL2SQLNode):
@@ -74,6 +75,29 @@ class PerceptorNode(BaseNL2SQLNode):
         """Bind the host-owned semantic-layer client injected through the factory."""
         self._semantic_client = client
 
+    async def _retrieve_few_shots(self, question: str) -> str:
+        if self._semantic_client is None:
+            raise DataAgentError(
+                source="config",
+                component="nl2sql",
+                fact="semantic 服务未配置（settings.semantic）：ICL 无法召回 few-shot",
+            )
+        try:
+            examples = await asyncio.to_thread(
+                self._semantic_client.sql_few_shots, question, limit=5
+            )
+            return "\n\n".join(
+                f"- Example {i}:\nQuestion: {example['query']}\n"
+                f"SQL: {example.get('sql') or example['expression']}"
+                for i, example in enumerate(examples, 1)
+            )
+        except Exception as exc:
+            raise DataAgentError(
+                source="tool",
+                component="nl2sql",
+                fact=f"ICL few-shot 召回失败: {exc}",
+            ) from exc
+
     def schema_linking(self, keywords: list[str] | None) -> tuple[dict, list[tuple[str, str]]]:
         """Retrieve the schema and joins relevant to semantic search keywords."""
         if not keywords:
@@ -87,13 +111,14 @@ class PerceptorNode(BaseNL2SQLNode):
                 if not isinstance(entry, dict) or not entry:
                     continue
                 parts = next(iter(entry)).split(".")
-                if len(parts) != 3:
+                if len(parts) < 3:
                     logger.warning(
-                        f"Perceptor: malformed column_name_search entry (expected d.t.c): {entry}"
+                        f"Perceptor: malformed column_name_search entry (expected db.table.column): {entry}"
                     )
                     continue
-                d, t, c = parts
-                dt_set.add(f"{d}.{t}")
+                dt, c = next(iter(entry)).rsplit(".", 1)
+                t = dt.removeprefix(f"{self.db}.")
+                dt_set.add(dt)
                 tc_set.add(f"{t}.{c}")
         for item in self._get_table_list():
             if not isinstance(item, dict) or not item:
@@ -101,12 +126,12 @@ class PerceptorNode(BaseNL2SQLNode):
             dt, meta = next(iter(item.items()))
             dt_desc[dt] = (meta or {}).get("table_description", "")
         for dt in dt_set:
-            _, t = dt.split(".")
+            t = dt.removeprefix(f"{self.db}.")
             cols = self._get_table_columns_info(dt)
             columns = {}
             schema[t] = {"description": dt_desc.get(dt, ""), "columns": columns}
             for dtc, meta in cols.items():
-                _, _, c = dtc.split(".")
+                c = dtc.removeprefix(f"{dt}.")
                 if f"{t}.{c}" not in tc_set:
                     continue
                 columns[c] = {
@@ -133,23 +158,25 @@ class PerceptorNode(BaseNL2SQLNode):
         """Retrieve the complete schema and joins, optionally limited to selected tables."""
         j_set, dt_desc, schema = set(), {}, {}
         allow_set = {str(t).strip() for t in (allow_tables or []) if str(t).strip()} or None
-        allow_names = (
-            {t.split(".", 1)[1] if "." in t else t for t in allow_set} if allow_set else None
-        )
+        allow_names = {t.removeprefix(f"{self.db}.") for t in allow_set} if allow_set else None
         for item in self._get_table_list():
             if not isinstance(item, dict) or not item:
                 continue
             dt, meta = next(iter(item.items()))
-            if allow_set and dt not in allow_set and dt.split(".", 1)[1] not in allow_names:
+            if (
+                allow_set
+                and dt not in allow_set
+                and dt.removeprefix(f"{self.db}.") not in allow_names
+            ):
                 continue
             dt_desc[dt] = (meta or {}).get("table_description", "")
         for dt in dt_desc:
-            t = dt.split(".", 1)[1]
+            t = dt.removeprefix(f"{self.db}.")
             cols = self._get_table_columns_info(dt)
             columns = {}
             schema[t] = {"description": dt_desc.get(dt, ""), "columns": columns}
             for dtc, meta in cols.items():
-                c = dtc.split(".", 2)[2]
+                c = dtc.removeprefix(f"{dt}.")
                 columns[c] = {
                     "description": meta.get("column_short_description", ""),
                     "value_type": meta.get("value_type", ""),
@@ -185,7 +212,6 @@ class PerceptorNode(BaseNL2SQLNode):
             ("schema_str", self.user_schema),
             ("evidence", self.user_evidence),
             ("sql_rules", self.user_sql_rules),
-            ("few_shot_examples", self.user_few_shot_examples),
         ]:
             if attr not in state.get("context_overrides", []):
                 state[attr] = await asyncio.to_thread(self._load_prompt, key)
@@ -217,7 +243,12 @@ class PerceptorNode(BaseNL2SQLNode):
                     )
             else:
                 logger.debug("NL2SQL Perceptor using schema_mode=%s", self.schema_mode)
-                if self.schema_mode == _SCHEMA_MODE_LINKING:
+                if self.schema_mode == _SCHEMA_MODE_BIRD:
+                    schema, schema_str = await asyncio.to_thread(
+                        self.bird_schema, question, state.get("evidence", "")
+                    )
+                    joins = []  # BIRD's authoritative DDL already includes key relationships.
+                elif self.schema_mode == _SCHEMA_MODE_LINKING:
                     schema, joins = await asyncio.to_thread(
                         self.schema_linking, [question] if question else []
                     )
@@ -229,15 +260,66 @@ class PerceptorNode(BaseNL2SQLNode):
                         )
                 else:
                     schema, joins = await asyncio.to_thread(self.full_schema)
-                schema_str = schema_to_ddl(schema, joins)
+                if self.schema_mode != _SCHEMA_MODE_BIRD:
+                    schema_str = schema_to_ddl(schema, joins)
             # Both paths commit the same schema slice; only its source differs.
             state["schema"] = schema
             state["joins"] = joins
             state["schema_str"] = schema_str
+        state["few_shot_error"] = None
+        if "icl" in self._config.get("generator.strategies", ["prompt"]):
+            try:
+                state["few_shot_examples"] = await self._retrieve_few_shots(state["question"])
+            except DataAgentError as exc:
+                # A failed retrieval affects only the ICL workers in Generator.
+                state["few_shot_examples"] = ""
+                state["few_shot_error"] = exc.to_dict()
+        elif "few_shot_examples" not in provided:
+            state["few_shot_examples"] = await asyncio.to_thread(
+                self._load_prompt, self.user_few_shot_examples
+            )
         message = f"=== Perceptor ===\n{state.get('schema_str', '')}"
         logger.info(message)
         state["stream_message"] = message
         return state
+
+    def bird_schema(self, question: str, evidence: str) -> tuple[dict, str]:
+        """Use the server's BIRD workflow and preserve its annotated DDL verbatim."""
+        if not self.db.strip():
+            raise DataAgentError(
+                source="config", component="nl2sql", fact="schema_mode=bird requires database.db_id"
+            )
+        bundle = self._call_semantic_service(
+            self.semantic_client.semantic_retrieve,
+            question,
+            db_name=self.db,
+            evidence=evidence,
+        )
+        ddl = bundle.get("schemaString") if isinstance(bundle, dict) else None
+        if not isinstance(ddl, str) or not ddl.strip():
+            raise DataAgentError(
+                source="tool",
+                component="nl2sql",
+                fact="BIRD retrieval returned no schemaString; configure the semantic service with fixed + bird",
+            )
+        # Keep structured columns available to metadata/security validation. Do not
+        # re-render the DDL: that would lose BIRD's matched values and key annotations.
+        schema = {}
+        for table in (bundle.get("dataAccessPlan") or {}).get("tables") or []:
+            schema[table["table"]] = {
+                "description": table.get("description") or "",
+                "columns": {
+                    column["name"]: {
+                        "description": column.get("description") or "",
+                        "value_type": column.get("valueType") or "",
+                        "example_values": column.get("matchedValues")
+                        or column.get("exampleValues")
+                        or [],
+                    }
+                    for column in table.get("columns") or []
+                },
+            }
+        return schema, ddl
 
     def _load_prompt(self, name: str | None) -> str:
         """Load a user-supplied prompt file by name.

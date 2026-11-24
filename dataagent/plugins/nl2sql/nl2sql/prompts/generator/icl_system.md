@@ -25,9 +25,11 @@ Your task is to generate a SQL query for the target question by learning from th
 
 # Output Format:
 Please respond with XML code structured as follows.
+{% if emit_reasoning_tag %}
 <reasoning>
-    Your analysis of the examples and reasoning for the SQL generation.
+    Briefly summarize the verifiable basis for the SQL.
 </reasoning>
+{% endif %}
 <result>
     The final SQL query that answers the target question and can be executed on the target {{ dialect }} database, ensure there is not any {{ dialect }} comment and not any other explanation text in the SQL query.
     The SQL query must not include XML-specific characters (e.g., `&lt;`, `&gt;`, `&amp;`); only SQL-valid characters are allowed.

@@ -63,7 +63,8 @@ def perceptor_state(**overrides) -> dict:
 # --- perceptor.schema_context -------------------------------------------------
 
 
-async def test_perceptor_hook_supplies_schema_context() -> None:
+@pytest.mark.parametrize("schema_mode", ["full_schema", "schema_linking", "bird"])
+async def test_perceptor_hook_supplies_schema_context(schema_mode) -> None:
     async def select(question: str) -> SchemaContext:
         assert question == "无锡市的小区上行PRB利用率"
         return SchemaContext(
@@ -73,7 +74,7 @@ async def test_perceptor_hook_supplies_schema_context() -> None:
             extra_rules="## 场景规则",
         )
 
-    node = PerceptorNode(config=make_config())
+    node = PerceptorNode(config=make_config(), schema_mode=schema_mode)
     node.bind_hooks({PERCEPTOR_SCHEMA_CONTEXT: select})
     state = await node.run(perceptor_state())
 

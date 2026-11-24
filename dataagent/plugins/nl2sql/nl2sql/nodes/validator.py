@@ -28,6 +28,7 @@ logger = logging.getLogger(__name__)
 class ValidatorNode(BaseNL2SQLNode):
     def __init__(self, **kwargs) -> None:
         super().__init__(name="validator", **kwargs)
+        self.semantic_check = kwargs.pop("semantic_check", True)
         self.db_explain = kwargs.pop("db_explain", False)
         self.keyword_match = kwargs.pop("keyword_match", False)
         self.metadata_match = kwargs.pop("metadata_match", False)
@@ -36,7 +37,11 @@ class ValidatorNode(BaseNL2SQLNode):
 
     async def _aprocess(self, state: NL2SQLState, runtime: Any = None) -> NL2SQLState:
         _ = runtime
-        semantic_res = await self._validate_semantic(state)
+        semantic_res = (
+            await self._validate_semantic(state)
+            if self.semantic_check
+            else [{"score": 1, "issues": []} for _ in state["generation_results"]]
+        )
         syntax_res = await self._validate_syntax(state["generation_results"], state["schema"])
         if self.metadata_match:
             metadata_res = await self._validate_metadata(

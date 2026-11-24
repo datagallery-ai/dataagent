@@ -42,6 +42,7 @@ from nl2sql.nodes import (
     SelectorNode,
     ValidatorNode,
 )
+from nl2sql.nodes.bird_validator import BirdValidatorNode
 from nl2sql.state import NL2SQLState
 
 if TYPE_CHECKING:
@@ -50,6 +51,7 @@ if TYPE_CHECKING:
 # 节点顺序与前缀链规则由 NL2SQLConfig.enabled_nodes 校验；
 # reflector/selector 是仅有的两个条件路由节点。
 _NODE_CLASSES: dict[str, type[BaseNL2SQLNode]] = {
+    "bird-validator": BirdValidatorNode,
     "perceptor": PerceptorNode,
     "generator": GeneratorNode,
     "validator": ValidatorNode,
@@ -69,9 +71,8 @@ def build_nl2sql_graph(
     """Assemble the nl2sql StateGraph from validated parameters.
 
     Args:
-        config: Validated plugin parameters; node sections both enable their
-            node (prefix chain, see :attr:`NL2SQLConfig.enabled_nodes`) and
-            supply its options.
+        config: Validated plugin parameters. The explicit or inferred chain comes
+            from :attr:`NL2SQLConfig.enabled_nodes`; node sections supply options.
         model: Chat model resolved by the host factory; bound to every node.
         semantic_client: Host-owned semantic-service client injected through
             ``SubagentServices``; ``None`` is valid when the schema is user-supplied.
@@ -108,6 +109,8 @@ def build_nl2sql_graph(
                 name,
                 lambda state, _next=following: _next if state.get("proceed") else "validator",
             )
+        elif name == "selector" and "bird-validator" in enabled_nodes:
+            graph.add_edge(name, END)
         elif name == "selector":
             # proceed（置信度达标或重试用尽）→ 结束；否则回到 reflector。
             graph.add_conditional_edges(
@@ -129,6 +132,8 @@ def _build_node(config: NL2SQLConfig, name: str, *, security_enabled: bool) -> B
 
 def state_defaults(config: NL2SQLConfig) -> dict[str, Any]:
     """Per-run initial state values derived from node parameters."""
+    if "bird-validator" in config.enabled_nodes:
+        return {"ref_retries": 0, "sel_retries": 0}
     return {
         "ref_retries": config.section("reflector").get("ref_retries", DEFAULT_NL2SQL_REF_RETRIES),
         "sel_retries": config.section("selector").get("sel_retries", DEFAULT_NL2SQL_SEL_RETRIES),

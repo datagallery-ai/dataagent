@@ -796,3 +796,483 @@ def test_standalone_nl2sql_yaml_and_yml(tmp_path):
     legacy.write_text('{"model": "primary", "database": {"dialect": "sqlite"}}')
     with pytest.raises(ValueError, match="YAML extension required"):
         NL2SQLConfig.load(legacy)
+
+
+def _perceptor(**options):
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.nodes.perceptor import PerceptorNode
+
+    return PerceptorNode(
+        config=NL2SQLConfig(
+            {"model": "test", "database": {"dialect": "sqlite", "db_id": "schools"}}
+        ),
+        **options,
+    )
+
+
+async def test_bird_perceptor_loads_evidence_before_retrieve(tmp_path):
+    from nl2sql.state import get_default_state
+
+    evidence = "rate = meals / enrollment"
+    path = tmp_path / "evidence.md"
+    path.write_text(evidence)
+    ddl = "CREATE TABLE schools (`id` INTEGER PRIMARY KEY); -- matched values retained\n"
+    requests_seen = []
+
+    def handler(request):
+        assert request.url.path == "/api/semantic/v1/semantic/retrieve"
+        requests_seen.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "schemaString": ddl,
+                "dataAccessPlan": {
+                    "tables": [
+                        {
+                            "table": "schools",
+                            "columns": [
+                                {"name": "id", "valueType": "INTEGER", "description": "school id"}
+                            ],
+                        }
+                    ]
+                },
+            },
+        )
+
+    node = _perceptor(schema_mode="bird", user_evidence=str(path))
+    question = "Question: Find schools\nEvidence: " + evidence
+    with SemanticServiceClient(
+        base_url="http://semantic.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        node.bind_semantic_client(client)
+        result = await node.run(get_default_state(question))
+    assert requests_seen == [{"query": question, "db_name": "schools", "evidence": evidence}]
+    assert result["schema_str"] == ddl
+    assert result["schema"]["schools"]["columns"]["id"]["value_type"] == "INTEGER"
+    assert result["evidence"] == evidence
+
+
+@pytest.mark.parametrize("evidence", ["", "explicit evidence"])
+async def test_evidence_override_bypasses_file(evidence):
+    from nl2sql.state import get_default_state
+
+    node = _perceptor(schema_mode="bird", user_evidence="missing-file")
+    result = await node.run(
+        get_default_state(
+            "question",
+            schema_str="external schema",
+            evidence=evidence,
+            context_overrides=["schema_str", "evidence"],
+        )
+    )
+    assert result["schema_str"] == "external schema"
+    assert result["evidence"] == evidence
+
+
+@pytest.mark.parametrize("bundle", [{}, {"schemaString": None}, {"schemaString": "  "}])
+async def test_bird_rejects_missing_ddl_without_fallback(bundle):
+    from nl2sql.errors import DataAgentError
+    from nl2sql.state import get_default_state
+
+    def handler(request):
+        assert request.url.path.endswith("/semantic/retrieve")
+        return httpx.Response(200, json=bundle)
+
+    node = _perceptor(schema_mode="bird")
+    with SemanticServiceClient(
+        base_url="http://semantic.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        node.bind_semantic_client(client)
+        with pytest.raises(DataAgentError, match="schemaString"):
+            await node.run(get_default_state("Find schools"))
+
+
+def test_perceptor_rejects_unknown_modes_and_missing_bird_database():
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.errors import DataAgentError
+    from nl2sql.nodes.perceptor import PerceptorNode
+
+    with pytest.raises(ValueError, match="schema_mode"):
+        _perceptor(schema_mode="unknown")
+    node = PerceptorNode(
+        config=NL2SQLConfig({"model": "test", "database": {"dialect": "sqlite"}}),
+        schema_mode="bird",
+    )
+    with pytest.raises(DataAgentError, match="database.db_id"):
+        node.bird_schema("Find schools", "")
+
+
+async def test_bird_mode_through_compiled_plugin(tmp_path):
+    requests_seen = []
+    ddl = "CREATE TABLE employees (department TEXT);"
+
+    def handler(request):
+        requests_seen.append(json.loads(request.content))
+        return httpx.Response(
+            200,
+            json={
+                "schemaString": ddl,
+                "dataAccessPlan": {
+                    "tables": [
+                        {
+                            "table": "employees",
+                            "columns": [{"name": "department", "valueType": "TEXT"}],
+                        }
+                    ]
+                },
+            },
+        )
+
+    with SemanticServiceClient(
+        base_url="http://semantic.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        payload, model = await _run_task(
+            tmp_path,
+            params={"perceptor": {"schema_mode": "bird"}},
+            semantic_client=client,
+        )
+    assert payload["error"] is None
+    assert payload["sql"] == EXPECTED_SQL
+    assert payload["row_count"] == 6
+    assert len(requests_seen) == 1
+    assert requests_seen[0]["evidence"] == ""
+    assert len(model.requests) == 3
+    assert ddl in model.requests[0][1].content
+
+
+@pytest.mark.parametrize(
+    ("emit_reasoning_tag", "root_tag"),
+    [(None, None), (False, None), (True, None), (True, False), (False, True)],
+)
+@pytest.mark.parametrize("sql_field", ["sql", "expression"])
+async def test_generator_online_icl_and_shared_rules(sql_field, emit_reasoning_tag, root_tag):
+    from collections import Counter
+
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.graph import build_nl2sql_graph
+    from nl2sql.state import get_default_state
+
+    config = NL2SQLConfig(
+        {
+            "model": "primary",
+            "database": {"dialect": "sqlite"},
+            "nodes": ["perceptor", "generator"],
+            **({} if root_tag is None else {"emit_reasoning_tag": root_tag}),
+            "generator": {
+                "strategies": ["prompt", "dc", "skeleton", "icl"],
+                "num_workers": 3,
+                "num_samples": 2,
+                **(
+                    {} if emit_reasoning_tag is None else {"emit_reasoning_tag": emit_reasoning_tag}
+                ),
+            },
+        }
+    )
+    requests_seen = []
+
+    def handler(request):
+        assert request.url.path.endswith("/advanced-search/sql-few-shots")
+        requests_seen.append(dict(request.url.params))
+        return httpx.Response(
+            200,
+            json=[
+                {"query": f"example question {i}", sql_field: f"SELECT {i}"} for i in range(1, 6)
+            ],
+        )
+
+    # One generic fake response supports both the prompt and XML strategy parsers.
+    reply = AIMessage(
+        content="```sql\nSELECT 1\n```\n```sql\nSELECT 2\n```\n<result>SELECT 3</result>"
+    )
+    if emit_reasoning_tag:
+        reply = AIMessage(content="<reasoning>Example analysis</reasoning>\n" + reply.content)
+    model = ScriptedModel(responses=[reply] * 24)
+    with SemanticServiceClient(
+        base_url="http://semantic.test", transport=httpx.MockTransport(handler)
+    ) as client:
+        graph = build_nl2sql_graph(config, model=model, semantic_client=client)
+        # Even an identical question in a new run must retrieve again; no node-level cache.
+        for run in range(2):
+            state = get_default_state(
+                "count records",
+                schema_str="CREATE TABLE records (id INTEGER)",
+                sql_rules="COMMON_RULE",
+                few_shot_examples="ARCHIVED_EXAMPLE",
+                context_overrides=["schema_str", "sql_rules", "few_shot_examples"],
+            )
+            result = await graph.ainvoke(state)
+            assert requests_seen == [{"query": "count records", "topK": "5"}] * (run + 1)
+            assert Counter(x.strategy for x in result["generation_results"]) == {
+                "prompt": 6,
+                "dc": 3,
+                "skeleton": 3,
+                "icl": 3,
+            }
+            for candidate in result["generation_results"]:
+                assert "COMMON_RULE" in candidate.prompt
+                assert ("<reasoning>" in candidate.prompt) == (
+                    root_tag
+                    if root_tag is not None
+                    else bool(emit_reasoning_tag) and candidate.strategy != "prompt"
+                )
+                if candidate.strategy != "prompt":
+                    assert candidate.sql == "SELECT 3"
+                if candidate.strategy == "icl":
+                    assert "ARCHIVED_EXAMPLE" not in candidate.prompt
+                    assert candidate.prompt.count("- Example ") == 5
+                    for i in range(1, 6):
+                        assert (
+                            f"Question: example question {i}\nSQL: SELECT {i}" in candidate.prompt
+                        )
+            assert "ARCHIVED_EXAMPLE" not in result["few_shot_examples"]
+    assert len(model.requests) == 24
+
+
+@pytest.mark.parametrize("retrieval", [[], "failure"])
+async def test_icl_empty_or_failed_retrieval_never_uses_archive(retrieval):
+    from unittest.mock import Mock
+
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.graph import build_nl2sql_graph
+    from nl2sql.state import get_default_state
+
+    config = NL2SQLConfig(
+        {
+            "model": "primary",
+            "database": {"dialect": "sqlite"},
+            "nodes": ["perceptor", "generator"],
+            "generator": {"strategies": ["icl", "dc"], "num_workers": 2},
+        }
+    )
+    client = Mock()
+    if retrieval == "failure":
+        client.sql_few_shots.side_effect = ValueError("service unavailable")
+    else:
+        client.sql_few_shots.return_value = retrieval
+    model = ScriptedModel(responses=[AIMessage(content="<result>SELECT 1</result>")] * 4)
+    graph = build_nl2sql_graph(config, model=model, semantic_client=client)
+    state = get_default_state(
+        "question",
+        schema_str="CREATE TABLE t (v INT)",
+        few_shot_examples="ARCHIVED_EXAMPLE",
+        context_overrides=["schema_str", "few_shot_examples"],
+    )
+    updates = [update async for update in graph.astream(state, stream_mode="updates")]
+    perceptor = updates[0]["perceptor"]
+    assert perceptor["few_shot_examples"] == ""
+    assert bool(perceptor.get("few_shot_error")) == (retrieval == "failure")
+    candidates = updates[1]["generator"]["generation_results"]
+    client.sql_few_shots.assert_called_once_with("question", limit=5)
+    assert all("ARCHIVED_EXAMPLE" not in x.prompt for x in candidates)
+    assert len(candidates) == (2 if retrieval == "failure" else 4)
+    if retrieval == "failure":
+        assert all(x.strategy == "dc" for x in candidates)
+
+
+async def test_perceptor_without_icl_does_not_retrieve():
+    from unittest.mock import Mock
+
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.nodes.perceptor import PerceptorNode
+    from nl2sql.state import get_default_state
+
+    node = PerceptorNode(
+        config=NL2SQLConfig(
+            {
+                "model": "primary",
+                "database": {"dialect": "sqlite"},
+                "generator": {"strategies": ["dc"]},
+            }
+        )
+    )
+    client = Mock()
+    node.bind_semantic_client(client)
+    await node.run(get_default_state("question", context_overrides=["schema_str"]))
+    client.sql_few_shots.assert_not_called()
+
+
+async def test_icl_requires_host_semantic_client():
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.errors import DataAgentError
+    from nl2sql.graph import build_nl2sql_graph
+    from nl2sql.state import get_default_state
+
+    config = NL2SQLConfig(
+        {
+            "model": "primary",
+            "database": {"dialect": "sqlite"},
+            "nodes": ["perceptor", "generator"],
+            "generator": {"strategies": ["icl"], "num_workers": 2},
+        }
+    )
+    graph = build_nl2sql_graph(config, model=ScriptedModel(responses=[]))
+    with pytest.raises(DataAgentError, match="ICL") as exc:
+        await graph.ainvoke(get_default_state("question", context_overrides=["schema_str"]))
+    assert exc.value.source == "config"
+
+
+@pytest.mark.parametrize("value", ["true", "false", 0, 1, None])
+def test_generator_reasoning_tag_requires_boolean(value):
+    from nl2sql.config_manager import NL2SQLConfig
+
+    with pytest.raises(ValueError, match="generator.emit_reasoning_tag"):
+        NL2SQLConfig(
+            {
+                "model": "primary",
+                "database": {"dialect": "sqlite"},
+                "generator": {"emit_reasoning_tag": value},
+            }
+        )
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    [
+        "<result>{sql}</result>",
+        "<RESULT>{sql}</RESULT>",
+        "<result>```sql\n{sql}\n```</result>",
+        "<result>```SQL\n{sql}\n```</result>",
+        "<result>```\n{sql}\n```</result>",
+        "<result>{sql}",
+        "</reasoning>\n[result>{sql}",
+    ],
+)
+def test_xml_sql_parser_preserves_sql(wrapper):
+    from nl2sql.utils.nl2sql_utils import xml_parser
+
+    sql = "SELECT 'a--b', 'a/*b*/c', 'a  b', '```sql', '&lt;', '<result>'\nFROM t -- comment\nWHERE x < 2;"
+    assert xml_parser(wrapper.format(sql=sql)) == [sql]
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["SELECT 1", "```sql\nSELECT 1\n```", "<result></result>", "<result>```sql\n```</result>"],
+)
+def test_xml_sql_parser_requires_nonempty_result(content):
+    from nl2sql.utils.nl2sql_utils import xml_parser
+
+    assert xml_parser(content) == []
+
+
+@pytest.mark.parametrize("dc_failures", [3, 4])
+async def test_generator_parse_retry_preserves_strategy(monkeypatch, dc_failures):
+    from collections import Counter
+
+    import nl2sql.nodes.generator as generator_module
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.nodes.generator import GeneratorNode
+    from nl2sql.prompt_manager import PromptTemplate
+    from nl2sql.state import get_default_state
+
+    node = GeneratorNode(
+        config=NL2SQLConfig({"model": "primary", "database": {"dialect": "sqlite"}}),
+        strategies=["dc", "skeleton", "icl"],
+        num_workers=1,
+    )
+    node.bind_model(ScriptedModel(responses=[]))
+    prompts = {
+        PromptTemplate.from_package_relative(
+            f"prompts/generator/{strategy}_system"
+        ).apply_prompt_template(
+            dialect="sqlite",
+            sql_rules="",
+            emit_reasoning_tag=False,
+        ): strategy
+        for strategy in node.strategies
+    }
+    counts = Counter()
+    requests = {}
+
+    async def collect(model, messages):
+        strategy = prompts[messages[0].content]
+        counts[strategy] += 1
+        contents = [m.content for m in messages]
+        if strategy in requests:
+            assert contents == requests[strategy]
+        requests[strategy] = contents
+        if strategy == "dc" and counts[strategy] <= dc_failures:
+            return AIMessage(content="No result tag")
+        return AIMessage(content=f"<result>SELECT '{strategy}'</result>")
+
+    monkeypatch.setattr(generator_module, "collect_model_stream", collect)
+    result = await node.run(get_default_state("question", few_shot_examples="EXAMPLE_FROM_STATE"))
+    assert counts == {"dc": 4, "skeleton": 1, "icl": 1}
+    assert {r.strategy: r.sql for r in result["generation_results"]} == {
+        strategy: f"SELECT '{strategy}'"
+        for strategy in node.strategies
+        if strategy != "dc" or dc_failures == 3
+    }
+    assert "EXAMPLE_FROM_STATE" in requests["icl"][1]
+
+
+@pytest.mark.parametrize("strategy", ["prompt", "dc", "skeleton", "icl"])
+@pytest.mark.parametrize(
+    "options,retries", [({}, 3), ({"parse_retries": 0}, 0), ({"parse_retries": 5}, 5)]
+)
+async def test_generator_parse_retry_limit(strategy, options, retries):
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.errors import DataAgentError
+    from nl2sql.nodes.generator import GeneratorNode
+
+    config = NL2SQLConfig(
+        {"model": "primary", "database": {"dialect": "sqlite"}, "generator": options}
+    )
+    node = GeneratorNode(config=config, **config.section("generator"))
+    model = ScriptedModel(responses=[AIMessage(content="No SQL")] * (retries + 1))
+    node.bind_model(model)
+    with pytest.raises(DataAgentError, match=f"SQL parsing failed after {retries} retries"):
+        await node.generate_with_llm(
+            strategy,
+            {"dialect": "sqlite", "sql_rules": "", "emit_reasoning_tag": False, "num_samples": 1},
+            {"question": "q", "schema": "", "evidence": "", "few_shot_examples": ""},
+        )
+    assert len(model.requests) == retries + 1
+
+
+async def test_generator_retries_truncated_output(monkeypatch):
+    import nl2sql.nodes.generator as generator_module
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.nodes.generator import GeneratorNode
+
+    node = GeneratorNode(
+        config=NL2SQLConfig({"model": "primary", "database": {"dialect": "sqlite"}})
+    )
+    node.bind_model(ScriptedModel(responses=[]))
+    responses = [
+        AIMessage(content="<result>SELECT", response_metadata={"finish_reason": "length"}),
+        AIMessage(content="<result>SELECT 1</result>"),
+    ]
+
+    async def collect(model, messages):
+        return responses.pop(0)
+
+    monkeypatch.setattr(generator_module, "collect_model_stream", collect)
+    result = await node.generate_with_llm(
+        "dc",
+        {"dialect": "sqlite", "sql_rules": "", "emit_reasoning_tag": False},
+        {"question": "q", "schema": "", "evidence": ""},
+    )
+    assert result[0][0] == "SELECT 1"
+    assert responses == []
+
+
+async def test_generator_does_not_retry_transport_errors(monkeypatch):
+    from unittest.mock import AsyncMock
+
+    import nl2sql.nodes.generator as generator_module
+    from nl2sql.config_manager import NL2SQLConfig
+    from nl2sql.nodes.generator import GeneratorNode
+
+    node = GeneratorNode(
+        config=NL2SQLConfig({"model": "primary", "database": {"dialect": "sqlite"}})
+    )
+    node.bind_model(ScriptedModel(responses=[]))
+    collect = AsyncMock(side_effect=RuntimeError("transport failed"))
+    monkeypatch.setattr(generator_module, "collect_model_stream", collect)
+    with pytest.raises(RuntimeError, match="transport failed"):
+        await node.generate_with_llm(
+            "dc",
+            {"dialect": "sqlite", "sql_rules": "", "emit_reasoning_tag": False},
+            {"question": "q", "schema": "", "evidence": ""},
+        )
+    assert collect.await_count == 1

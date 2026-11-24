@@ -202,9 +202,19 @@ class SemanticServiceClient:
             ]
         return result
 
-    def semantic_retrieve(self, query: str) -> dict:
-        """Retrieve the semantic bundle relevant to one natural-language query."""
+    def semantic_retrieve(
+        self, query: str, *, db_name: str | None = None, evidence: str | None = None
+    ) -> dict:
+        """Retrieve a semantic bundle, optionally scoped to a BIRD database and evidence.
+
+        The service configuration selects its retrieval workflow. Omitting the
+        optional arguments preserves the default workflow's request payload.
+        """
         payload: dict[str, Any] = {"query": query}
+        if db_name is not None:
+            payload["db_name"] = db_name
+        if evidence is not None:
+            payload["evidence"] = evidence
         return self.post(
             "semantic/retrieve", json=payload, headers={"Content-Type": "application/json"}
         )
