@@ -31,6 +31,9 @@ DEFAULT_NL2SQL_NUM_SAMPLES: int = 1
 DEFAULT_NL2SQL_NUM_WORKERS: int = 1
 """NL2SQL Generator 线程池工作线程数。"""
 
+DEFAULT_NL2SQL_PARSE_RETRIES: int = 3
+"""NL2SQL Generator 生成结果截断或解析失败后的额外重试次数。"""
+
 DEFAULT_NL2SQL_REF_RETRIES: int = 2
 """NL2SQL Reflector 反思循环默认重试次数。"""
 

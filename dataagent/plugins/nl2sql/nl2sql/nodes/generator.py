@@ -20,6 +20,7 @@ from dataagent import collect_model_stream
 from nl2sql.constants import (
     DEFAULT_NL2SQL_NUM_SAMPLES,
     DEFAULT_NL2SQL_NUM_WORKERS,
+    DEFAULT_NL2SQL_PARSE_RETRIES,
     NL2SQL_PROMPT_PREFIX,
 )
 from nl2sql.errors import DataAgentError
@@ -37,7 +38,11 @@ class GeneratorNode(BaseNL2SQLNode):
         super().__init__(name="generator", **kwargs)
         self.num_workers = kwargs.pop("num_workers", DEFAULT_NL2SQL_NUM_WORKERS)
         self.num_samples = kwargs.pop("num_samples", DEFAULT_NL2SQL_NUM_SAMPLES)
+        self.parse_retries = kwargs.pop("parse_retries", DEFAULT_NL2SQL_PARSE_RETRIES)
         self.strategies = kwargs.pop("strategies", ["prompt"])
+        self.emit_reasoning_tag = self._config.get(
+            "emit_reasoning_tag", kwargs.pop("emit_reasoning_tag", False)
+        )
 
     async def generate_with_llm(self, strategy: str, settings: dict, context: dict):
         """Generate SQL candidates for one strategy with the bound model."""
@@ -47,20 +52,38 @@ class GeneratorNode(BaseNL2SQLNode):
         user_prompt = PromptTemplate.from_package_relative(
             f"{NL2SQL_PROMPT_PREFIX}/generator/{strategy}_user"
         ).apply_prompt_template(**context)
-        content = (
-            await collect_model_stream(
+        expected_num_sql = settings.get("num_samples", 1) if strategy == "prompt" else 1
+        parser = xml_parser if strategy in {"dc", "skeleton", "icl"} else sql_parser
+        prompt_history = system_prompt + "\n\n" + user_prompt
+        # Retry only this generation task; successful parallel tasks are retained.
+        for attempt in range(self.parse_retries + 1):
+            response = await collect_model_stream(
                 self.model,
                 [
                     SystemMessage(content=system_prompt),
                     HumanMessage(content=user_prompt),
                 ],
             )
-        ).content
-        expected_num_sql = settings.get("num_samples", 1) if strategy == "prompt" else 1
-        parser = xml_parser if strategy in {"dc", "skeleton", "icl"} else sql_parser
-        sqls = parser(content)[-expected_num_sql:]
-        prompt_history = system_prompt + "\n\n" + user_prompt
-        return [(sql, prompt_history, strategy) for sql in sqls]
+            try:
+                if response.response_metadata.get("finish_reason") == "length":
+                    raise DataAgentError(
+                        source="llm", component="nl2sql", fact="SQL response truncated"
+                    )
+                sqls = [sql for sql in parser(response.content) if sql.strip()][-expected_num_sql:]
+                if not sqls:
+                    raise DataAgentError(source="llm", component="nl2sql", fact="No SQL found")
+            except DataAgentError as exc:
+                if attempt == self.parse_retries:
+                    raise DataAgentError(
+                        source="llm",
+                        component="nl2sql",
+                        fact=f"SQL parsing failed after {self.parse_retries} retries; strategy={strategy}: {exc.fact}",
+                    ) from exc
+                logger.warning(
+                    f"Generator {strategy} SQL parsing failed; retry {attempt + 1}/{self.parse_retries}: {exc.fact}"
+                )
+                continue
+            return [(sql, prompt_history, strategy) for sql in sqls]
 
     async def strategy_prompt(self, settings, context):
         """Generate prompt-strategy candidates."""
@@ -91,6 +114,8 @@ class GeneratorNode(BaseNL2SQLNode):
         settings = {
             "dialect": self.dialect,
             "sql_rules": state["sql_rules"],
+            "emit_reasoning_tag": self.emit_reasoning_tag,
+            "prompt_emit_reasoning_tag": self._config.get("emit_reasoning_tag", False),
         }
         context = {
             "question": state["question"],
@@ -104,6 +129,8 @@ class GeneratorNode(BaseNL2SQLNode):
 
         async def _run_named(strategy: str):
             try:
+                if strategy == "icl" and (error := state.get("few_shot_error")):
+                    raise DataAgentError(**error)
                 return strategy, await self.run_strategy(strategy, settings.copy(), context), None
             except Exception as exc:
                 return strategy, None, exc

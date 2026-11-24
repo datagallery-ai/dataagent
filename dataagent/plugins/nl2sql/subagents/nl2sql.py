@@ -84,6 +84,13 @@ class _BudgetedModel:
     def __init__(self, model: BaseChatModel) -> None:
         self._model = model
 
+    @property
+    def extra_body(self) -> Mapping[str, Any]:
+        """Provider options used to select the BIRD prompt template."""
+        return getattr(self._model, "extra_body", None) or getattr(
+            self._model, "model_kwargs", {}
+        ).get("extra_body", {})
+
     async def ainvoke(self, messages, config=None, **kwargs):
         """Invoke the unchanged host model after checking the task budget."""
         counter = _current_counter.get()
@@ -241,7 +248,7 @@ def _database_summary(config: NL2SQLConfig, engine: str) -> str:
     db_id = config.get("database.db_id") or "unnamed"
     mode = (
         "**Current mode: query and execute**. It queries only this database."
-        if "executor" in config.enabled_nodes
+        if config.executes_sql
         else "**Current mode: generate SQL only**. It does not execute SQL or return query rows/CSV. "
         "Follow the configured input Hook's task format when one is present."
     )
@@ -264,9 +271,7 @@ def build_subagent(params: dict[str, Any], services) -> dict[str, Any]:
     """
     nl2sql_config = NL2SQLConfig(params)
     engine = str(nl2sql_config.get("database.engine") or nl2sql_config.get("database.dialect"))
-    if "executor" in nl2sql_config.enabled_nodes or nl2sql_config.get(
-        "validator.db_explain", False
-    ):
+    if nl2sql_config.executes_sql or nl2sql_config.get("validator.db_explain", False):
         check_engine_driver(engine)
     model = _BudgetedModel(services.get_model(str(nl2sql_config.get("model"))))
     budget = nl2sql_config.model_call_budget

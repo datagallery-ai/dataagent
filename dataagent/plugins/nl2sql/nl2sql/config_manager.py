@@ -24,23 +24,60 @@ from pathlib import Path
 from typing import Any
 
 from dataagent import read_yaml
-from nl2sql.constants import DEFAULT_NL2SQL_MODEL_CALL_BUDGET
+from nl2sql.constants import DEFAULT_NL2SQL_MODEL_CALL_BUDGET, DEFAULT_NL2SQL_PARSE_RETRIES
 
 _NODE_ORDER = ("perceptor", "generator", "validator", "reflector", "executor", "selector")
+
+_BIRD_NODE_ORDER = ("perceptor", "generator", "bird-validator", "selector")
 
 _KNOWN_KEYS = frozenset(
     {
         "model",
         "model_call_budget",
+        "emit_reasoning_tag",
         "result_files",
         "database",
         "nodes",
         "scenario",
         *_NODE_ORDER,
+        "bird-validator",
     }
 )
 
 _CONNECTION_RESERVED = frozenset({"db_id", "dialect", "engine"})
+
+
+def _validate_bird_options(options: Mapping[str, Any]) -> None:
+    # Node modules import NL2SQLConfig during package initialization.
+    from nl2sql.nodes.checkers.checkers import AVAILABLE_CHECKERS, DEFAULT_CHECKERS
+
+    unknown = set(options) - {
+        "checkers",
+        "repair_attempts",
+        "preview_limit",
+        "sql_security_enabled",
+        "temperature",
+    }
+    if unknown:
+        raise ValueError(f"unknown bird-validator options: {sorted(unknown)}")
+    checkers = options.get("checkers", DEFAULT_CHECKERS)
+    if not isinstance(checkers, (list, tuple)):
+        raise ValueError("bird-validator.checkers must be an ordered list of checker names")
+    for name in checkers:
+        if name not in AVAILABLE_CHECKERS:
+            raise ValueError(
+                f"unknown bird-validator.checkers entry {name!r}; choose from {AVAILABLE_CHECKERS}"
+            )
+    if len(set(checkers)) != len(checkers):
+        raise ValueError("bird-validator.checkers must not contain duplicate names")
+    for key, minimum in (("repair_attempts", 1), ("preview_limit", -1)):
+        if key in options and (type(options[key]) is not int or options[key] < minimum):
+            raise ValueError(f"bird-validator.{key} must be an integer >= {minimum}")
+    if not isinstance(options.get("sql_security_enabled", False), bool):
+        raise ValueError("bird-validator.sql_security_enabled must be true or false")
+    temperature = options.get("temperature", 0.3)
+    if type(temperature) not in (int, float) or not 0 <= temperature <= 2:
+        raise ValueError("bird-validator.temperature must be a number between 0 and 2")
 
 
 class NL2SQLConfig:
@@ -81,18 +118,43 @@ class NL2SQLConfig:
             if key in database and not isinstance(database.get(key), str):
                 raise ValueError(f"database.{key} must be a string, got {database.get(key)!r}")
 
-        for section in _NODE_ORDER:
+        for section in ("bird-validator", *_NODE_ORDER):
             if section in raw and not isinstance(raw.get(section), Mapping):
                 raise ValueError(
                     f"nl2sql parameter {section!r} must be a mapping, got {raw.get(section)!r}"
                 )
 
+        if not isinstance(raw.get("validator", {}).get("semantic_check", True), bool):
+            raise ValueError("validator.semantic_check must be true or false")
+        if not isinstance(raw.get("emit_reasoning_tag", False), bool):
+            raise ValueError("emit_reasoning_tag must be true or false")
+        if not isinstance(raw.get("generator", {}).get("emit_reasoning_tag", False), bool):
+            raise ValueError("generator.emit_reasoning_tag must be true or false")
+
+        retries = raw.get("generator", {}).get("parse_retries", DEFAULT_NL2SQL_PARSE_RETRIES)
+        if type(retries) is not int or retries < 0:
+            raise ValueError("generator.parse_retries must be a non-negative integer")
+
         nodes = raw.get("nodes")
         if nodes is not None:
             if not isinstance(nodes, (list, tuple)) or len(nodes) < 2:
                 raise ValueError("nodes must include at least perceptor and generator")
-            if list(nodes) != list(_NODE_ORDER[: len(nodes)]):
-                raise ValueError(f"nodes must be a prefix of {_NODE_ORDER}")
+            if tuple(nodes) == _BIRD_NODE_ORDER:
+                conflicts = {"validator", "reflector", "executor"}.intersection(raw)
+                if conflicts:
+                    raise ValueError(
+                        f"bird-validator chain cannot use node sections {sorted(conflicts)}"
+                    )
+                if raw.get("selector", {}).get("sel_retries", 0) != 0:
+                    raise ValueError("bird-validator chain requires selector.sel_retries=0")
+            elif list(nodes) != list(_NODE_ORDER[: len(nodes)]):
+                raise ValueError(
+                    f"nodes must be a prefix of {_NODE_ORDER} or exactly {_BIRD_NODE_ORDER}"
+                )
+        if "bird-validator" in raw:
+            if tuple(nodes or ()) != _BIRD_NODE_ORDER:
+                raise ValueError(f"bird-validator section requires nodes={_BIRD_NODE_ORDER}")
+            _validate_bird_options(raw["bird-validator"])
         self._data: dict[str, Any] = raw
 
     def __repr__(self) -> str:  # pragma: no cover - debugging aid
@@ -116,10 +178,10 @@ class NL2SQLConfig:
 
     @property
     def enabled_nodes(self) -> list[str]:
-        """Node chain enabled by the present node sections (prefix of the canonical order).
+        """Return the explicit node chain, or infer a legacy prefix from its sections.
 
-        With no node sections configured the full six-node chain runs; otherwise
-        the present sections must form a prefix and include the generator.
+        Without an explicit list or any node sections the full six-node chain runs.
+        The BIRD graph requires an explicit four-node list.
         """
         explicit = self._data.get("nodes")
         if explicit is not None:
@@ -135,6 +197,11 @@ class NL2SQLConfig:
         if "generator" not in present:
             raise ValueError("nl2sql requires at least the perceptor and generator nodes")
         return present
+
+    @property
+    def executes_sql(self) -> bool:
+        """Whether the selected graph returns executed candidate results."""
+        return any(node in {"executor", "bird-validator"} for node in self.enabled_nodes)
 
     @classmethod
     def load(cls, path: str | Path) -> NL2SQLConfig:

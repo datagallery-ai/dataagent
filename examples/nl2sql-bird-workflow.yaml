@@ -1,0 +1,38 @@
+schema_version: 4
+dataagent:
+  model: primary
+  limits:
+    timeout_seconds: 180
+  entry: nl2sql
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+plugins:
+  enabled:
+  - nl2sql
+  config:
+    nl2sql:
+      model: primary
+      model_call_budget: 256
+      nodes: [perceptor, generator, bird-validator, selector]
+      perceptor:
+        schema_mode: bird
+      generator:
+        strategies: [dc, skeleton, icl]
+        num_workers: 3
+        num_samples: 1
+        parse_retries: 3
+      bird-validator:
+        checkers: [syntax, join, order_by_limit, time, select, max_min, order_by_null, result]
+      selector:
+        shortcut: 1
+      database:
+        db_id: mydb
+        dialect: sqlite
+        engine: sqlite
+        path: $env{NL2SQL_DATABASE_PATH}
+semantic:
+  base_url: $env{SEMANTIC_BASE_URL}

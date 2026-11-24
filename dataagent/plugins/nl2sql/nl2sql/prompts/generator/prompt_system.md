@@ -18,5 +18,8 @@ Try to diversify the candidate SQL queries. If the question can be interpreted i
 {% endif %}
 
 # Output
+{% if prompt_emit_reasoning_tag %}
+Start with a brief, verifiable justification in <reasoning>...</reasoning>, then provide the requested output below.
+{% endif %}
 Before generation, please think through the steps of how to write.
 Respond with candidate SQL quer{{ "ies" if num_samples > 1 else "y" }}, each enclosed in a ```sql``` block.

@@ -433,7 +433,10 @@ def _add_dimension_context(
             join = (f"{fact_table}.{name}", f"{table}.{key}")
             if join not in state["joins"]:
                 state["joins"].append(join)
-        if f"CREATE TABLE `{table}`" not in schema_str:
+        if (
+            f"CREATE TABLE {table} (" not in schema_str
+            and f"CREATE TABLE `{table}` (" not in schema_str
+        ):
             new_tables[table] = table_meta
         rule_line = _dimension_rule_line(name, mapping)
         if rule_line not in sql_rules:

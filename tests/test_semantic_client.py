@@ -224,6 +224,29 @@ def test_query_encoding_defaults_samples_and_post_payload():
     assert retrieve.headers.get("authorization", "").startswith("Basic ")
 
 
+@pytest.mark.parametrize("evidence", [None, "", "Free meal rate = free meals / enrollment."])
+def test_semantic_retrieve_bird_payload_and_bundle(evidence):
+    """Send optional BIRD fields without losing empty evidence or bundle fields."""
+    requests = []
+    bundle = {
+        "schemaString": "CREATE TABLE schools (id INTEGER);",
+        "dataAccessPlan": {"tables": [{"table": "schools"}], "joinPaths": []},
+        "sqlExamples": [{"query": "List schools", "expression": "SELECT id FROM schools"}],
+    }
+
+    def respond(request):
+        requests.append(request)
+        return httpx.Response(200, json=bundle)
+
+    with SemanticServiceClient("semantic.test", transport=httpx.MockTransport(respond)) as client:
+        result = client.semantic_retrieve("List schools", db_name="schools_db", evidence=evidence)
+    expected = {"query": "List schools", "db_name": "schools_db"}
+    if evidence is not None:
+        expected["evidence"] = evidence
+    assert json.loads(requests[0].content) == expected
+    assert result == bundle
+
+
 @pytest.mark.parametrize(
     "base",
     [

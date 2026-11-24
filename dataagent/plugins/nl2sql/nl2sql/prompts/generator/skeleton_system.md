@@ -39,9 +39,11 @@ Fill in the skeleton with:
 
 # Output Format:
 Please respond with XML code structured as follows.
+{% if emit_reasoning_tag %}
 <reasoning>
-    Repeat the question, then provide your comprehensive analysis and planning for the SQL query generation and the SQL skeleton with placeholders.
+    Briefly summarize the verifiable basis for the SQL.
 </reasoning>
+{% endif %}
 <result>
     The final SQL query that answers the target question and can be executed on the target {{ dialect }} database, ensure there is not any {{ dialect }} comment and not any other explanation text in the SQL query.
     The SQL query must not include XML-specific characters (e.g., `&lt;`, `&gt;`, `&amp;`); only SQL-valid characters are allowed.
