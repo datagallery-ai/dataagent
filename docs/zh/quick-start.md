@@ -5,7 +5,7 @@
 | 路径 | 适用环境 | 入口 |
 | --- | --- | --- |
 | **推荐：一键部署** | Linux（包括 openEuler） | `./deploy.sh`（配置、依赖、构建含 TUI、detached 后台启动 Web/API 与健康检查一次完成） |
-| **手动 npm** | Windows、macOS，或需要手改环境变量时 | 准备工具和下载源 → `npm install` → 模型配置 → `npm run build` → `npm run start` |
+| **手动 npm** | Windows、macOS，或需要手改环境变量时 | 准备工具和下载源 → `npm install` + `uv sync` → 模型配置 → `npm run build` → `npm run start` |
 
 部署完成后把 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY` 写入仓库根目录 `.env`（`npm run start` 会载入进程环境）或 Home `~/.dataagent/.env`。然后打开网页或 TUI 提问。本版本**不提供** Docker / Compose，控制面也没有注册登录。
 
@@ -37,7 +37,7 @@ cd datafoundry
 ### 交互与配置规则
 
 - 首次部署：脚本生成 `.env`，并确认端口 / 客户端可达地址。Home 还没有 `config.yaml` 时，按默认模板写入完整配置，再把所选监听地址写入 `server.host` 和 `server.port`。已有配置只更新这两个字段；文件无法解析时停止写入并保留原文件。部署阶段不要求填写模型 Key。
-- 之后再执行交互式 `./deploy.sh` / `./deploy.sh deploy`：若已有完整 `.env`，会跳过配置问答。
+- 再次执行交互式 `./deploy.sh` / `./deploy.sh deploy` 时，若已有受管服务运行或根 `.env` 非空，会跳过配置问答。
 - 需要重新配置端口或客户端可达地址时（保留现有密钥，并先备份 `.env`）：
 
 ```bash
@@ -58,16 +58,24 @@ cd datafoundry
 ./deploy.sh status    # 进程与 API / Web 健康状态
 ./deploy.sh start     # 用已有构建启动（不安装、不构建）
 ./deploy.sh stop      # 只停止受管进程组
-./deploy.sh restart   # 停止后启动（不安装、不构建）
+./deploy.sh restart   # 校验后沿用上次的启动配置重启
 ./deploy.sh logs      # 跟随运行日志；Ctrl+C 不停止服务
 ./deploy.sh doctor    # 只读检查依赖 / 配置 / 端口 / 磁盘 / 健康
 ./deploy.sh tui       # 可选：前台启动 TUI（需 API 已健康；不是受管后台服务）
 ./deploy.sh help
 ```
 
-`deploy` 负责依赖准备和构建。`start` / `restart` 只使用已有的 Python 环境和构建产物，缺少依赖时提示重新执行 `deploy`；托管启动不会补装依赖或自动构建。手动 `npm start` 仍保留按需准备环境和构建产物的便利行为。
+`deploy` 负责依赖准备和构建。`start` / `restart` 只使用已有的 Python 环境和构建产物，缺少依赖时提示重新执行 `deploy`；托管启动不会补装依赖或自动构建。手动 `npm start` 同样使用已有环境和 Web 构建产物。
 
-部署时不要求填写 `LLM_*`。重复部署会进入维护窗口：先停止受管进程组，再执行 `npm ci` 与构建。
+`deploy`、`restart` 和 `doctor` 优先使用显式传入的 `--config`、`--web-host` 和 `--web-port`，其次沿用正在运行的受管服务的配置文件和 Web 地址，最后使用 Home 配置和默认 Web 地址。显式指定的 Web 端口会直接校验，占用时报告冲突。交互部署只询问未显式指定的端口。
+
+原端口切换到重叠的监听地址时，Linux 通过 `ss` 确认占用来自当前受管服务。出现其他占用或无法确认归属时，当前服务继续运行，命令报告端口冲突。
+
+`deploy` 自动检查依赖、部署目录权限、配置和最终监听端口。需要检查镜像连通性、磁盘或当前服务状态时，运行 `./deploy.sh doctor`。
+
+`restart` 在停止旧服务前用 Server 的配置加载逻辑校验新配置。`doctor` 在已有 Python 环境时执行同样的校验，否则仅检查监听配置并提示跳过了 Server 配置校验。
+
+部署时不要求填写 `LLM_*`。重复部署会进入维护窗口：先停止受管进程组，再执行 `npm install` 与构建。
 
 ### 日志位置
 
@@ -104,7 +112,7 @@ npm --version
 uv --version
 ```
 
-受限网络环境先预装 Python 3.12，指定解释器，并关闭自动下载以便缺失时直接报错。以下路径需替换为本机实际路径，命令在执行 `npm install` 的同一终端运行：
+受限网络环境先预装 Python 3.12，指定解释器，并关闭自动下载以便缺失时直接报错。以下路径需替换为本机实际路径，命令在执行 `uv sync` 的同一终端运行：
 
 ```bash
 export UV_PYTHON=/opt/python3.12/bin/python3.12
@@ -122,17 +130,18 @@ npm config get registry
 
 PowerShell 使用 `$env:NAME="value"` 设置对应变量，解释器路径例如 `C:\Python312\python.exe`；检查命令中的 `$UV_PYTHON` 对应 `$env:UV_PYTHON`。如果需要下载 Python，可按 [镜像指南](guides/mirror-deployment.md) 配置 `UV_PYTHON_INSTALL_MIRROR` 并允许下载。
 
-`npm_config_registry` 控制前端依赖来源；`UV_DEFAULT_INDEX` 控制 Python 运行依赖和构建依赖的索引。设置这些进程变量即可，不要求修改全局源配置。npm 下载源需要进程变量或 npm 原生配置；Python 准备也会读取根 `.env` 的默认值，同名进程变量优先。
+`npm_config_registry` 控制前端依赖来源；`UV_DEFAULT_INDEX` 控制 Python 运行依赖和构建依赖的索引。设置这些进程变量即可，不要求修改全局源配置。手动安装时请通过进程环境或 npm、uv 的原生配置指定下载源。
 
-安装钩子直接调用原生 `uv sync`，根据 `pyproject.toml` 的版本约束从配置的索引解析并安装依赖。仓库保留 `uv.lock` 作为解析快照，以减少首次解析可选依赖的下载成本；安装不使用 `--frozen` 或 `--locked`，配置或索引变化时由 uv 更新快照。无需执行 `sed` 或手动改写下载地址，不要求不同环境的全部传递依赖版本一致。
+Python 依赖通过原生 `uv sync` 安装，根据 `pyproject.toml` 的版本约束从配置的索引解析并安装依赖。仓库保留 `uv.lock` 作为解析快照，以减少首次解析可选依赖的下载成本；安装不使用 `--frozen` 或 `--locked`，配置或索引变化时由 uv 更新快照。无需执行 `sed` 或手动改写下载地址，不要求不同环境的全部传递依赖版本一致。
 
 ### 2. 安装依赖
 
 ```bash
-npm install
+npm install --include=dev
+uv sync --no-dev --extra video
 ```
 
-安装尾部的 `postinstall` 会自动同步控制面的 Python 依赖到 `.venv`。需要拆分前端安装、Python 准备和构建时，见 [分阶段安装与原生命令](guides/mirror-deployment.md#staged-installation)。确认整个命令成功退出、Python 同步完成后再继续；耗时取决于机器和下载源。
+第一条命令安装 Web 和 TUI 依赖。第二条命令将运行依赖和视频依赖同步到 `.venv`。需要开发工具时执行 `uv sync`，其他可选能力按需选择。详见[分阶段安装](guides/mirror-deployment.md#staged-installation)。
 
 ### 3. 配置模型服务
 
@@ -165,12 +174,14 @@ npm run start
 npm run start:tui
 ```
 
-分开启动时，网页和 TUI 都会在控制面没起时拉起它。地址来自 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`：
+分开启动时，在两个终端先启动控制面，再启动网页。网页默认连接 `config.yaml` 中的地址（默认 `http://127.0.0.1:8790`），连接独立部署的后端时可先设置 `API_PROXY_TARGET`。
 
 ```bash
-npm run start:api
+uv run --no-sync dataagent serve
 npm run start:web
 ```
+
+如果模型变量写在仓库根 `.env`，启动控制面时使用 `uv run --no-sync --env-file .env dataagent serve`。
 
 <a id="manual-verification"></a>
 
@@ -212,7 +223,7 @@ npm run start:tui
 
 地址来自 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。控制面已经在这个地址上时，同一条命令直接连上。`--runtime-url` 只连接、不拉起。
 
-部署栈已经在跑时也可以 `./deploy.sh tui`。它连接这次启动记下的 API 地址。
+`./deploy.sh tui` 默认连接托管启动记录的 API 地址，也可以用 `--runtime-url` 指定已有后端。
 
 恢复最近的服务端会话：
 

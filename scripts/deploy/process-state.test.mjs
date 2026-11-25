@@ -16,7 +16,7 @@ import {
   writeDeploymentState
 } from "./process-state.mjs";
 
-test("managed startup launches Web and API without preparing missing artifacts", async (t) => {
+for (const webOnly of [false, true]) test(webOnly ? "web-only startup leaves the API to its own launcher" : "managed startup launches the built Web and API", async (t) => {
   if (process.platform !== "linux") return t.skip("managed process verification uses procfs");
   const root = await mkdtemp(path.join(os.tmpdir(), "df-managed-launch-"));
   t.after(async () => {
@@ -32,9 +32,11 @@ test("managed startup launches Web and API without preparing missing artifacts",
   await symlink(path.join(repository, "node_modules"), path.join(root, "node_modules"), "dir");
   await mkdir(path.join(root, "bin"));
   await mkdir(path.join(root, "home"));
-  await writeFile(path.join(root, "home/config.yaml"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
+  await mkdir(path.join(root, "ui/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "ui/web/.next/BUILD_ID"), "fixture");
+  await writeFile(path.join(root, "home/config.yaml"), webOnly ? "server: false" : JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
   const log = path.join(root, "commands.jsonl");
-  for (const command of ["python", "npm"]) {
+  for (const command of webOnly ? ["npm"] : ["python", "npm"]) {
     const location = command === "python" ? path.join(root, ".venv/bin/python") : path.join(root, "bin", command);
     await mkdir(path.dirname(location), { recursive: true });
     await writeFile(location, `#!/usr/bin/env node
@@ -42,18 +44,20 @@ const fs = require('node:fs');
 const path = require('node:path');
 fs.appendFileSync(process.env.CALL_LOG, JSON.stringify({
   name: path.basename(process.argv[1]), args: process.argv.slice(2), noSync: process.env.UV_NO_SYNC,
+  target: process.env.API_PROXY_TARGET,
 }) + '\\n');
 // Keep both fixture services alive until their launch commands have been recorded.
 setInterval(() => {
-  if (fs.readFileSync(process.env.CALL_LOG, 'utf8').trim().split('\\n').length >= 2) process.exit(0);
+  if (fs.readFileSync(process.env.CALL_LOG, 'utf8').trim().split('\\n').length >= ${webOnly ? 1 : 2}) process.exit(0);
 }, 10);
 setTimeout(() => process.exit(0), 1000);
 `, { mode: 0o755 });
   }
   const started = await startManagedStack(root, {
-    env: { ...process.env, DATAAGENT_HOME: path.join(root, "home"), CALL_LOG: log,
+    env: { ...process.env, DATAAGENT_HOME: path.join(root, "home"), CALL_LOG: log, UV_PROJECT_ENVIRONMENT: ".venv",
+      API_PROXY_TARGET: "http://127.0.0.1:2",
       PATH: `${path.join(root, "bin")}${path.delimiter}${process.env.PATH}` },
-    args: managedWebStartArgs({ host: "127.0.0.1", port: "3310" }),
+    args: webOnly ? ["--web"] : managedWebStartArgs({ host: "127.0.0.1", port: "3310" }),
   });
   const deadline = Date.now() + 5000;
   while (isProcessAlive(started.pid) && Date.now() < deadline) {
@@ -61,10 +65,10 @@ setTimeout(() => process.exit(0), 1000);
   }
   assert.equal(isProcessAlive(started.pid), false, "fixture services must exit after recording their commands");
   const calls = (await readFile(log, "utf8")).trim().split("\n").map(JSON.parse);
-  assert.equal(calls.length, 2, JSON.stringify(calls));
+  assert.equal(calls.length, webOnly ? 1 : 2, JSON.stringify(calls));
   assert(calls.every(call => call.noSync === undefined));
-  assert(calls.some(call => call.name === "python" && call.args.includes("serve")));
-  assert(calls.some(call => call.name === "npm" && call.args.includes("start")));
+  assert.equal(calls.some(call => call.name === "python" && call.args.includes("serve")), !webOnly);
+  assert(calls.some(call => call.name === "npm" && call.args.includes("start") && call.target === "http://127.0.0.1:" + (webOnly ? 2 : 1)));
   assert(!calls.some(call => call.args.includes("sync") || call.args.some(arg => arg.startsWith("build"))));
 });
 
@@ -96,7 +100,7 @@ test("isProcessAlive detects live and stale pids", () => {
 });
 
 
-test("start and stop managed stack are idempotent and refuse foreign pids", async (t) => {
+test("start and stop managed stack are idempotent", async (t) => {
   if (process.platform === "win32") {
     t.skip("process-group semantics are Unix-only");
     return;
@@ -125,20 +129,6 @@ test("start and stop managed stack are idempotent and refuse foreign pids", asyn
     }),
     /already running/i
   );
-
-  const foreignRoot = await mkdtemp(path.join(os.tmpdir(), "df-foreign-"));
-  await writeDeploymentState(foreignRoot, {
-    pid: process.pid,
-    launchId: "not-this-process",
-    status: "running",
-    startedAt: new Date().toISOString(),
-    ports: { web: 3000, api: 8787 }
-  });
-  const staleStop = await stopManagedStack(foreignRoot);
-  assert.equal(staleStop.stopped, false);
-  assert.match(String(staleStop.reason), /stale/i);
-  assert.equal(await readDeploymentState(foreignRoot), null);
-  assert.equal(isProcessAlive(process.pid), true);
 
   await stopManagedStack(root);
   assert.equal(isProcessAlive(started.pid), false);

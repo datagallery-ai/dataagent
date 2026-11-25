@@ -1,91 +1,64 @@
-import { logPath as resolveLogPath } from "../../ui/shared/logging.mjs";
-import { deploymentHelp } from "./args.mjs";
-
 export function createDeploymentController(deps) {
   async function runDeploy(parsed) {
-    const calls = [];
     let configurationChanged = false;
     let serviceStopped = false;
     let stage = "load-config";
-    let config;
-    const logPath = resolveLogPath("backend");
 
     try {
-      stage = "load-config";
-      config = await deps.loadConfiguration({ reconfigure: parsed.reconfigure });
-      calls.push("load-config");
-
-      stage = "preflight";
-      await deps.preflight(config, parsed);
-      calls.push("preflight");
-
-      stage = "configure";
-      config = await deps.configure(config, parsed);
-      calls.push("configure");
+      let config = await deps.loadConfiguration();
 
       stage = "check-dependencies";
       await deps.checkDependencies(config, parsed);
-      calls.push("check-dependencies");
 
-      stage = "select-ports";
-      config = await deps.selectPorts(config, parsed);
-      calls.push("select-ports");
+      stage = "preflight";
+      await deps.preflight(config, parsed);
+
+      stage = "configure";
+      config = await deps.configure(config, parsed);
+
+      stage = "verify-ports";
+      await deps.verifyPorts(config, { retries: 0 });
 
       stage = "write-config";
       await deps.writeConfiguration(config, parsed);
       configurationChanged = true;
-      calls.push("write-config");
 
       const running = await deps.isRunning();
       if (running) {
         stage = "stop-old";
         await deps.stop();
         serviceStopped = true;
-        calls.push("stop-old");
       }
 
       stage = "install";
       await deps.installProject(config, parsed);
-      calls.push("install");
 
       stage = "build-web";
       await deps.buildWeb(config, parsed);
-      calls.push("build-web");
 
       stage = "build-tui";
       await deps.buildTui(config, parsed);
-      calls.push("build-tui");
 
       stage = "verify-ports-again";
-      await deps.verifyPorts(config, parsed);
-      calls.push("verify-ports-again");
+      await deps.verifyPorts(config);
 
       stage = "start";
       await deps.start(config, parsed);
-      calls.push("start");
 
       stage = "wait-for-health";
       await deps.waitForHealth(config, parsed);
-      calls.push("wait-for-health");
 
       stage = "mark-healthy";
       await deps.markHealthy(config, parsed);
-      calls.push("mark-healthy");
 
-      return { ok: true, calls, configurationChanged, serviceStopped };
+      return { ok: true };
     } catch (error) {
       const failure = {
         stage,
         summary: error?.message ?? String(error),
         error,
         configurationChanged,
-        serviceStopped,
-        maintenanceWindow: serviceStopped,
-        oldServiceRunning: false,
-        logPath: error?.logPath ?? logPath,
-        retryCommand: "./deploy.sh deploy",
-        doctorCommand: "./deploy.sh doctor",
-        calls
+        serviceStopped
       };
       await deps.reportFailure(failure);
       const wrapped = new Error(error?.message ?? String(error));
@@ -95,12 +68,14 @@ export function createDeploymentController(deps) {
   }
 
   async function runStart(restart = false) {
-    const config = await deps.loadConfiguration({ reconfigure: false });
+    const config = await deps.loadConfiguration();
     await deps.preflight(config, { command: "start" });
-    if (typeof deps.checkDependencies === "function") {
-      await deps.checkDependencies(config, { command: "start" });
+    await deps.checkDependencies(config, { command: "start" });
+    if (restart) {
+      await deps.verifyPorts(config, { retries: 0 });
+      await deps.stop();
+      await deps.verifyPorts(config);
     }
-    if (restart) await deps.stop();
     await deps.start(config, { command: "start" });
     await deps.waitForHealth(config, { command: "start" });
     await deps.markHealthy(config, { command: "start" });
@@ -113,9 +88,7 @@ export function createDeploymentController(deps) {
   }
 
   async function runTui(parsed) {
-    const config = await deps.loadConfiguration({ reconfigure: false });
-    await deps.ensureTuiReady(config, parsed);
-    await deps.checkApiForTui(config, parsed);
+    const config = await deps.loadConfiguration();
     await deps.startTui(config, parsed);
     return { ok: true };
   }
@@ -139,8 +112,6 @@ export function createDeploymentController(deps) {
           return deps.doctor();
         case "tui":
           return runTui(parsed);
-        case "help":
-          return deps.printHelp(deploymentHelp());
         default:
           throw new Error(`Unknown command: ${parsed.command}`);
       }

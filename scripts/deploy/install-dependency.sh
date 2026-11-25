@@ -43,13 +43,15 @@ install_node() (
   fi
 
   if [[ -n "${DATAAGENT_NODE_PACKAGE_URL:-}" ]]; then
-    local package extension="rpm"
+    local download_dir package extension="rpm"
     [[ "${manager}" != "apt-get" ]] || extension="deb"
-    package="$(mktemp --suffix=".${extension}")"
-    trap 'rm -f "${package}"' EXIT
+    download_dir="$(mktemp -d)"
+    package="${download_dir}/node.${extension}"
+    trap 'rm -f -- "${package}"; rmdir -- "${download_dir}"' EXIT
     echo "Installing Node.js from DATAAGENT_NODE_PACKAGE_URL using ${manager}."
     curl -fsSL --connect-timeout 10 --max-time 300 "${DATAAGENT_NODE_PACKAGE_URL}" -o "${package}"
     # apt downloads run as _apt, which must be able to read this temporary package.
+    chmod 755 "${download_dir}"
     chmod 644 "${package}"
     run_privileged "${manager}" install -y "${package}"
   else

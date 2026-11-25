@@ -1,4 +1,5 @@
 import { execFile } from "node:child_process";
+import dns from "node:dns/promises";
 import net from "node:net";
 import { promisify } from "node:util";
 
@@ -12,47 +13,96 @@ export function parsePort(value, label) {
   return parsed;
 }
 
-function lineOwnsPort(line, port) {
-  // Match ":3000" but not ":30001" — require a non-digit boundary after the port.
-  const pattern = new RegExp(`:${Number(port)}(?!\\d)`, "u");
-  return pattern.test(line);
+function normalizeAddress(host) {
+  const bare = host.replace(/^\[(.*)\]$/u, "$1");
+  if (bare === "*") return "::";
+  if (net.isIP(bare) !== 6) return bare;
+  return new net.SocketAddress({ address: bare, family: "ipv6" }).address
+    .replace(/^::ffff:(?=\d+\.)/u, "");
 }
 
-export async function describePortOwner(port, options = {}) {
-  if (process.platform !== "linux" && !options.runSs) return "unknown process";
-  try {
-    const runSs =
-      options.runSs ??
-      (async () => {
-        const { stdout } = await execFileAsync("ss", ["-ltnp"], {
-          encoding: "utf8",
-          maxBuffer: 2 * 1024 * 1024
-        });
-        return stdout;
-      });
-    const stdout = await runSs();
-    for (const line of String(stdout ?? "").split(/\r?\n/u)) {
-      if (!/\bLISTEN\b/u.test(line) || !lineOwnsPort(line, port)) continue;
-      const users = /users:\(\("([^"]+)",pid=(\d+)/u.exec(line);
-      if (users) return `${users[1]} pid=${users[2]}`;
-      return "unknown process";
-    }
-  } catch {
-    // best effort
-  }
-  return "unknown process";
+async function addressesFor({ host, allAddresses = false }) {
+  const address = normalizeAddress(host || "0.0.0.0");
+  if (net.isIP(address)) return [address];
+  // Node listens on the first DNS result; Python's hostname bind uses all results.
+  if (!allAddresses) return [normalizeAddress((await dns.lookup(address)).address)];
+  return [...new Set((await dns.lookup(address, { all: true })).map(entry => normalizeAddress(entry.address)))];
 }
-export async function probePort(host, port, options = {}) {
-  const describe = options.describeOwner ?? describePortOwner;
-  const available = await new Promise((resolve) => {
+
+async function bindingsOverlap(left, right) {
+  if (Number(left.port) !== Number(right.port)) return false;
+  const [leftAddresses, rightAddresses] = await Promise.all([
+    addressesFor(left), addressesFor(right),
+  ]);
+  return leftAddresses.some(a => rightAddresses.some(b =>
+    a === b ||
+    (a === "::" && (!(left.ipv6Only ?? left.allAddresses) || net.isIP(b) === 6)) ||
+    (b === "::" && (!(right.ipv6Only ?? right.allAddresses) || net.isIP(a) === 6)) ||
+    (a === "0.0.0.0" && net.isIP(b) === 4) ||
+    (b === "0.0.0.0" && net.isIP(a) === 4)
+  ));
+}
+
+export async function readPortListeners(port, options = {}) {
+  if (process.platform !== "linux" && !options.runSs) return null;
+  try {
+    const stdout = options.runSs ? await options.runSs() : (
+      await execFileAsync("ss", ["-H", "-ltnpe", `sport = :${port}`], { encoding: "utf8" })
+    ).stdout;
+    return stdout.split(/\r?\n/u).flatMap(line => {
+      const [state, , , local] = line.trim().split(/\s+/u, 5);
+      const address = /^(.*):(\d+)$/u.exec(local ?? "");
+      if (state !== "LISTEN" || !address || Number(address[2]) !== Number(port)) return [];
+      const host = address[1].replace(/^\[(.*)\]$/u, "$1").split("%", 1)[0];
+      if (host !== "*" && !net.isIP(host)) return [];
+      const users = [...line.matchAll(/\("([^"]+)",pid=(\d+),fd=\d+/gu)];
+      return [{
+        host, port, ipv6Only: /\bv6only:1\b/u.test(line),
+        owners: users.map(([, name, pid]) => ({ name, pid: Number(pid) })),
+      }];
+    });
+  } catch {
+    return null;
+  }
+}
+
+export async function probePort(host, port, { allAddresses = false } = {}) {
+  if (allAddresses && !net.isIP(normalizeAddress(host))) {
+    let addresses;
+    try {
+      addresses = await addressesFor({ host, allAddresses });
+    } catch (error) {
+      return { available: false, code: error.code, listeners: null };
+    }
+    const failures = (await Promise.all(addresses.map(address => probePort(address, port, { allAddresses }))))
+      .filter(result => !result.available);
+    const error = failures.find(result => result.code !== "EADDRINUSE");
+    if (error) return error;
+    if (!failures.length) return { available: true, owner: null };
+    return {
+      ...failures[0],
+      listeners: failures.every(result => result.listeners?.length)
+        ? failures.flatMap(result => result.listeners) : [],
+    };
+  }
+  const error = await new Promise((resolve) => {
     const server = net.createServer();
-    server.once("error", () => resolve(false));
-    server.listen({ host, port, exclusive: true }, () => {
-      server.close(() => resolve(true));
+    server.once("error", resolve);
+    server.listen({ host, port, exclusive: true, ipv6Only: allAddresses }, () => {
+      server.close(() => resolve(null));
     });
   });
-  if (available) return { available: true, owner: null };
-  return { available: false, owner: await describe(port) };
+  if (!error) return { available: true, owner: null };
+  const sockets = error.code === "EADDRINUSE" ? await readPortListeners(port) : null;
+  const matches = sockets && await Promise.all(sockets.map(socket =>
+    bindingsOverlap({ host: error.address || host, port, allAddresses }, socket)
+  ));
+  const listeners = sockets?.filter((_socket, index) => matches[index]) ?? null;
+  const owner = listeners?.[0]?.owners[0];
+  return {
+    available: false, code: error.code, listeners,
+    owner: owner ? `${owner.name} pid=${owner.pid}` : "unknown process",
+  };
 }
 
 function defaultPrint(message) {
@@ -62,12 +112,13 @@ function defaultPrint(message) {
 export async function selectDeploymentPort(options) {
   const {
     label,
+    host = "0.0.0.0",
+    allAddresses = false,
     defaultPort,
-    reserved = new Set(),
-    managedPorts = new Set(),
+    reserved = [],
     nonInteractive = false,
     ask,
-    probe = (port) => probePort("0.0.0.0", port),
+    probe = (port) => probePort(host, port, { allAddresses }),
     print = defaultPrint
   } = options;
 
@@ -75,7 +126,10 @@ export async function selectDeploymentPort(options) {
   let explicitChoice = false;
 
   while (true) {
-    if (reserved.has(candidate)) {
+    const conflicts = await Promise.all(reserved.map(binding =>
+      bindingsOverlap(binding, { host, port: candidate, allAddresses })
+    ));
+    if (conflicts.some(Boolean)) {
       const message = `${label} port ${candidate} is already selected for another service`;
       if (nonInteractive) throw new Error(message);
       print(message);
@@ -87,9 +141,7 @@ export async function selectDeploymentPort(options) {
     }
 
     const result = await probe(candidate);
-    const managed = managedPorts.has(candidate);
-
-    if (result.available || managed) {
+    if (result.available || result.managed) {
       if (nonInteractive || explicitChoice) return candidate;
 
       print(`端口 ${candidate} 当前可用，请选择：`);
@@ -126,23 +178,26 @@ function sleep(ms) {
 
 export async function verifySelectedPorts(services, options = {}) {
   const {
-    managedPorts = new Set(),
-    probe = (port, host = "0.0.0.0") => probePort(host, port),
+    probe = (port, host, options) => probePort(host, port, options),
     retries = 5,
     retryDelayMs = 200
   } = options;
 
+  const reserved = [];
   for (const service of services) {
     const port = parsePort(service.port, service.label);
-    if (managedPorts.has(port)) continue;
+    const binding = { host: service.host || "0.0.0.0", port, allAddresses: service.allAddresses };
+    const conflicts = await Promise.all(reserved.map(previous => bindingsOverlap(previous, binding)));
+    if (conflicts.some(Boolean)) throw new Error(`${service.label} port ${port} is already selected for another service`);
+    reserved.push(binding);
 
     let lastResult = null;
     for (let attempt = 0; attempt <= retries; attempt += 1) {
-      lastResult = await probe(port, service.host || "0.0.0.0");
-      if (lastResult.available) break;
+      lastResult = await probe(port, binding.host, { allAddresses: binding.allAddresses });
+      if (lastResult.available || lastResult.managed) break;
       if (attempt < retries) await sleep(retryDelayMs);
     }
-    if (!lastResult?.available) {
+    if (!lastResult?.available && !lastResult?.managed) {
       throw new Error(`${service.label} port ${port} is already in use`);
     }
   }

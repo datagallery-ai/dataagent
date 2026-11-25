@@ -2,7 +2,7 @@ import { parse, stringify } from "yaml";
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { createServer } from "node:net";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -41,7 +41,8 @@ function run(command, args, options = {}) {
 }
 
 async function httpGet(url) {
-  const response = await fetch(url, { redirect: "manual" });
+  const response = await fetch(url, { redirect: "manual", headers: { connection: "close" } });
+  await response.body?.cancel();
   return { status: response.status, ok: response.status >= 200 && response.status < 400 };
 }
 
@@ -93,13 +94,12 @@ async function main() {
   const env = {
     ...process.env,
     CI: "true",
-    SKIP_POSTINSTALL_BUILD: "0",
     DATAAGENT_HOME: path.join(tempRoot, "dataagent-home")
   };
   for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) {
     delete env[key];
   }
-  env.UV_PROJECT_ENVIRONMENT = path.join(tempRoot, ".venv");
+  delete env.UV_PROJECT_ENVIRONMENT;
 
   try {
     console.log(`[smoke:native-deploy] checkout=${tempRoot}`);
@@ -109,8 +109,9 @@ async function main() {
     await mkdir(home, { recursive: true });
     const template = parse(await readFile(path.join(tempRoot, "dataagent/bootstrap/templates/config.yaml"), "utf8"));
     template.server = { host: "127.0.0.1", port: apiPort };
+    const configPath = path.join(tempRoot, "deployment.yaml");
     await writeFile(
-      path.join(home, "config.yaml"),
+      configPath,
       `${stringify(template)}\n`
     );
 
@@ -122,7 +123,7 @@ async function main() {
         `Authorization: Bearer ${FIXTURE_SECRET}`,
         `{"apiKey":"${FIXTURE_SECRET}"}`,
         `https://user:${FIXTURE_SECRET}@example.com/callback`,
-        "npm ci output",
+        "npm install output",
         ""
       ].join("\n")
     );
@@ -135,11 +136,12 @@ async function main() {
     assert.match(probeLog, /LLM_API_KEY=\[REDACTED\]/);
     assert.match(probeLog, /Authorization:.*REDACTED/i);
 
-    run("bash", ["./deploy.sh", "deploy", "--non-interactive", "--web-port", String(webPort)], {
+    const deployment = run("bash", ["./deploy.sh", "deploy", "--non-interactive", "--web-port", String(webPort), "--config", configPath], {
       cwd: tempRoot,
       env,
       timeout: 25 * 60_000
     });
+    assert.match(deployment.stdout, /预检通过/);
 
     run("uv", ["run", "--no-sync", "--project", path.join(tempRoot, "."),
       "python", "-c", "import importlib.util; import pymysql, psycopg2, av, PIL; assert all(importlib.util.find_spec(name) is None for name in ('pytest', 'pyspark'))"],
@@ -161,10 +163,54 @@ async function main() {
     assert.doesNotMatch(envText, /^LLM_API_KEY=.+$/m);
     assert.doesNotMatch(envText, /^LLM_MODEL=.+$/m);
 
-    run("bash", ["./deploy.sh", "restart", "--web-port", String(webPort)], { cwd: tempRoot, env, timeout: 10 * 60_000 });
+    const doctor = run("bash", ["./deploy.sh", "doctor"], { cwd: tempRoot, env });
+    assert.ok(doctor.stdout.includes(`config web=http://127.0.0.1:${webPort} api=http://127.0.0.1:${apiPort}`));
+    const outdated = path.join(tempRoot, "outdated.yaml");
+    await writeFile(outdated, stringify({ ...template, schema_version: 3 }));
+    const invalidTarget = ["--config", outdated];
+    const invalidDoctor = run("bash", ["./deploy.sh", "doctor", ...invalidTarget], { cwd: tempRoot, env });
+    assert.match(invalidDoctor.stdout, /config: unavailable .*schema_version/);
+    assert.throws(
+      () => run("bash", ["./deploy.sh", "restart", ...invalidTarget], { cwd: tempRoot, env }),
+      /Backend configuration check failed: .*schema_version/
+    );
+    assert.equal((await httpGet(`http://127.0.0.1:${apiPort}/healthz`)).status, 200);
+
+    env.UV_PROJECT_ENVIRONMENT = path.join(tempRoot, "replacement-venv");
+    await assert.rejects(access(env.UV_PROJECT_ENVIRONMENT), { code: "ENOENT" });
+    run("bash", ["./deploy.sh", "deploy", "--non-interactive"], { cwd: tempRoot, env, timeout: 25 * 60_000 });
+    await access(path.join(env.UV_PROJECT_ENVIRONMENT, "bin/python"));
+    const state = JSON.parse(await readFile(path.join(tempRoot, "storage/run/deployment.json"), "utf8"));
+    assert.deepEqual(state.ports, { web: webPort, api: apiPort });
+    assert.equal(state.configPath, configPath);
+
+    const restart = ["./deploy.sh", "restart", "--web-host", "0.0.0.0"];
+    const otherListener = createServer();
+    await new Promise((resolve, reject) => {
+      otherListener.once("error", reject);
+      otherListener.listen(webPort, "127.0.0.2", resolve);
+    });
+    try {
+      assert.throws(() => run("bash", restart, { cwd: tempRoot, env }), /Web port .* already in use/);
+      assert.ok((await httpGet(`http://127.0.0.1:${webPort}/`)).ok);
+    } finally {
+      await new Promise(resolve => otherListener.close(resolve));
+    }
+    run("bash", restart, { cwd: tempRoot, env, timeout: 10 * 60_000 });
     const statusAfterRestart = run("bash", ["./deploy.sh", "status"], { cwd: tempRoot, env });
     scanForSecrets(`${statusAfterRestart.stdout}\n${statusAfterRestart.stderr}`);
     assert.match(statusAfterRestart.stdout, /进程\s+running/);
+    assert.equal((await httpGet(`http://127.0.0.1:${apiPort}/healthz`)).status, 200);
+    assert.ok((await httpGet(`http://127.0.0.1:${webPort}/`)).ok);
+    assert.ok((await httpGet(`http://127.0.0.2:${webPort}/`)).ok);
+
+    const ipv6Config = path.join(tempRoot, "ipv6.yaml");
+    await writeFile(ipv6Config, stringify({ ...template, server: { host: "::1", port: webPort } }));
+    run("bash", ["./deploy.sh", "restart", "--web-host", "127.0.0.1", "--config", ipv6Config], {
+      cwd: tempRoot, env, timeout: 10 * 60_000
+    });
+    assert.equal((await httpGet(`http://[::1]:${webPort}/healthz`)).status, 200);
+    assert.ok((await httpGet(`http://127.0.0.1:${webPort}/`)).ok);
 
     const sentinel = await readFile(path.join(tempRoot, "storage", "sentinel.txt"), "utf8");
     assert.equal(sentinel, "native-deploy-sentinel\n");
@@ -176,6 +222,17 @@ async function main() {
     const finalStatus = run("bash", ["./deploy.sh", "status"], { cwd: tempRoot, env });
     scanForSecrets(`${finalStatus.stdout}\n${finalStatus.stderr}`);
     assert.match(finalStatus.stdout, /进程\s+stopped/);
+
+    const previewHome = path.join(tempRoot, "preview-home");
+    const preview = run("bash", ["./deploy.sh", "doctor"], {
+      cwd: tempRoot,
+      env: {
+        ...env, DATAAGENT_HOME: previewHome, LLM_MODEL: "fixture",
+        LLM_BASE_URL: "http://127.0.0.1:1/v1", LLM_API_KEY: FIXTURE_SECRET
+      }
+    });
+    assert.match(preview.stdout, /^config: ok$/m);
+    await assert.rejects(access(previewHome), { code: "ENOENT" });
     assert.equal(
       await readFile(path.join(tempRoot, "storage", "sentinel.txt"), "utf8"),
       "native-deploy-sentinel\n"

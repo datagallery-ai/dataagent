@@ -7,7 +7,7 @@
 - macOS 或 Linux
 - uv
 - Node.js 22+
-- Python 3.12，由 `npm install` 通过 uv 安装
+- Python 3.12 和 uv
 
 请为 DataAgent 使用独立的 Python 环境。包的导入名是 `dataagent`。
 
@@ -16,11 +16,12 @@
 在仓库根目录：
 
 ```bash
-npm install
+npm install --include=dev
+uv sync --no-dev
 npm run build
 ```
 
-`npm install` 结束后执行 `uv sync --frozen --no-dev --python 3.12`。`npm run build` 编译网页和 TUI。
+`npm install --include=dev` 准备前端依赖，`uv sync --no-dev` 准备后端运行依赖。`npm run build` 编译网页和 TUI。
 
 ## 最小配置
 

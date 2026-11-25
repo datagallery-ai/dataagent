@@ -37,6 +37,22 @@ def options(tmp_path, **kwargs):
     return LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,), config=cli, **kwargs)
 
 
+def test_home_preview_uses_startup_template_without_creating_home(tmp_path, monkeypatch):
+    home = tmp_path / "new-home"
+    monkeypatch.setenv("DATAAGENT_HOME", str(home))
+    monkeypatch.setenv("LLM_MODEL", "preview-model")
+    monkeypatch.setenv("LLM_BASE_URL", "https://example.invalid/v1")
+    monkeypatch.setenv("LLM_API_KEY", "preview-key")
+    options = LaunchOptions(cwd=tmp_path)
+
+    preview = prepare_runtime(options, preview_home=True)
+    assert not home.exists()
+
+    started = prepare_runtime(replace(options, init_home=True))
+    assert preview.settings == started.settings
+    assert (home / "config.yaml").is_file()
+
+
 def test_prepare_has_no_sdk_initialization_or_workspace_writes(tmp_path):
     runtime = prepare_runtime(options(tmp_path))
     assert not runtime.paths.home.exists()

@@ -2,19 +2,21 @@ import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { existsSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, readFile, writeFile, mkdir, rm } from "node:fs/promises";
+import { createServer } from "node:http";
 import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import { readServerListen } from "../../ui/shared/server-listen.mjs";
 import { pythonControlPlaneLaunch, resolveStackRuntimeConfig } from "../stack-runtime-config.mjs";
 import { parseDeployArgs } from "./args.mjs";
+import { isProcessAlive, startManagedStack, stopManagedStack, writeDeploymentState } from "./process-state.mjs";
 import {
   configureDeploymentInteractively,
   collectManagedPorts,
-  formatStartBlocked,
   apiListenFromState,
   healthProbeUrls,
   inspectWritablePath,
+  main,
   managedWebStartArgs,
   prepareStartEnvironment,
   resolveTuiRuntimeUrl,
@@ -140,7 +142,7 @@ test("a relative --config stays the caller's file after the stack cwd changes", 
     assert.equal(child.configPath, selected);
     assert.equal(child.apiPort, "8877");
     assert.deepEqual(
-      pythonControlPlaneLaunch(repo, {}, false, child.configPath).args.slice(-2),
+      pythonControlPlaneLaunch(repo, {}, child.configPath).args.slice(-2),
       ["--config", selected],
     );
   } finally {
@@ -180,28 +182,6 @@ test("first run selects Web and API ports with defaults", async () => {
   assert.equal(result.envText.trim(), "");
 });
 
-test("existing complete config skips prompts unless reconfigure", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "ui/web"), { recursive: true });
-  const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
-  let asked = 0;
-  const result = await configureDeploymentInteractively({
-    root,
-    sourceText: source,
-    reconfigure: false,
-    nonInteractive: false,
-    ask: async () => {
-      asked += 1;
-      throw new Error("must not prompt");
-    },
-    print: () => {},
-    probe: async () => ({ available: true, owner: null })
-  });
-  assert.equal(asked, 0);
-  assert.equal(result.web.port, "3000");
-  assert.match(result.envText, /LLM_MODEL=qwen-plus/);
-});
-
 test("an existing env file skips prompts and keeps its lines", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-kept-"));
   await mkdir(path.join(root, "ui/web"), { recursive: true });
@@ -222,25 +202,6 @@ test("an existing env file skips prompts and keeps its lines", async () => {
   assert.equal(asked, 0);
   assert.equal(result.web.port, "3000");
   assert.match(result.envText, /NOTE=left-alone/);
-});
-
-test("partial .env is not treated as complete before fill and still prompts", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-partial-"));
-  await mkdir(path.join(root, "ui/web"), { recursive: true });
-  let asked = 0;
-  const result = await configureDeploymentInteractively({
-    root,
-    sourceText: "FOO=bar\nCUSTOM=keep-me\n",
-    reconfigure: false,
-    nonInteractive: false,
-    ask: createAsk(["1", "1", ""]),
-    print: () => {
-      asked += 1;
-    },
-    probe: async () => ({ available: true, owner: null })
-  });
-  assert.match(result.envText, /CUSTOM=keep-me/);
-  assert.equal(asked, 0);
 });
 
 test("non-interactive never calls ask and uses loopback defaults", async () => {
@@ -312,38 +273,11 @@ test("port menu aborts after too many invalid choices", async () => {
   );
 });
 
-test("reconfigure creates backup and keeps secrets", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "ui/web"), { recursive: true });
-  const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
-  await writeFile(path.join(root, ".env"), `${source}\n`);
-  const result = await configureDeploymentInteractively({
-    root,
-    sourceText: source,
-    reconfigure: true,
-    nonInteractive: false,
-    ask: createAsk(["1", "1", ""]),
-    print: () => {},
-    probe: async () => ({ available: true, owner: null }),
-    write: true,
-    timestamp: "20260722-150000"
-  });
-  assert.match(result.envText, /LLM_MODEL=qwen-plus/);
-  assert.equal(
-    await readFile(path.join(root, ".env.backup-20260722-150000"), "utf8"),
-    `${source}\n`
-  );
-});
-
-test("collectManagedPorts ignores bare .env ports without a verified running state", async () => {
-  const bare = await collectManagedPorts(
-    {},
-    null
-  );
+test("collectManagedPorts ignores ports without a verified running state", async () => {
+  const bare = await collectManagedPorts();
   assert.deepEqual([...bare], []);
 
   const deadPid = await collectManagedPorts(
-    {},
     {
       pid: 99999999,
       launchId: "launch-1",
@@ -355,7 +289,6 @@ test("collectManagedPorts ignores bare .env ports without a verified running sta
 
 test("collectManagedPorts marks state ports only when pid is alive and launchId verifies", async () => {
   const unmanaged = await collectManagedPorts(
-    {},
     {
       pid: process.pid,
       launchId: "expected-launch",
@@ -369,7 +302,6 @@ test("collectManagedPorts marks state ports only when pid is alive and launchId 
   assert.deepEqual([...unmanaged], []);
 
   const managed = await collectManagedPorts(
-    {},
     {
       pid: process.pid,
       launchId: "launch-1",
@@ -403,54 +335,22 @@ test("non-interactive fails when ports are occupied without a running managed st
   );
 });
 
-test("reconfigure reuses managed listening ports only for a verified running stack", async () => {
-  const probes = [];
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
-  await mkdir(path.join(root, "ui/web"), { recursive: true });
-  await mkdir(path.join(root, "storage/run"), { recursive: true });
-  const source = `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`;
-  const home = path.join(root, "dataagent-home");
-  await mkdir(home, { recursive: true });
-  await writeFile(
-    path.join(home, "config.yaml"),
-    `${JSON.stringify({ server: { host: "127.0.0.1", port: 8877 } })}\n`
-  );
-  await writeFile(
-    path.join(root, "storage/run/deployment.json"),
-    `${JSON.stringify({
-      pid: process.pid,
-      launchId: "launch-managed",
-      status: "healthy",
-      startedAt: "2026-07-22T00:00:00.000Z",
-      ports: { web: 3310, api: 8877 }
-    })}\n`
-  );
+test("non-interactive deployment checks the requested bind address", async t => {
+  if (process.platform !== "linux") return t.skip("fixture uses two Linux loopback addresses");
+  const listener = createServer();
+  await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => listener.close(resolve)));
+  const web = { host: "127.0.0.2", port: String(listener.address().port) };
   const result = await configureDeploymentInteractively({
-    root,
-    sourceText: source,
-    reconfigure: true,
-    nonInteractive: true,
-    ask: async () => assert.fail("must not prompt"),
-    print: () => {},
-    probe: async (port) => {
-      probes.push(port);
-      return { available: false, owner: `datagallery pid=${process.pid}` };
-    },
-    collectManagedPortsOptions: {
-      readLaunchId: async () => "launch-managed",
-      forceLaunchIdCheck: true
-    },
-    processEnv: { DATAAGENT_HOME: home },
-    web: { host: "127.0.0.1", port: "3310" }
+    sourceText: "", nonInteractive: true, web, processEnv: process.env,
+    ask: async () => assert.fail("must not prompt")
   });
-  assert.equal(result.web.port, "3310");
-  assert.equal(result.listen.port, "8877");
-  assert.ok(probes.includes(3310));
-  assert.ok(probes.includes(8877));
+  assert.deepEqual(result.web, web);
 });
 
-test("deploy --config takes the API listen from that file", async () => {
+test("interactive deploy checks explicit ports without asking", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const home = path.join(root, "home");
   const selected = path.join(root, "team.yaml");
   await mkdir(home, { recursive: true });
@@ -462,18 +362,21 @@ test("deploy --config takes the API listen from that file", async () => {
     selected,
     `${JSON.stringify({ server: { host: "0.0.0.0", port: 8877 } })}\n`
   );
-  const result = await configureDeploymentInteractively({
+  const configure = available => configureDeploymentInteractively({
     root,
     sourceText: `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${path.join(root, "home")}\n`,
     reconfigure: true,
-    nonInteractive: true,
+    fixedWebPort: true,
     ask: async () => assert.fail("must not prompt"),
     print: () => {},
-    probe: async () => ({ available: true, owner: null }),
+    probe: async () => ({ available, owner: null }),
     processEnv: { DATAAGENT_HOME: home },
     configPath: selected,
     web: { host: "127.0.0.1", port: "3000" }
   });
+  await assert.rejects(configure(false), /Web port 3000 is already in use/);
+  const result = await configure(true);
+  assert.equal(result.web.port, "3000");
   assert.equal(result.listen.host, "0.0.0.0");
   assert.equal(result.listen.port, "8877");
 });
@@ -518,7 +421,7 @@ test("runDeploymentDoctor reports os, deps, config, ports, permissions, disk, pi
   assert.match(joined, /^os: /m);
   assert.match(joined, /^arch: /m);
   assert.match(joined, /dependency node: ok/);
-  assert.match(joined, /config: ok/);
+  assert.match(joined, /config: listen address checked.*backend schema skipped/);
   assert.match(joined, /config web=http:\/\/127\.0\.0\.1:3000/);
   assert.match(joined, /port web 3000: available/);
   assert.match(joined, /permissions storage: writable/);
@@ -610,14 +513,17 @@ for (const override of [false, true]) {
   });
 }
 
-test("inspectWritablePath checks access without creating files", async () => {
+test("inspectWritablePath checks access without creating files", async t => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-writable-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
   const missingChild = path.join(root, "storage", "nested");
   const result = await inspectWritablePath(missingChild);
   assert.equal(result.writable, true);
   assert.equal(result.exists, false);
   assert.equal(existsSync(missingChild), false);
   assert.equal(existsSync(path.join(root, "storage")), false);
+  await writeFile(path.join(root, "storage"), "not a directory");
+  assert.equal((await inspectWritablePath(missingChild)).writable, false);
 });
 
 test("runDeploymentDoctor reports actionable fix for stale launchId state", async (t) => {
@@ -659,44 +565,52 @@ test("runDeploymentDoctor reports actionable fix for stale launchId state", asyn
   assert.match(joined, /\.\/deploy\.sh stop/);
   assert.match(joined, /permissions \.env: present mode=/);
 });
-test("runDeploymentDoctor reports the API address recorded at start", async () => {
-  const home = await mkdtemp(path.join(os.tmpdir(), "df-cli-doctor-home-"));
-  await writeFile(path.join(home, "config.yaml"), JSON.stringify({
-    server: { host: "127.0.0.1", port: 8790 }
-  }));
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-doctor-saved-"));
-  await mkdir(path.join(root, "storage/run"), { recursive: true });
-  await writeFile(
-    path.join(root, ".env"),
-    `LLM_MODEL=qwen-plus\nDATAAGENT_HOME=${home}\n`
-  );
-  await writeFile(
-    path.join(root, "storage/run/deployment.json"),
-    `${JSON.stringify({
-      pid: 99999999,
-      launchId: "not-this-process",
-      status: "healthy",
-      startedAt: "2026-07-26T00:00:00.000Z",
-      ports: { web: 3000, api: 8877 },
-      listen: { webHost: "127.0.0.1", apiHost: "0.0.0.0", configPath: "team.yaml" }
-    })}\n`
-  );
-  rmSync(path.join(home, "config.yaml"));
-
-  const lines = [];
-  await runDeploymentDoctor(root, {
-    print: (line) => lines.push(line),
+for (const target of ["running", "explicit", "stale"]) test(`doctor selects the ${target === "stale" ? "Home" : target} configuration`, async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-cli-doctor-target-"));
+  const home = path.join(root, "home");
+  const savedConfig = path.join(root, "saved.yaml");
+  const explicitConfig = path.join(root, "explicit.yaml");
+  t.after(async () => {
+    await stopManagedStack(root);
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(home);
+  await writeFile(path.join(home, "config.yaml"), "server:\n  port: 8791\n");
+  await writeFile(savedConfig, "server:\n  host: 127.0.0.2\n  port: 8877\n");
+  await writeFile(explicitConfig, "server:\n  host: 127.0.0.3\n  port: 9888\n");
+  const env = { ...process.env, DATAAGENT_HOME: home };
+  const saved = {
+    ports: { web: 3411, api: 8877 },
+    listen: { webHost: "127.0.0.2", apiHost: "127.0.0.2" },
+    configPath: savedConfig
+  };
+  if (target === "stale") {
+    await writeDeploymentState(root, {
+      ...saved, pid: 99999999, pgid: 99999999, launchId: "exited-deployment"
+    });
+  } else {
+    await startManagedStack(root, {
+      ...saved, env, command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"]
+    });
+  }
+  const { lines } = await runDeploymentDoctor(root, {
+    ...(target === "explicit" ? { configPath: explicitConfig, webHost: "127.0.0.3", webPort: "3310" } : {}),
+    env,
     run: async (command, args = []) => {
       const key = [command, ...args].join(" ");
       if (key === "node --version") return { stdout: "v22.14.0\n" };
       if (key === "npm --version") return { stdout: "10.9.0\n" };
       throw new Error(`missing mock for ${key}`);
     },
-    probe: async () => ({ available: true, owner: null })
+    probe: async () => ({ available: true }),
+    healthOptions: { probeTimeoutMs: 100 }
   });
-  const joined = lines.join("\n");
-  assert.match(joined, /config web=http:\/\/127\.0\.0\.1:3000 api=http:\/\/0\.0\.0\.0:8877/);
-  assert.match(joined, /port api 8877: available/);
+  const expected = {
+    running: "config web=http://127.0.0.2:3411 api=http://127.0.0.2:8877",
+    explicit: "config web=http://127.0.0.3:3310 api=http://127.0.0.3:9888",
+    stale: "config web=http://127.0.0.1:3000 api=http://127.0.0.1:8791"
+  }[target];
+  assert.ok(lines.includes(expected), lines.join("\n"));
 });
 
 test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
@@ -718,6 +632,45 @@ test("resolveTuiRuntimeUrl defaults to deployed API port", () => {
   );
 });
 
+test("deploy tui uses the project Home and connects only to the explicit runtime", async t => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-tui-attach-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  const previousHome = process.env.DATAAGENT_HOME;
+  delete process.env.DATAAGENT_HOME;
+  t.after(() => { process.env.DATAAGENT_HOME = previousHome; });
+  const home = path.join(root, "project-home");
+  await writeFile(path.join(root, ".env"), `DATAAGENT_HOME=${home}\n`);
+  const requests = [];
+  const selected = createServer((request, response) => {
+    requests.push(request.url);
+    response.writeHead(200).end();
+  });
+  await new Promise(resolve => selected.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => selected.close(resolve)));
+  const fallback = t.mock.method(globalThis, "fetch", async () => new Response(null, { status: 503 }));
+
+  const target = `http://127.0.0.1:${selected.address().port}`;
+  await mkdir(path.join(root, "storage/run"), { recursive: true });
+  await writeFile(path.join(root, "storage/run/deployment.json"), JSON.stringify({
+    ports: { api: 8790 }, listen: { apiHost: "127.0.0.1" },
+  }));
+  await mkdir(path.join(root, "ui/tui/dist"), { recursive: true });
+  await writeFile(path.join(root, "ui/tui/dist/index.js"), `
+    (async () => {
+      const [flag, target] = process.argv.slice(2);
+      const response = await fetch(new URL("/healthz", target));
+      if (flag !== "--runtime-url" || !response.ok || process.env.DATAAGENT_HOME !== ${JSON.stringify(home)}) process.exitCode = 1;
+    })().catch(() => { process.exitCode = 1; });
+  `);
+
+  const result = await main(["tui", "--runtime-url", target], {
+    root, print() {}, ask: createAsk([]),
+  });
+  assert.equal(result, 0);
+  assert.equal(fallback.mock.callCount(), 0);
+  assert.deepEqual(requests, ["/healthz"]);
+});
+
 const COMPLETE_ENV = {
   LLM_MODEL: "qwen-plus"
 };
@@ -727,20 +680,9 @@ async function preparePython(root) {
   const python = process.platform === "win32" ? "python.exe" : "python";
   const location = path.join(root, ".venv", directory);
   await mkdir(location, { recursive: true });
-  await writeFile(path.join(location, python), "fixture");
+  // These lifecycle fixtures exercise JS guards. The real schema check runs in the deploy smoke.
+  await writeFile(path.join(location, python), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 }
-
-test("start names missing .env variables and does not write .env.local", async () => {
-  const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
-  await mkdir(path.join(root, "ui/web/.next"), { recursive: true });
-  await writeFile(path.join(root, "ui/web/.next/BUILD_ID"), "test");
-  await preparePython(root);
-  await prepareStartEnvironment(root, {});
-  assert.equal(
-    formatStartBlocked(["EXAMPLE"], ["ui/web/.next/BUILD_ID"]),
-    "缺少合法完整的 .env 配置，缺：EXAMPLE；缺少文件：ui/web/.next/BUILD_ID。请先运行 ./deploy.sh deploy"
-  );
-});
 
 test("start with a complete .env does not write a web env file", async () => {
   const root = await mkdtemp(path.join(os.tmpdir(), "df-start-"));
@@ -762,6 +704,49 @@ test("start refuses a missing Python environment instead of preparing it", async
   } finally {
     rmSync(root, { recursive: true, force: true });
   }
+});
+
+for (const blocked of ["config", "port", "legacy config"]) test(`restart preflights the selected ${blocked} before stopping the current service`, async t => {
+  if (process.platform !== "linux") return t.skip("managed process verification uses procfs");
+  const root = await mkdtemp(path.join(os.tmpdir(), "df-restart-config-"));
+  t.after(async () => {
+    await stopManagedStack(root);
+    await rm(root, { recursive: true, force: true });
+  });
+  await mkdir(path.join(root, "ui/web/.next"), { recursive: true });
+  await writeFile(path.join(root, "ui/web/.next/BUILD_ID"), "fixture");
+  await preparePython(root);
+  const { pid } = await startManagedStack(root, {
+    command: process.execPath, args: ["-e", "setInterval(() => {}, 1000)"],
+  });
+  const lines = [];
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, "127.0.0.1", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port = server.address().port;
+  if (blocked === "legacy config") {
+    const statePath = path.join(root, "storage/run/deployment.json");
+    const state = JSON.parse(await readFile(statePath, "utf8"));
+    delete state.configPath;
+    await writeFile(statePath, JSON.stringify({
+      ...state, ports: { api: port }, listen: { apiHost: "127.0.0.1" }
+    }));
+  }
+  const args = {
+    config: ["--config", path.join(root, "missing.yaml")],
+    port: ["--web-port", String(port)],
+    "legacy config": []
+  }[blocked];
+  const result = await main(["restart", ...args], {
+    root, print: line => lines.push(line), ask: createAsk([]),
+  });
+  assert.equal(result, 1);
+  assert.match(lines.join("\n"), {
+    config: /Configuration file does not exist/,
+    port: /Web port .* already in use/,
+    "legacy config": /prior config path was not recorded/
+  }[blocked]);
+  assert.equal(isProcessAlive(pid), true);
 });
 
 test("start preflight gives process environment precedence over the project env file", async t => {

@@ -9,17 +9,15 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { httpOrigin, readServerListen } from "../../ui/shared/server-listen.mjs";
+import { httpOrigin, readServerListen, resolveHome } from "../../ui/shared/server-listen.mjs";
 import { venvPython } from "../../ui/shared/python-environment.mjs";
 import { captureOutput, createLogger, logPath } from "../../ui/shared/logging.mjs";
+import { resolveWebListen } from "../stack-runtime-config.mjs";
 import { deploymentHelp, parseDeployArgs } from "./args.mjs";
 import {
-  deploymentConfigGaps,
   ensureDeploymentEnvironment,
-  isCompleteDeploymentConfig,
   parseDeploymentEnvironment,
   redactSensitiveText,
-  updateDeploymentEnvironment,
   writeDeploymentConfiguration
 } from "./config.mjs";
 import { createDeploymentController } from "./controller.mjs";
@@ -38,6 +36,7 @@ import {
 } from "./process-state.mjs";
 const ROOT = path.join(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const TUI_ENTRY = "ui/tui/dist/index.js";
+const execFileAsync = promisify(execFile);
 
 /** Host and port recorded when the stack started. An incomplete record has no snapshot. */
 export function apiListenFromState(state) {
@@ -76,8 +75,19 @@ export function webListenFromState(state, fallback = { host: "127.0.0.1", port: 
     return { host: fallback.host || "127.0.0.1", port: String(fallback.port || "3000") };
   }
   return {
-    host: state.listen?.webHost || "127.0.0.1",
+    host: state.listen?.webHost || fallback.host,
     port: String(state.ports.web)
+  };
+}
+
+function deploymentTarget({ configPath, webHost, webPort }, previous) {
+  const savedWeb = webListenFromState(previous);
+  return {
+    configPath: configPath ?? previous?.configPath,
+    web: resolveWebListen({
+      webHost: webHost ?? savedWeb.host,
+      webPort: webPort ?? savedWeb.port
+    })
   };
 }
 
@@ -85,11 +95,12 @@ export async function inspectWritablePath(targetPath) {
   let candidate = path.resolve(targetPath);
   while (true) {
     try {
-      await access(candidate, constants.W_OK);
-      return { writable: true, checkedPath: candidate, exists: existsSync(targetPath) };
+      if (!(await stat(candidate)).isDirectory()) throw new Error("Expected a directory");
+      await access(candidate, constants.W_OK | constants.X_OK);
+      return { writable: true, checkedPath: candidate, exists: candidate === path.resolve(targetPath) };
     } catch (error) {
       const parent = path.dirname(candidate);
-      if (parent === candidate) {
+      if (error.code !== "ENOENT" || parent === candidate) {
         return {
           writable: false,
           checkedPath: candidate,
@@ -102,29 +113,16 @@ export async function inspectWritablePath(targetPath) {
   }
 }
 
-export function webListenFromArgs(parsed = {}) {
-  const host = String(parsed.webHost ?? "").trim() || "127.0.0.1";
-  const port = String(parsed.webPort ?? "").trim() || "3000";
-  if (/\s/u.test(host)) throw new Error("--web-host must be a host name or address");
-  const parsedPort = Number(port);
-  if (!Number.isInteger(parsedPort) || parsedPort < 1 || parsedPort > 65535) {
-    throw new Error("--web-port must be an integer between 1 and 65535");
-  }
-  return { host, port: String(parsedPort) };
-}
-
 export function managedWebStartArgs(web = {}, configPath) {
-  const webHost = String(web.host || "127.0.0.1").trim() || "127.0.0.1";
-  const webPort = String(web.port || "3000").trim() || "3000";
-  const args = ["--api", "--web", "--web-host", webHost, "--web-port", webPort];
+  const { host, port } = resolveWebListen({ webHost: web.host, webPort: web.port });
+  const args = ["--api", "--web", "--web-host", host, "--web-port", port];
   if (configPath) args.push("--config", configPath);
   return args;
 }
 
 /** Managed ports come from deployment.json when the pid is alive and launchId matches. */
-export async function collectManagedPorts(env = {}, state = null, options = {}) {
+export async function collectManagedPorts(state = null, options = {}) {
   const ports = new Set();
-  void env;
 
   if (!state?.ports || typeof state.ports !== "object") return ports;
   if (!state?.pid) return ports;
@@ -145,6 +143,59 @@ export async function collectManagedPorts(env = {}, state = null, options = {}) 
     if (Number.isInteger(port) && port > 0) ports.add(port);
   }
   return ports;
+}
+
+function sameListen(left, right) {
+  return left != null && left.host === right.host && Number(left.port) === Number(right.port);
+}
+
+async function deploymentPortProbe(state, probe = probePort) {
+  const managedPorts = await collectManagedPorts(state);
+  return async (host, port, options) => {
+    const result = await probe(host, port, options);
+    if (result.code !== "EADDRINUSE" || !managedPorts.has(port)) return result;
+
+    if (!result.listeners) {
+      const saved = [webListenFromState(state), apiListenFromState(state)];
+      return { ...result, managed: saved.some(listener => sameListen(listener, { host, port })) };
+    }
+    const owners = result.listeners.map(socket => socket.owners);
+    if (!owners.length || owners.some(list => !list.length)) return result;
+    const pids = new Set(owners.flat().map(owner => owner.pid));
+    const verified = await Promise.all(
+      [...pids].map(pid => verifyManagedProcessForStop(pid, state.launchId))
+    );
+    return { ...result, managed: verified.every(owner => owner.allowed) };
+  };
+}
+
+function readDeploymentListen(env, configPath, previous) {
+  const listen = readServerListen(env, configPath);
+  const saved = apiListenFromState(previous);
+  if (saved && previous.configPath === undefined && !configPath && !sameListen(saved, listen)) {
+    throw new Error("The prior config path was not recorded and Home config uses a different API address. Supply --config to select the intended configuration.");
+  }
+  return listen;
+}
+
+async function validateBackendConfig(root, { env, configPath }) {
+  try {
+    await execFileAsync(venvPython(root, env), ["-B", "-c", `
+import sys
+from dataagent import LaunchOptions, prepare_runtime, safe_error
+from dataagent.bootstrap.config_files import MissingEnvironmentError
+
+try:
+    prepare_runtime(LaunchOptions(config=sys.argv[1] or None), preview_home=True)
+except MissingEnvironmentError:
+    pass
+except Exception as error:
+    sys.exit(safe_error(error)["message"])
+`, configPath ?? ""], { cwd: root, env, timeout: 10_000 });
+  } catch (error) {
+    const detail = error.stderr?.trim() || error.code || "Python exited unexpectedly";
+    throw new Error(`Backend configuration check failed: ${redactSensitiveText(String(detail))}`);
+  }
 }
 
 const MAX_PORT_MENU_INVALID_CHOICES = 5;
@@ -179,88 +230,56 @@ export async function configureDeploymentInteractively(options) {
     ask,
     print,
     probe,
-    processEnv,
-    write = false,
-    timestamp
+    processEnv
   } = options;
 
   const listenEnv = processEnv ?? process.env;
   const configPath = typeof options.configPath === "string" ? options.configPath.trim() : "";
-  const selectedListen = readServerListen(listenEnv, configPath || undefined);
-  let text = sourceText ?? "";
-  const originalEnv = parseDeploymentEnvironment(text);
-  const completeBeforeFill = isCompleteDeploymentConfig(originalEnv);
-  let ensured = ensureDeploymentEnvironment(text);
-  text = ensured.text;
-  let env = ensured.env;
+  const selectedListen = readDeploymentListen(listenEnv, configPath || undefined, options.previous);
+  const { text, env } = ensureDeploymentEnvironment(sourceText ?? "");
   const savedWeb = options.web ?? { host: "127.0.0.1", port: "3000" };
 
-  if (
-    !reconfigure &&
-    !nonInteractive &&
-    completeBeforeFill &&
-    sourceText?.trim()
-  ) {
+  if (!reconfigure && (options.previous || (!nonInteractive && sourceText?.trim()))) {
     return {
       env,
       envText: text,
-      wrote: false,
       listen: { host: selectedListen.host, port: selectedListen.port },
       web: savedWeb
     };
   }
 
   const deploymentState = root ? await readDeploymentState(root).catch(() => null) : null;
-  const managedPorts = await collectManagedPorts(
-    env,
-    deploymentState,
-    options.collectManagedPortsOptions ?? {}
+  const checkPort = await deploymentPortProbe(
+    deploymentState, probe && ((host, port) => probe(port, host))
   );
 
-  const reserved = new Set();
-  if (configPath) reserved.add(Number(selectedListen.port));
   const webPort = await selectPortWithHint({
     label: "Web",
+    host: savedWeb.host,
     defaultPort: Number(savedWeb.port || 3000),
-    reserved,
-    managedPorts,
-    nonInteractive,
+    reserved: configPath ? [{ ...selectedListen, allAddresses: true }] : [],
+    nonInteractive: nonInteractive || options.fixedWebPort,
     ask,
     print,
-    probe
+    probe: port => checkPort(savedWeb.host, port)
   });
-  reserved.add(webPort);
   const apiPort = configPath
     ? Number(selectedListen.port)
     : await selectPortWithHint({
         label: "API",
+        host: selectedListen.host,
+        allAddresses: true,
         defaultPort: Number(selectedListen.port),
-        reserved,
-        managedPorts,
+        reserved: [{ host: savedWeb.host, port: webPort }],
         nonInteractive,
         ask,
         print,
-        probe
+        probe: port => checkPort(selectedListen.host, port, { allAddresses: true })
       });
-  if (!configPath) reserved.add(apiPort);
-
   const web = { host: savedWeb.host || "127.0.0.1", port: String(webPort) };
   const listen = { host: selectedListen.host, port: String(apiPort) };
 
-  ensured = ensureDeploymentEnvironment(text);
-  text = ensured.text;
-  env = ensured.env;
-
-  let wrote = false;
-  if (write && root) {
-    await writeDeploymentConfiguration(root, text, {
-      backup: Boolean(reconfigure),
-      timestamp
-    });
-    wrote = true;
-  }
-
-  return { env, envText: text, wrote, listen, web };
+  return { env, envText: text, listen, web };
 }
 
 function createReadlineAsk() {
@@ -282,29 +301,16 @@ async function loadRootEnvText(root) {
   }
 }
 
-export function formatStartBlocked(gaps, missingFiles = []) {
-  const parts = [];
-  if (gaps.length > 0) {
-    parts.push(`缺少合法完整的 .env 配置，缺：${gaps.join(", ")}`);
-  }
-  if (missingFiles.length > 0) {
-    parts.push(`缺少文件：${missingFiles.join(", ")}`);
-  }
-  if (parts.length === 0) return "";
-  return `${parts.join("；")}。请先运行 ./deploy.sh deploy`;
-}
-
 /** Lifecycle commands require existing Web and Python artifacts; only deploy prepares them. */
 export async function prepareStartEnvironment(root, diskEnv = {}) {
-  const gaps = deploymentConfigGaps(diskEnv);
   const missingFiles = [];
   if (!existsSync(path.join(root, "ui/web/.next/BUILD_ID"))) {
     missingFiles.push("ui/web/.next/BUILD_ID");
   }
   const interpreter = venvPython(path.join(root, "."), { ...diskEnv, ...process.env });
   if (!existsSync(interpreter)) missingFiles.push(interpreter);
-  if (gaps.length > 0 || missingFiles.length > 0) {
-    throw new Error(formatStartBlocked(gaps, missingFiles));
+  if (missingFiles.length > 0) {
+    throw new Error(`缺少文件：${missingFiles.join(", ")}。请先运行 ./deploy.sh deploy`);
   }
 }
 
@@ -331,11 +337,7 @@ function runCommand(command, args, options = {}) {
     child.on("close", (code) => {
       for (const output of outputs) output.flush();
       if (code === 0) resolve();
-      else {
-        const error = new Error(`${command} ${args.join(" ")} failed with code ${code}`);
-        if (options.logPath) error.logPath = options.logPath;
-        reject(error);
-      }
+      else reject(new Error(`${command} ${args.join(" ")} failed with code ${code}`));
     });
   });
 }
@@ -345,44 +347,64 @@ function createRealDeps(context) {
 
   let config = null;
   let nodeDependenciesInstalled = false;
+  let pythonDependenciesInstalled = false;
   const loggingEnv = () => ({ ...config?.env, ...process.env });
 
   const commandOptions = (file = "backend", stage = "install") => {
     const logger = createLogger({ file, component: "launcher", env: loggingEnv() });
-    return { cwd: root, env: loggingEnv(), logger, stage, logPath: logger.path };
+    return { cwd: root, env: loggingEnv(), logger, stage };
   };
+
+  async function installFrontend() {
+    if (nodeDependenciesInstalled) return;
+    await runCommand("npm", ["install", "--include=dev"], commandOptions());
+    nodeDependenciesInstalled = true;
+  }
+
+  async function installPython() {
+    if (pythonDependenciesInstalled) return;
+    await runCommand("uv", ["sync", "--no-dev", "--extra", "video"], commandOptions());
+    pythonDependenciesInstalled = true;
+  }
 
   return {
     async loadConfiguration() {
       const sourceText = await loadRootEnvText(root);
       const ensured = ensureDeploymentEnvironment(sourceText);
+      const inspection = parsed.command === "deploy" || parsed.command === "restart"
+        ? await inspectManagedRuntime(root)
+        : null;
+      const previous = inspection?.running ? inspection.state : null;
       config = {
         env: { ...ensured.env, ...process.env },
         envText: ensured.text,
         sourceText,
-        generatedKeys: ensured.generatedKeys,
-        web: webListenFromArgs(parsed),
-        ask,
+        previous,
+        ...deploymentTarget({ ...parsed, configPath: parsed.config }, previous),
       };
       return config;
     },
     async preflight(current, options) {
       if (options?.command === "deploy") {
+        print("预检：检查部署目录、配置和监听端口。");
+        for (const directory of [root, path.join(root, "storage/run"), resolveHome(current.env),
+          path.dirname(logPath("backend", current.env))]) {
+          const result = await inspectWritablePath(directory);
+          if (!result.writable) {
+            throw new Error(`Deployment directory is not writable: ${result.checkedPath} (${result.error})`);
+          }
+        }
         const require = createRequire(path.join(root, "package.json"));
         try { require.resolve("yaml"); }
         catch (error) {
           if (error.code !== "MODULE_NOT_FOUND") throw error;
-          // YAML is needed by configure, before the normal install stage.
-          const installOptions = commandOptions();
-          await runCommand("npm", ["ci"], {
-            ...installOptions, env: { ...installOptions.env, SKIP_POSTINSTALL_BUILD: "1" }
-          });
-          nodeDependenciesInstalled = true;
+          // A fresh checkout needs the YAML parser before reading configuration.
+          await installFrontend();
         }
       }
       if (options?.command === "start") {
-        const diskEnv = parseDeploymentEnvironment(current.sourceText ?? "");
-        await prepareStartEnvironment(root, diskEnv);
+        await prepareStartEnvironment(root, current.env);
+        readDeploymentListen(current.env, current.configPath, current.previous);
       }
     },
     async configure(current) {
@@ -394,20 +416,26 @@ function createRealDeps(context) {
         ask,
         print,
         processEnv: current.env,
-        write: false,
-        web: webListenFromArgs(parsed),
-        configPath: parsed.config
+        web: current.web,
+        fixedWebPort: parsed.webPort != null,
+        configPath: current.configPath,
+        previous: current.previous
       });
       config = { ...current, ...configured, env: { ...configured.env, ...process.env } };
+      if (current.previous) {
+        if (!existsSync(venvPython(root, config.env))) await installPython();
+        await validateBackendConfig(root, config);
+      }
       return config;
     },
-    async checkDependencies(_current, options) {
+    async checkDependencies(current, options) {
       if (options?.command === "start") {
-        const entries = await inspectDependencies();
+        const entries = await inspectDependencies({ includeUv: false });
         const missing = entries.filter(entry => entry.status !== "ok");
         if (missing.length) {
           throw new Error(`Missing dependencies: ${missing.map(entry => entry.name).join(", ")}. Run ./deploy.sh deploy to install them.`);
         }
+        await validateBackendConfig(root, current);
         return;
       }
       await ensureDependencies({
@@ -420,16 +448,13 @@ function createRealDeps(context) {
         ], commandOptions()),
       });
     },
-    async selectPorts(current) {
-      return current;
-    },
     async writeConfiguration(current) {
       await writeDeploymentConfiguration(root, current.envText, {
         backup: parsed.reconfigure,
         // Redeploy without --reconfigure must not silently lose disk secrets.
         backupExistingSecrets: !parsed.reconfigure
       });
-      if (current.listen && !parsed.config) {
+      if (current.listen && !current.configPath) {
         writeServerListen(current.env, current.listen);
       }
     },
@@ -447,14 +472,9 @@ function createRealDeps(context) {
       await stopManagedStack(root);
     },
     async installProject() {
-      const options = commandOptions();
-      // Prepare Python once with the service runtime selection after npm ci.
-      if (!nodeDependenciesInstalled) await runCommand("npm", ["ci"], {
-        ...options, env: { ...process.env, ...options.env, SKIP_POSTINSTALL_BUILD: "1" }
-      });
-      await runCommand(process.execPath, [
-        path.join(root, "scripts/python-environment.mjs"), "--no-dev", "--extra", "video"
-      ], options);
+      await installFrontend();
+      await installPython();
+      if (!config.previous) await validateBackendConfig(root, config);
     },
     async buildWeb() {
       await runCommand("npm", ["run", "build:web"], commandOptions("web", "build"));
@@ -466,58 +486,44 @@ function createRealDeps(context) {
         throw new Error(`TUI build did not produce ${TUI_ENTRY}`);
       }
     },
-    async ensureTuiReady() {
+    async startTui(current, parsed) {
       const entry = path.join(root, TUI_ENTRY);
       if (!existsSync(entry)) {
         throw new Error(`TUI is not built (${TUI_ENTRY}). Run ./deploy.sh deploy first.`);
       }
-    },
-    async checkApiForTui(current) {
-      const state = await readDeploymentState(root).catch(() => null);
-      const apiBaseUrl = healthProbeUrls(current.env, current.web, apiListenFromState(state)).apiBaseUrl;
-      const health = await probeHttp(`${apiBaseUrl}/healthz`);
-      if (!(health.ok && health.status === 200)) {
-        throw new Error(
-          `API is not healthy at ${apiBaseUrl}/healthz. Start the stack with ./deploy.sh start (or deploy), then retry ./deploy.sh tui.`
-        );
-      }
-    },
-    async startTui(current, parsed) {
       ask.close?.();
-      const state = await readDeploymentState(root).catch(() => null);
-      const runtimeUrl = resolveTuiRuntimeUrl(
-        current.env,
-        parsed?.runtimeUrl,
-        apiListenFromState(state),
-      );
+      const explicit = parsed.runtimeUrl?.trim();
+      const state = explicit ? null : await readDeploymentState(root).catch(() => null);
+      const runtimeUrl = resolveTuiRuntimeUrl(current.env, explicit, apiListenFromState(state));
       print(`Starting TUI against ${runtimeUrl} (foreground client; Ctrl+C exits TUI only).`);
-      await runCommand(process.execPath, [path.join(root, TUI_ENTRY), "--runtime-url", runtimeUrl], {
+      await runCommand(process.execPath, [entry, "--runtime-url", runtimeUrl], {
         cwd: root,
+        env: current.env,
         stdio: "inherit"
       });
     },
 
-    async verifyPorts(current) {
-      const web = current.web ?? { host: "127.0.0.1", port: "3000" };
-      const api = readServerListen(current.env, parsed.config);
+    async verifyPorts(current, { retries = 5 } = {}) {
+      const web = current.web;
+      const api = current.listen ?? readServerListen(current.env, current.configPath);
       const services = [
         { label: "Web", host: web.host, port: web.port },
-        { label: "API", host: api.host, port: api.port }
+        { label: "API", host: api.host, port: api.port, allAddresses: true }
       ];
-      // Only verified running managed ports are owned. After stop-old, TIME_WAIT is
-      // handled by short retries inside verifySelectedPorts — not by treating .env as owned.
       const state = await readDeploymentState(root).catch(() => null);
-      const managedPorts = await collectManagedPorts(current.env, state);
+      const probe = await deploymentPortProbe(state);
       await verifySelectedPorts(services, {
-        managedPorts,
-        retries: 5,
-        retryDelayMs: 200
+        probe: (port, host, options) => probe(host, port, options),
+        retries,
       });
+      if (parsed.command === "deploy" && retries === 0) {
+        print(`预检通过。Web ${httpOrigin(web.host, web.port)}，API ${httpOrigin(api.host, api.port)}。`);
+      }
     },
     async start(current) {
-      const web = current.web ?? webListenFromArgs(parsed);
-      const args = managedWebStartArgs(web, parsed.config);
-      const api = readServerListen(current.env, parsed.config);
+      const web = current.web;
+      const args = managedWebStartArgs(web, current.configPath);
+      const api = readServerListen(current.env, current.configPath);
       await startManagedStack(root, {
         env: { ...current.env, ...process.env },
         args,
@@ -525,13 +531,14 @@ function createRealDeps(context) {
           web: Number(web.port),
           api: Number(api.port)
         },
-        listen: { webHost: web.host, apiHost: api.host }
+        listen: { webHost: web.host, apiHost: api.host },
+        configPath: current.configPath
       });
     },
     async waitForHealth(current) {
       try {
-        const web = current.web ?? webListenFromArgs(parsed);
-        const api = readServerListen(current.env, parsed.config);
+        const web = current.web;
+        const api = readServerListen(current.env, current.configPath);
         return await waitForDeployment({
           checkProcessAlive: async () => {
             const inspection = await inspectManagedRuntime(root);
@@ -553,8 +560,8 @@ function createRealDeps(context) {
         throw new Error("Managed process is not alive; refusing to mark deployment healthy");
       }
       await writeDeploymentState(root, { ...inspection.state, status: "healthy" });
-      const web = current.web ?? { host: "127.0.0.1", port: "3000" };
-      const api = readServerListen(current.env, parsed.config);
+      const web = current.web;
+      const api = readServerListen(current.env, current.configPath);
       const probes = healthProbeUrls(current.env, web, api);
       const webUrl = probes.webUrl;
       print(`DataGallery is healthy at ${webUrl}`);
@@ -574,9 +581,8 @@ function createRealDeps(context) {
       const env =
         config?.env ??
         { ...ensureDeploymentEnvironment(await loadRootEnvText(root)).env, ...process.env };
-      const web = inspection.running
-        ? webListenFromState(state, config?.web ?? webListenFromArgs(parsed))
-        : (config?.web ?? webListenFromArgs(parsed));
+      const defaultWeb = config?.web ?? resolveWebListen(parsed);
+      const web = inspection.running ? webListenFromState(state, defaultWeb) : defaultWeb;
       const summary = await collectDeploymentHealth({
         checkProcessAlive: async () => inspection.running,
         ...healthProbeUrls(env, web, apiListenFromState(state))
@@ -593,17 +599,13 @@ function createRealDeps(context) {
       await runCommand("tail", ["-n", "200", "-F", ...paths]);
     },
     async doctor() {
-      await runDeploymentDoctor(root, { print, web: webListenFromArgs(parsed) });
-    },
-    async printHelp(text) {
-      print(text);
+      await runDeploymentDoctor(root, { print, configPath: parsed.config, webHost: parsed.webHost, webPort: parsed.webPort });
     },
     async reportFailure(failure) {
       const file = failure.stage === "build-web" ? "web" : failure.stage === "build-tui" ? "tui" : "backend";
       const logger = createLogger({ file, component: "launcher", env: loggingEnv() });
       logger.error("Deployment failed", failure.error, { stage: failure.stage });
-      failure.logPath = logger.path;
-      for (const line of formatDeploymentFailure(failure).split("\n")) {
+      for (const line of formatDeploymentFailure(failure, logger.path).split("\n")) {
         print(line);
       }
     }
@@ -633,7 +635,7 @@ export async function runDeploymentDoctor(root, options = {}) {
     );
   }
 
-  const run = options.run ?? promisify(execFile);
+  const run = options.run ?? execFileAsync;
   const sources = [];
   try {
     const registry = await run("npm", ["config", "get", "registry"], { cwd: root, env, timeout: 5000 });
@@ -672,33 +674,47 @@ export async function runDeploymentDoctor(root, options = {}) {
 
   const inspection = await inspectManagedRuntime(root);
   const state = inspection.state;
-  const api = apiListenFromState(state) ?? readServerListen(env);
-  const web = inspection.running
-    ? webListenFromState(state, options.web ?? { host: "127.0.0.1", port: "3000" })
-    : (options.web ?? { host: "127.0.0.1", port: "3000" });
-  record("config: ok");
+  const running = inspection.running ? state : null;
+  const { configPath, web } = deploymentTarget(options, running);
+  let api;
+  try {
+    api = readDeploymentListen(env, configPath, running);
+    if (existsSync(venvPython(root, env))) {
+      await validateBackendConfig(root, { env, configPath });
+      record("config: ok");
+    } else {
+      record("config: listen address checked (Python environment missing, backend schema skipped)");
+    }
+  } catch (error) {
+    api = null;
+    const detail = error.code === "MODULE_NOT_FOUND"
+      ? "YAML parser missing. Run npm install --include=dev to check config.yaml."
+      : redactSensitiveText(error.message);
+    record(`config: unavailable (${detail})`);
+  }
   record(
-    `config web=${httpOrigin(web.host, web.port)} api=${httpOrigin(api.host, api.port)}`
+    `config web=${httpOrigin(web.host, web.port)} api=${api ? httpOrigin(api.host, api.port) : "unavailable"}`
   );
 
-  const managedPorts = await collectManagedPorts(env, state);
   const portServices = [
-    { label: "web", host: web.host, port: web.port },
-    { label: "api", host: api.host, port: api.port }
+    { label: "web", ...web },
+    ...(api ? [{ label: "api", ...api, allAddresses: true }] : [])
   ];
 
-  const probe = options.probe ?? ((host, port) => probePort(host, port));
+  const probe = await deploymentPortProbe(running, options.probe);
   for (const service of portServices) {
     const port = Number(service.port);
     if (!Number.isInteger(port)) {
       record(`port ${service.label}: invalid (${service.port})`);
       continue;
     }
-    const result = await probe(service.host || "0.0.0.0", port);
+    const result = await probe(service.host || "0.0.0.0", port, { allAddresses: service.allAddresses });
     if (result.available) {
       record(`port ${service.label} ${port}: available`);
-    } else if (managedPorts.has(port)) {
+    } else if (result.managed) {
       record(`port ${service.label} ${port}: in-use (managed)`);
+    } else if (result.code && result.code !== "EADDRINUSE") {
+      record(`port ${service.label} ${port}: unavailable (${result.code})`);
     } else {
       record(`port ${service.label} ${port}: in-use (${result.owner ?? "unknown"})`);
     }
@@ -759,7 +775,7 @@ export async function runDeploymentDoctor(root, options = {}) {
     record("pid: none");
   }
 
-  if (inspection.running) {
+  if (inspection.running && api) {
     const summary = await collectDeploymentHealth(
       {
         processAlive: true,
@@ -771,24 +787,24 @@ export async function runDeploymentDoctor(root, options = {}) {
       `health process=${summary.process} api=${summary.apiHealth}/${summary.apiReady} web=${summary.web}`
     );
   } else {
-    record("health: skipped (process not running)");
+    record(`health: skipped (${inspection.running ? "API configuration unavailable" : "process not running"})`);
   }
 
   return { lines, env, state, inspection };
 }
-export function formatDeploymentFailure(failure) {
+export function formatDeploymentFailure(failure, logFile) {
   const summary = failure.summary ?? failure.error?.message ?? failure.stage;
   const lines = [`✗ ${summary}`];
-  if (failure.maintenanceWindow) {
+  if (failure.serviceStopped) {
     lines.push("更新处于维护窗口，服务当前已停止；现有数据未被修改。");
   } else if (failure.configurationChanged) {
     lines.push("配置可能已更新；现有数据未被修改。");
   } else {
     lines.push("现有数据未被修改。");
   }
-  lines.push(`完整日志：${failure.logPath}`);
-  lines.push(`修复后重试：${failure.retryCommand}`);
-  lines.push(`诊断命令：${failure.doctorCommand}`);
+  lines.push(`完整日志：${logFile}`);
+  lines.push("修复后重试：./deploy.sh deploy");
+  lines.push("诊断命令：./deploy.sh doctor");
   if (failure.error?.message && failure.error.message !== summary) {
     lines.push(redactSensitiveText(failure.error.message));
   }

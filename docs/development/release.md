@@ -3,7 +3,7 @@
 发布前在仓库根目录执行：
 
 ```bash
-npm run prepare:python
+uv sync
 uv run --no-sync ruff check .
 uv run --no-sync pytest -q
 npm run test:tui
@@ -12,30 +12,28 @@ uv run --no-sync pytest -q -m 'tui and not live'
 
 持有模型凭据时，可额外运行带 `-m live` 的测试，见 [测试](testing.md)。
 
-## 生成安装包
+## 构建流水线产物
 
-构建机准备 Node.js 和 uv 后，在仓库根目录执行：
+在仓库根目录执行 `make prepare` 和 `make build PYTHON_VERSION=3.12`，归档 `dist/server/` 下的 Python wheel 和 `dist/tui/` 下的 TUI npm 包。Web 构建文件留在 `ui/web/.next/`。
+
+源码部署继续使用 `npm run build`。独立交付后的安装与连接见[包部署](../zh/guides/agentkit-package.md)。
+
+## 单独生成 Python 安装包
 
 ```bash
-npm run package:agentkit
+uv build --wheel --clear --out-dir dist/server
 ```
 
-`make package` 调用同一入口，底层使用标准 `uv build` 和 `uv export`。出包不要求先安装前端依赖，也不编译前端；前端编译仍用 `npm run build` / `make build`。
-
-发行包名沿用 `datagallery-dataagent`，导入名和 CLI 仍为 `dataagent`。版本来自 `pyproject.toml` 的 `project.version`，当前为 `0.1.0`。产物为 `dist/agentkit/datagallery_dataagent-0.1.0-py3-none-any.whl`、`datagallery_dataagent-0.1.0.tar.gz` 和 `constraints.txt`。构建默认先生成源码包，再从源码包构建 wheel。
-
-源码包包含 `dataagent/`、构建配置、README 和许可证。wheel 只安装 `dataagent` 顶层包，包含 `dataagent.server`、Home 模板、提示词，以及 `dataagent/plugins` 下的插件。`constraints.txt` 从现有锁文件导出，包含基础运行依赖（含 MySQL、PostgreSQL 驱动）及 `spark`、`video` 全部 extras 的版本约束，排除开发测试依赖。约束不会主动安装可选包；使用者在安装 wheel 时选择所需 extra。安装工具不会自动使用源码仓库的 `uv.lock`。
-
-安装、模型配置和两个前端的连接步骤见 [包部署](../zh/guides/agentkit-package.md)。这一步只生成文件；推送包仓库或发布版本另行执行。
+发行包名为 `datagallery-dataagent`，导入名和 CLI 为 `dataagent`。版本来自 `pyproject.toml`。包包含 Server、Home 模板、提示词和内置插件。安装时通过包元数据解析运行依赖，可选择 `spark`、`video` 或 `all`。
 
 ## 验证安装包与前端
 
 ```bash
-npm run build
+make build
 npm run smoke:agentkit-package
 ```
 
-验收脚本在临时目录构建 wheel/源码包，并在全新 Python 3.12 环境中安装。它验证导入来自已安装包、Home 模板和插件资源可用，以及 SDK、CLI、HTTP 和 A2A 调用；使用本地兼容模型服务检查 Web 代理和 TUI 客户端的流式回复、跨前端续聊与错误返回，不需要模型凭据。TUI 使用真实连接和协议客户端，终端绘制仍由 TUI 单元测试及手工交互覆盖。
+验收脚本在仓库外安装本次构建的 wheel 和 TUI npm 包。它验证 CLI、插件资源、SDK、HTTP 和 A2A，并通过本地测试模型验证 Web 代理、TUI 安装后的启动入口、流式对话及错误处理。
 
 缺少模型时，应为 `/healthz=200`、`/ready=503`；模型请求失败应产生 `RUN_ERROR`，不报告成功；后端停服时 Web 应返回 502，TUI 应明确报连接错误，不另起源码后端。外部模型与数据库服务仍需单独配置和验证。
 

@@ -15,55 +15,13 @@ export function isPlaceholderSecret(value) {
   return value == null || PLACEHOLDER_SECRETS.has(String(value).trim());
 }
 
-export function deploymentConfigGaps() {
-  return [];
-}
-
-export function isCompleteDeploymentConfig(env = {}) {
-  return deploymentConfigGaps(env).length === 0;
-}
-
 function maskSecret(value = "") {
   return "*".repeat(Math.min(8, Math.max(4, String(value).length || 4)));
 }
 
-function assertNoNewlines(value, key) {
-  if (String(value).includes("\n") || String(value).includes("\r")) {
-    throw new Error(`${key} must not contain newline characters`);
-  }
-}
-
-function upsertEnvText(sourceText, updates) {
-  const lines = sourceText.length > 0 ? sourceText.replace(/\r\n/g, "\n").split("\n") : [];
-  if (lines.length > 0 && lines.at(-1) === "") lines.pop();
-
-  const seen = new Set();
-  const next = lines.map((line) => {
-    const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(line);
-    if (!match) return line;
-    const key = match[1];
-    if (!(key in updates)) return line;
-    seen.add(key);
-    assertNoNewlines(updates[key], key);
-    return `${key}=${updates[key]}`;
-  });
-
-  for (const [key, value] of Object.entries(updates)) {
-    if (seen.has(key)) continue;
-    assertNoNewlines(value, key);
-    next.push(`${key}=${value}`);
-  }
-
-  return `${next.join("\n")}\n`;
-}
-
-export function updateDeploymentEnvironment(sourceText, updates) {
-  return upsertEnvText(sourceText ?? "", updates);
-}
-
 export function ensureDeploymentEnvironment(sourceText = "") {
   const text = sourceText.endsWith("\n") || sourceText === "" ? sourceText : `${sourceText}\n`;
-  return { text, env: parseDeploymentEnvironment(text), generatedKeys: [] };
+  return { text, env: parseDeploymentEnvironment(text) };
 }
 
 async function writeAtomic(filePath, content, mode = 0o600) {

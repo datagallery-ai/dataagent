@@ -47,14 +47,15 @@ cd datafoundry
 
 关闭终端或退出日志跟随不会停止受管服务，停止请用 `./deploy.sh stop`。重复部署会先停止受管服务再安装和构建；需要重新配置端口时使用 `./deploy.sh deploy --reconfigure`。
 
-### 手动 npm
+### 手动安装、构建和启动
 
 原生 Windows、macOS、其他 Linux，或需要手动配置时：
 
-安装前确认 Node.js ≥22.12.0 和 uv 已加入 `PATH`。受限网络还需先指定可用的 Python 3.12 和下载源，按 [手动部署准备步骤](docs/zh/quick-start.md#manual-prerequisites) 设置进程环境变量，再执行下面的 `npm install`；安装钩子也会同步 Python 依赖。
+安装前确认 Node.js ≥22.12.0 和 uv 已加入 `PATH`。受限网络还需先指定可用的 Python 3.12 和下载源，按 [手动部署准备步骤](docs/zh/quick-start.md#manual-prerequisites) 设置进程环境变量，再执行下面的安装命令。
 
 ```bash
-npm install
+npm install --include=dev
+uv sync --no-dev --extra video
 cp .env.example .env
 ```
 
@@ -81,7 +82,7 @@ npm run start:tui
 
 ## 配置与独立启动
 
-使用 `npm run package:agentkit`（或 `make package`）生成 DataAgent 的 Python 安装包。安装与 Web/TUI 连接步骤见 [Python 包部署](docs/zh/guides/agentkit-package.md)，可用 `npm run smoke:agentkit-package` 验证包与前端配合。
+使用 `uv build --wheel --clear --out-dir dist/server` 生成 DataAgent 的 Python 安装包。安装与 Web/TUI 连接步骤见 [Python 包部署](docs/zh/guides/agentkit-package.md)。`make build` 可同时生成 TUI npm 包，构建后用 `npm run smoke:agentkit-package` 验证。
 
 Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI 首次启动会初始化缺少的配置模板。
 
@@ -149,7 +150,7 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 npm run test:deploy
 npm run test:web
 npm run test:tui
-npm run test:product
+make test
 ```
 
 Apache-2.0，见 [LICENSE](LICENSE)。

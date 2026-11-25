@@ -7,15 +7,15 @@
   "main": "dist/index.js",
   "types": "dist/index.d.ts",
   "bin": {
-    "datagallery-tui": "./dist/index.js"
+    "dataagent-cli": "./dist/index.js",
+    "da": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "npm run clean && tsc",
     "dev": "tsc --watch",
-    "prestart": "npm run build",
     "start": "node -- dist/index.js",
-    "test": "npm run build && node --test dist/utils/logger.test.js dist/config/config-client.test.js dist/protocol/agui-client.test.js dist/connect.test.js dist/backend.test.js dist/startup-preflight.test.js dist/runtime-url.test.js dist/no-bare-fetch.guard.test.js dist/ui/components/EnhancedInputBox.test.js dist/ui/App.test.js dist/ui/assistant-stream-buffer.test.js dist/state/live-run-state.test.js dist/ui/fullscreen-cursor.test.js dist/ui/conversation-design.test.js dist/terminal-screen.test.js",
-    "clean": "rm -rf dist"
+    "test": "npm run build && node ../../scripts/run-node-tests.mjs dist/utils/logger.test.js dist/config/config-client.test.js dist/protocol/agui-client.test.js dist/connect.test.js dist/backend.test.js dist/startup-preflight.test.js dist/no-bare-fetch.guard.test.js dist/ui/components/EnhancedInputBox.test.js dist/ui/App.test.js dist/ui/assistant-stream-buffer.test.js dist/state/live-run-state.test.js dist/ui/fullscreen-cursor.test.js dist/ui/conversation-design.test.js dist/terminal-screen.test.js --",
+    "clean": "node -e \"require('node:fs').rmSync('dist', { recursive: true, force: true })\""
   },
   "keywords": [
     "datagallery",

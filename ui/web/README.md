@@ -8,8 +8,8 @@ Next.js data-task workspace in the datagallery monorepo.
 From the repository root:
 
 ```bash
-npm install
-npm run build
+npm install --include=dev
+npm run build:web
 npm run start:web
 ```
 

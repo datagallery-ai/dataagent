@@ -47,14 +47,15 @@ The script has no distribution or CPU architecture allowlist. If Node.js needs i
 
 Closing a terminal or stopping log following does not stop the managed service. Use `./deploy.sh stop`. Redeployment stops the managed service before installation and builds; use `./deploy.sh deploy --reconfigure` to change ports.
 
-### Manual npm deployment
+### Manual installation, build, and startup
 
 For native Windows, macOS, other Linux distributions, or manual configuration:
 
-Before installation, ensure Node.js ≥22.12.0 and uv are on `PATH`. On restricted networks, select an available Python 3.12 interpreter and download sources using the [manual preparation steps](docs/en/quick-start.md#1-prepare-tools-and-download-sources) before running `npm install` below. The install hook also syncs Python dependencies.
+Before installation, ensure Node.js ≥22.12.0 and uv are on `PATH`. On restricted networks, select an available Python 3.12 interpreter and download sources using the [manual preparation steps](docs/en/quick-start.md#1-prepare-tools-and-download-sources) before running the installation commands below.
 
 ```bash
-npm install
+npm install --include=dev
+uv sync --no-dev --extra video
 cp .env.example .env
 ```
 
@@ -81,7 +82,7 @@ A 200 from `/healthz` means the control plane is live; a 200 from `/ready` means
 
 ## Configuration and independent services
 
-Build the DataAgent Python package with `npm run package:agentkit` (or `make package`). See [Python package deployment](docs/en/guides/agentkit-package.md) for installation and Web/TUI connection; `npm run smoke:agentkit-package` verifies the package and frontend integration.
+Build the DataAgent Python package with `uv build --wheel --clear --out-dir dist/server`. See [Python package deployment](docs/en/guides/agentkit-package.md) for installation and Web/TUI connection. `make build` also creates the TUI tarball. Run `npm run smoke:agentkit-package` afterward to verify the packages.
 
 Home defaults to `~/.dataagent`; set `DATAAGENT_HOME` in the process environment to change it. The CLI initializes missing configuration templates on first startup.
 
@@ -149,7 +150,7 @@ See [Security](docs/en/security.md) and [Supported inputs](docs/en/reference/sup
 npm run test:deploy
 npm run test:web
 npm run test:tui
-npm run test:product
+make test
 ```
 
 Apache-2.0; see [LICENSE](LICENSE).

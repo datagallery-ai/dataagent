@@ -103,7 +103,7 @@ export async function startBackend(options: {
   const launchOpts = { cwd, env };
   const python = venvPython(backendPackage, env);
   if (!options.spawnBackend && !existsSync(python)) {
-    throw new Error(`Python environment is missing at ${python}. Run npm run prepare:python before starting the TUI.`);
+    throw new Error(`Python environment is missing at ${python}. Run uv sync in the project root before starting the TUI.`);
   }
   // Direct Python avoids uv synchronization and Windows console launcher windows.
   const child = options.spawnBackend

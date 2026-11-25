@@ -3,9 +3,8 @@
  * Start the built control plane and web app.
  *
  * Usage:
- *   npm run start       # control plane if needed, web, and a built TUI
- *   npm run start:api   # control plane only
- *   npm run start:web   # web; starts the control plane when it is down
+ *   npm run start       # web and control plane, reusing a running control plane
+ *   npm run start:web   # web only; connect to a separately started control plane
  *
  * Web defaults to 127.0.0.1:3000. Override on start or start:web:
  *   --web-host <host> --web-port <port>

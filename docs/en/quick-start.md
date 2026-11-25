@@ -5,7 +5,7 @@ This guide is for a first deploy. Formal mode has two paths. Both start the same
 | Path | Hosts | Entry |
 | --- | --- | --- |
 | **Recommended: one-click** | Linux (including openEuler) | `./deploy.sh` (config, dependencies, build including TUI, detached Web/API start, and health checks in one flow) |
-| **Manual npm** | Windows, macOS, or hand-edited env files | Prepare tools and download sources → `npm install` → configure model → `npm run build` → `npm run start` |
+| **Manual npm** | Windows, macOS, or hand-edited env files | Prepare tools and download sources → `npm install` + `uv sync` → configure model → `npm run build` → `npm run start` |
 
 After deploy, put `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in the repository `.env` (`npm run start` loads it into the process environment) or in Home `~/.dataagent/.env`. Then ask from the Web UI or the TUI. Docker / Compose is **not** shipped, and the control plane has no registration.
 
@@ -37,7 +37,7 @@ Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL th
 ### Configuration rules
 
 - First run: the script generates `.env`, then confirms ports / client-reachable URL. No model key is required at deploy time.
-- Later interactive `./deploy.sh` / `./deploy.sh deploy`: if a complete `.env` already exists, configuration questions are skipped.
+- Later interactive `./deploy.sh` / `./deploy.sh deploy` skips configuration questions if the managed service is running or the root `.env` is non-empty.
 - To change ports or the client-reachable URL again (existing secrets are kept; `.env` is backed up first):
 
 ```bash
@@ -58,16 +58,24 @@ Open `http://127.0.0.1:3000/data-tasks` (if the Web port differs, use the URL th
 ./deploy.sh status    # process + API / Web health
 ./deploy.sh start     # start an existing build (no install/build)
 ./deploy.sh stop      # stop only the managed process group
-./deploy.sh restart   # stop then start (no install/build)
+./deploy.sh restart   # validate and reuse the running deployment's settings
 ./deploy.sh logs      # follow runtime logs; Ctrl+C does not stop the stack
 ./deploy.sh doctor    # read-only dependency / config / port / disk / health checks
 ./deploy.sh tui       # optional: foreground TUI client (API must be healthy; not a managed service)
 ./deploy.sh help
 ```
 
-`deploy` prepares dependencies and builds. `start` / `restart` use the existing Python environment and build artifacts; missing prerequisites direct you to run `deploy` again. Managed startup does not install dependencies or build missing artifacts. Manual `npm start` retains its convenience behavior of preparing missing environments and builds.
+`deploy`, `restart`, and `doctor` prefer explicit `--config`, `--web-host`, and `--web-port` values, then reuse the config file and Web address of a running managed deployment, then fall back to Home configuration and the default Web address. An explicit Web port is checked directly and a conflict is reported. Interactive deployment only prompts for ports that were left unspecified.
 
-`LLM_*` is not required during deploy. Re-running deploy uses a maintenance window: stop the managed process group before `npm ci` and builds.
+When changing to an overlapping listen address on the same port, Linux uses `ss` to confirm that the listener belongs to the managed service. If another listener conflicts or ownership cannot be verified, the current service keeps running and the command reports the conflict.
+
+`deploy` prepares dependencies and builds. `start` / `restart` use the existing Python environment and build artifacts; missing prerequisites direct you to run `deploy` again. Managed startup does not install dependencies or build missing artifacts. Manual `npm start` also uses the existing environment and Web build.
+
+`deploy` automatically checks dependencies, deployment directory permissions, configuration, and the selected listen addresses. Run `./deploy.sh doctor` to inspect mirror connectivity, disk space, or the current service status.
+
+`restart` validates the new configuration with the Server's configuration loader before stopping the running service. `doctor` performs the same validation when the Python environment exists. Otherwise, it checks the listen settings and reports that Server configuration validation was skipped.
+
+`LLM_*` is not required during deploy. Re-running deploy uses a maintenance window: stop the managed process group before `npm install` and builds.
 
 ### Log files
 
@@ -102,7 +110,7 @@ npm --version
 uv --version
 ```
 
-On restricted networks, preinstall Python 3.12, select its executable, and disable automatic downloads so a missing interpreter fails immediately. Replace this path and run in the same shell as `npm install`:
+On restricted networks, preinstall Python 3.12, select its executable, and disable automatic downloads so a missing interpreter fails immediately. Replace this path and run in the same shell as `uv sync`:
 
 ```bash
 export UV_PYTHON=/opt/python3.12/bin/python3.12
@@ -120,19 +128,18 @@ npm config get registry
 
 In PowerShell, set variables with `$env:NAME="value"` and use an interpreter path such as `C:\Python312\python.exe`; replace `$UV_PYTHON` with `$env:UV_PYTHON` in the check command. If Python must be downloaded, configure `UV_PYTHON_INSTALL_MIRROR` and allow downloads as described in the [mirror guide](guides/mirror-deployment.md).
 
-`npm_config_registry` selects the frontend registry; `UV_DEFAULT_INDEX` selects the Python runtime/build dependency index. These process variables do not require global registry changes. The npm registry needs process variables or native npm configuration; Python preparation also reads repository `.env` defaults, with existing process variables taking precedence.
+`npm_config_registry` selects the frontend registry; `UV_DEFAULT_INDEX` selects the Python runtime/build dependency index. These process variables do not require global registry changes. For manual installation, configure download sources in the shell or through npm and uv configuration.
 
-The install hook delegates to native `uv sync`, resolving and installing dependencies from the configured index according to `pyproject.toml`. The repository retains `uv.lock` as a resolution snapshot to reduce initial optional-dependency metadata downloads. Installation uses neither `--frozen` nor `--locked`; uv updates the snapshot when the configuration or index changes. No `sed` or manual URL rewrite is required, and transitive versions need not be identical across environments.
+Run `uv sync` to resolve and install Python dependencies from the configured index according to `pyproject.toml`. The repository retains `uv.lock` as a resolution snapshot to reduce initial optional-dependency metadata downloads. Installation uses neither `--frozen` nor `--locked`; uv updates the snapshot when the configuration or index changes. No `sed` or manual URL rewrite is required, and transitive versions need not be identical across environments.
 
 ### 2. Install dependencies
 
 ```bash
-npm install
+npm install --include=dev
+uv sync --no-dev --extra video
 ```
 
-The `postinstall` hook also syncs the control-plane Python dependencies into `.venv`. Continue after the entire command exits successfully, including Python sync. Timing depends on your machine and download sources.
-
-For separate frontend installation, Python preparation, and build stages, see [staged installation and native commands](guides/mirror-deployment.md#staged-installation).
+The first command installs Web and TUI dependencies. The second prepares `.venv` with runtime and video dependencies. Use `uv sync` for development tools, or choose the extras you need. See [staged installation](guides/mirror-deployment.md#staged-installation).
 
 ### 3. Configure the model service
 
@@ -165,12 +172,14 @@ In another terminal:
 npm run start:tui
 ```
 
-Started separately, both the web app and the TUI start the control plane when it is down. The address comes from `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`:
+To run the services in separate terminals, start the API first. Web connects to the address in `config.yaml` (default `http://127.0.0.1:8790`). For a separately deployed backend, set `API_PROXY_TARGET` before starting Web.
 
 ```bash
-npm run start:api
+uv run --no-sync dataagent serve
 npm run start:web
 ```
+
+If model variables are in the repository root `.env`, start the API with `uv run --no-sync --env-file .env dataagent serve`.
 
 ### 5. Verify health and model calls
 
@@ -210,7 +219,7 @@ npm run start:tui
 
 The address comes from `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches. `--runtime-url` only attaches and does not start a backend.
 
-`./deploy.sh tui` also attaches when the deployed stack is already running. It uses the API address recorded at start.
+`./deploy.sh tui` uses the API address recorded at managed startup by default. Pass `--runtime-url` to select an existing backend.
 
 Resume the latest server session:
 

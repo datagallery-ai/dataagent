@@ -68,6 +68,7 @@ export async function inspectDependencies(options = {}) {
     installAction: "node"
   });
 
+  if (options.includeUv === false) return entries;
   const uv = await safeRun(run, "uv", ["--version"]);
   const uvVersion = /uv\s+([0-9][^\s]*)/i.exec(`${uv.stdout || ""}\n${uv.stderr || ""}`)?.[1]
     ?? ((uv.stdout || "").trim() || null);

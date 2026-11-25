@@ -1,41 +1,27 @@
 # Python 包部署
 
-DataAgent 的 Python 发行包名为 `datagallery-dataagent`，导入名和命令名都是 `dataagent`。可构建为 wheel 和源码包，包含 API、A2A、SDK、Home 模板、提示词与内置插件。后端运行需要 Python 3.12。Web/TUI 使用 Node.js ≥22.12.0，通过现有 HTTP 接口连接；它们目前仍从前端源码构建，不包含在 Python 包中。
+DataAgent 的 Python 发行包名为 `datagallery-dataagent`，导入名和命令名都是 `dataagent`。可构建为 wheel 和源码包，包含 API、A2A、SDK、Home 模板、提示词与内置插件。后端运行需要 Python 3.12。Web/TUI 使用 Node.js ≥22.12.0，通过 HTTP 连接 Server。TUI 可单独用 npm 包安装，Web 从源码构建。
 
 ## 构建
 
-构建机准备 Node.js 和 uv 后，在仓库根目录执行：
+在仓库根目录用 `make build` 生成 `dist/server/` 下的 wheel 和 `dist/tui/` 下的 TUI npm 包。单独构建 Server 时执行：
 
 ```bash
-npm run package:agentkit
+uv build --wheel --clear --out-dir dist/server
 ```
 
-`make package` 调用同一命令。出包不编译 Web/TUI，也不要求先安装前端依赖；`npm run build` / `make build` 负责前端编译。
-
-不使用 npm / Make 封装时，可直接执行相同的 uv 命令；此路径只需 uv 和 Python 3.12，无需 Node.js：
-
-```bash
-uv build --out-dir dist/agentkit
-uv export --no-dev --all-extras \
-  --no-emit-project --no-hashes --output-file dist/agentkit/constraints.txt
-```
-
-默认输出到 `dist/agentkit/`，当前生成 `datagallery_dataagent-0.1.0-py3-none-any.whl`、`datagallery_dataagent-0.1.0.tar.gz` 和 `constraints.txt`。版本来自 `pyproject.toml`。构建器先生成源码包，再从源码包构建 wheel。导出的约束固定运行依赖及全部 extras 的版本，不包含开发测试依赖或依赖包本身；约束不会主动安装可选包。`constraints.txt` 仅固定版本，不包含哈希；它是本次出包的版本快照，不是带哈希的完整性清单。安装时从配置的索引下载，镜像设置沿用 uv/pip 的配置。
-
-包安装可用 `UV_DEFAULT_INDEX`（uv）或 `--index-url`（pip）指定索引。约束文件不携带源码锁文件的制品 URL，因此包安装不需要改写锁文件或执行 `sed`。
-
-wheel 和约束文件不包含第三方依赖制品，安装时仍需可达的包索引。完全离线安装还需按目标系统、架构、Python 版本与所选 extras 另行准备依赖制品。
+wheel 版本来自 `pyproject.toml`。安装时按包元数据解析运行依赖，使用已配置的 uv/pip 索引。完全离线安装需为目标系统、架构、Python 版本和选定的 extras 预备依赖制品。
 
 ## 安装并启动后端
 
-将 wheel 和约束文件复制到部署目录，该目录无需项目源码。在该目录执行：
+将 wheel 复制到部署目录，该目录无需项目源码。在该目录执行：
 
 ```bash
 uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python -c constraints.txt datagallery_dataagent-0.1.0-py3-none-any.whl
+uv pip install --python .venv/bin/python datagallery_dataagent-0.1.0-py3-none-any.whl
 ```
 
-已有 pip 的虚拟环境也可使用 `python -m pip install -c constraints.txt datagallery_dataagent-0.1.0-py3-none-any.whl`；前述 `uv pip` 命令不要求目标环境安装 pip。Windows 的解释器和 CLI 位于 `.venv\Scripts\`。
+已有 pip 的虚拟环境也可使用 `python -m pip install datagallery_dataagent-0.1.0-py3-none-any.whl`；前述 `uv pip` 命令不要求目标环境安装 pip。Windows 的解释器和 CLI 位于 `.venv\Scripts\`。
 
 `UV_PYTHON` 等环境变量供环境准备工具选择解释器；安装后的 `dataagent` 命令由所在虚拟环境的 Python 执行，不会根据这些变量切换运行中的解释器。包声明的 Python 范围仍为 3.12.x。
 
@@ -67,11 +53,11 @@ export LLM_API_KEY=replace-with-your-key
 例如，安装本地 wheel 并额外选择视频能力：
 
 ```bash
-uv pip install --python .venv/bin/python -c constraints.txt \
+uv pip install --python .venv/bin/python \
   "./datagallery_dataagent-0.1.0-py3-none-any.whl[video]"
 ```
 
-全部需要时，将安装参数改为 `"./datagallery_dataagent-0.1.0-py3-none-any.whl[all]"`。源码运行先执行 `npm run prepare:python -- --no-dev --extra video`，再用 `npm run start:api` 启动；不加 `--no-dev` 时默认包含开发组，全部功能加 `--extra all`。同步遵循 `uv sync` 的精确语义：每次显式选择所需 extras，未选中的包会被移除。直接用 uv 启动时加 `--no-sync`，避免重新解析源码锁文件。
+全部需要时，将安装参数改为 `"./datagallery_dataagent-0.1.0-py3-none-any.whl[all]"`。源码运行先执行 `uv sync --no-dev --extra video`，再用 `uv run --no-sync dataagent serve` 启动；不加 `--no-dev` 时默认包含开发组，全部功能加 `--extra all`。同步遵循 `uv sync` 的精确语义：每次显式选择所需 extras，未选中的包会被移除。直接用 uv 启动时加 `--no-sync`，避免重新解析源码锁文件。
 
 core 中的视频错误提示沿用上游原文；若提示安装 `deepagents[video]`，本产品应安装 `datagallery-dataagent[video]`，无需另装 Deep Agents。
 
@@ -83,15 +69,15 @@ core 中的视频错误提示沿用上游原文；若提示安装 `deepagents[vi
 ./deploy.sh deploy
 ```
 
-一键部署默认选择 `--no-dev --extra video`：安装基础 MySQL、PostgreSQL 驱动和视频依赖，不安装 Spark/Hive 或 pytest、ruff 等开发工具。npm 安装阶段跳过 Python 钩子，随后通过共享准备入口同步一次；启动和重启不再次安装依赖。
+一键部署默认选择 `--no-dev --extra video`：安装基础 MySQL、PostgreSQL 驱动和视频依赖，不安装 Spark/Hive 或 pytest、ruff 等开发工具。前端和 Python 各自安装一次；启动和重启不再次安装依赖。
 
-普通 `npm install` / `npm ci` 的钩子仍显式选择 `--no-dev`，不启用 extras；分阶段安装可在启动前执行 `npm run prepare:python -- --no-dev --extra video`；需要 Spark 时按下述步骤显式准备。直接运行 `uv sync` 保持原生默认行为，不会自动选择 `all`。发行包的默认安装也保持基础运行依赖，完整能力使用 wheel 的 `[all]`。
+分阶段安装时，先使用 `npm install` 准备前端，再用 `uv sync --no-dev --extra video` 准备后端。Spark 按下述步骤选装。wheel 默认安装基础运行依赖，可通过 `[all]` 启用全部扩展依赖。
 
 需要 Spark/Hive 时，准备 Java 17 及以上与对应服务配置，再显式安装包含 Spark 的 `all`：
 
 ```bash
 ./deploy.sh stop
-npm run prepare:python -- --no-dev --extra all
+uv sync --no-dev --extra all
 ./deploy.sh start
 ```
 
@@ -101,17 +87,30 @@ npm run prepare:python -- --no-dev --extra all
 
 ## 连接 Web 和 TUI
 
+将 TUI 的 `.tgz` 复制到客户端机器后，从交付目录安装并连接已启动的 Server：
+
+```bash
+npm install -g ./datagallery-tui-0.2.0.tgz
+dataagent-cli --runtime-url http://127.0.0.1:8790
+# 简写
+da --runtime-url http://127.0.0.1:8790
+```
+
+独立安装的 TUI 用于连接已启动的 Server。先运行 Python 包提供的 `dataagent serve`，并在该命令上指定 `--workspace` 等服务启动选项。`dataagent-cli` 和 `da` 启动同一个终端客户端。
+
+Web 或源码版 TUI 使用下面的流程。
+
 前端应使用与出包代码相同的提交或已验证兼容的版本。在前端仓库中准备依赖与产物，跳过源码 Python 环境准备：
 
 ```bash
-SKIP_POSTINSTALL_BUILD=1 npm ci
+npm install --include=dev
 npm run build
 ```
 
 打开另一个终端，启动 Web，使用现有 `API_PROXY_TARGET` 指向包服务：
 
 ```bash
-API_PROXY_TARGET=http://127.0.0.1:8790 npm --workspace @datagallery/web run start -- --hostname 127.0.0.1 --port 3000
+API_PROXY_TARGET=http://127.0.0.1:8790 npm run start:web -- --web-host 127.0.0.1 --web-port 3000
 ```
 
 TUI 使用连接模式：
@@ -122,23 +121,22 @@ npm run start:tui -- --runtime-url http://127.0.0.1:8790
 
 PowerShell 使用 `$env:NAME="value"` 设置对应进程变量。前端和后端在不同机器时，将示例回环地址换为后端可达的地址，并配置后端监听地址。
 
-这两条前端命令只连接包服务。原来的 `npm run start`、`npm run start:api` 与 `./deploy.sh` 仍用于源码部署，会按既有规则管理仓库中的 Python 环境。`serve` 同时提供 REST 与 A2A；`serve-a2a` 只提供 A2A，Web/TUI 应连接 `serve`。
+这两条前端命令连接已安装的服务。单独从源码启动控制面时，使用 `uv run --no-sync dataagent serve`。`serve` 同时提供 REST 与 A2A，供 Web 和 TUI 连接。`serve-a2a` 只提供 A2A。
 
 ## Makefile 流水线
 
-现有流水线可继续按下面的接口调用：
+流水线按下面的顺序生成并验证全部产物：
 
 ```bash
 make prepare UV_PYTHON=3.12
 make build UV_PYTHON=3.12
-make package UV_PYTHON=3.12
 make ut UV_PYTHON=3.12
 make st UV_PYTHON=3.12
 ```
 
-安装及测试通过共享入口执行原生 `uv sync`，使用配置的索引，不要求流水线手动改写 `uv.lock`。仓库保留解析快照，但不强制冻结版本。
+安装和测试直接执行 `uv sync`，使用配置的索引，不要求流水线手动改写 `uv.lock`。仓库保留解析快照，但不强制冻结版本。
 
-`build` 编译 Web/TUI；`package` 生成 Python 安装包，两个阶段不会重复编译前端。若需归档 Python 包，将 `dist/agentkit/` 中的 wheel、源码包和 `constraints.txt` 纳入产物收集；已有前端构建产物目录不变。`ut/st` 自动准备开发测试工具，不需要流水线新增安装命令。部署所需 extras 在部署阶段按需选择。
+`make build` 完成后归档 `dist/server/` 的 wheel 和 `dist/tui/` 的 npm 包。Web 构建结果留在 `ui/web/.next/`。默认 `make ut` 包含部署与 YAML 专项测试。`ut/st` 自动准备开发测试工具。部署所需 extras 在部署阶段按需选择。
 
 ## 验证与错误定位
 
@@ -154,4 +152,4 @@ curl -I http://127.0.0.1:3000/data-tasks
 
 MySQL、PostgreSQL 和 SQL 解析依赖属于基础运行依赖；缺失时应修复运行包安装。Spark/Hive 与视频抽帧通过对应 extra 安装，缺失时按错误提示和上述说明补齐。
 
-在开发仓库运行 `npm run smoke:agentkit-package`，可验证隔离安装与上述成功、失败路径。此检查使用本地兼容模型服务，TUI 连接和流式传输通过真实客户端验证；前端绘制与真实模型服务需分别验证。
+在开发仓库执行 `make build` 后运行 `npm run smoke:agentkit-package`，可验证隔离安装与上述成功、失败路径。此检查使用本地兼容模型服务，TUI 连接和流式传输通过真实客户端验证；前端绘制与真实模型服务需分别验证。

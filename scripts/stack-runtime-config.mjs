@@ -2,12 +2,14 @@ import { join, resolve } from "node:path";
 import { httpOrigin, readServerListen } from "../ui/shared/server-listen.mjs";
 import { venvPython } from "../ui/shared/python-environment.mjs";
 
-function port(value, fallback, name) {
-  const parsed = Number(value ?? fallback);
-  if (!Number.isInteger(parsed) || parsed < 1 || parsed > 65535) {
-    throw new Error(`${name} must be an integer between 1 and 65535`);
+export function resolveWebListen({ webHost, webPort } = {}) {
+  const host = String(webHost ?? "").trim() || "127.0.0.1";
+  const port = Number(webPort ?? "3000");
+  if (/\s/u.test(host)) throw new Error("--web-host must be a host name or address");
+  if (!Number.isInteger(port) || port < 1 || port > 65535) {
+    throw new Error("--web-port must be an integer between 1 and 65535");
   }
-  return String(parsed);
+  return { host, port: String(port) };
 }
 
 function configPathFromArgs(args) {
@@ -44,11 +46,15 @@ function checkArgs(args) {
 export function resolveStackRuntimeConfig(env = process.env, args = []) {
   checkArgs(args);
   const configPath = configPathFromArgs(args);
-  const listen = readServerListen(env, configPath);
+  const apiTarget = args.includes("--web") && !args.includes("--api") && !configPath
+    ? env.API_PROXY_TARGET?.trim()
+    : undefined;
+  const listen = apiTarget ? {} : readServerListen(env, configPath);
   const web = webListen(args);
   return {
     apiHost: listen.host,
     apiPort: listen.port,
+    apiTarget,
     webHost: web.host,
     webPort: web.port,
     configPath,
@@ -63,21 +69,18 @@ function webListen(args) {
     const value = args[index + 1];
     if (value == null || value.startsWith("-")) throw new Error(`${flag} requires a value`);
     index += 1;
-    if (flag === "--web-host") overrides.host = value.trim();
-    else overrides.port = value;
+    if (flag === "--web-host") overrides.webHost = value;
+    else overrides.webPort = value;
   }
-  const host = overrides.host || "127.0.0.1";
-  if (/\s/u.test(host)) throw new Error("--web-host must be a host name or address");
-  return { host, port: port(overrides.port, 3000, "--web-port") };
+  return resolveWebListen(overrides);
 }
 
-export function pythonControlPlaneLaunch(root, env, reload = false, configPath) {
+export function pythonControlPlaneLaunch(root, env, configPath) {
   return {
     command: venvPython(join(root, "."), env),
     args: [
       "-m", "dataagent", "serve",
       ...(configPath ? ["--config", configPath] : []),
-      ...(reload ? ["--reload"] : []),
     ],
     env,
   };
@@ -95,7 +98,7 @@ export function webLaunch(config, env = {}) {
     ],
     env: {
       ...env,
-      API_PROXY_TARGET: httpOrigin(config.apiHost, config.apiPort),
+      API_PROXY_TARGET: config.apiTarget || httpOrigin(config.apiHost, config.apiPort),
     },
   };
 }
@@ -104,6 +107,5 @@ export function formatStackEndpoints(config, enabled) {
   const lines = ["DataGallery endpoints:"];
   if (enabled.startWeb) lines.push(`  GUI: ${httpOrigin(config.webHost, config.webPort)}`);
   if (enabled.startApi) lines.push(`  API: ${httpOrigin(config.apiHost, config.apiPort)}`);
-  if (enabled.tuiReady) lines.push("  TUI: npm run start:tui");
   return lines.join("\n");
 }

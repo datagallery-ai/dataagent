@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
+import dns from "node:dns/promises";
+import { createServer } from "node:net";
 import test from "node:test";
 import {
-  describePortOwner,
   parsePort,
+  readPortListeners,
   selectDeploymentPort,
   verifySelectedPorts
 } from "./ports.mjs";
@@ -22,8 +24,7 @@ test("loops until the requested alternative is available", async () => {
   const selected = await selectDeploymentPort({
     label: "Web",
     defaultPort: 3000,
-    reserved: new Set([8787]),
-    managedPorts: new Set(),
+    reserved: [{ port: 8787 }],
     ask: async () => answers.shift(),
     probe: async (port) => ({ available: port === 3002, owner: port === 3001 ? "node pid=42" : null })
   });
@@ -34,8 +35,6 @@ test("accepts available default without choosing alternative", async () => {
   const selected = await selectDeploymentPort({
     label: "Web",
     defaultPort: 3000,
-    reserved: new Set(),
-    managedPorts: new Set(),
     ask: async () => "1",
     probe: async () => ({ available: true, owner: null }),
     print: () => {}
@@ -48,8 +47,7 @@ test("rejects duplicate reserved ports", async () => {
     selectDeploymentPort({
       label: "Web",
       defaultPort: 3000,
-      reserved: new Set([3000]),
-      managedPorts: new Set(),
+      reserved: [{ host: "127.0.0.1", port: 3000 }],
       nonInteractive: true,
       ask: async () => assert.fail("must not prompt"),
       probe: async () => ({ available: true, owner: null })
@@ -63,8 +61,6 @@ test("non-interactive mode fails on an unknown listener", async () => {
     selectDeploymentPort({
       label: "API",
       defaultPort: 8787,
-      reserved: new Set(),
-      managedPorts: new Set(),
       nonInteractive: true,
       ask: async () => assert.fail("must not prompt"),
       probe: async () => ({ available: false, owner: "python pid=99" })
@@ -78,8 +74,6 @@ test("quitting from occupied-port prompt exits safely", async () => {
     selectDeploymentPort({
       label: "Web",
       defaultPort: 3000,
-      reserved: new Set(),
-      managedPorts: new Set(),
       ask: async () => "q",
       probe: async () => ({ available: false, owner: "node pid=42" }),
       print: () => {}
@@ -92,11 +86,9 @@ test("managed ports may be selected during update preflight", async () => {
   const selected = await selectDeploymentPort({
     label: "Web",
     defaultPort: 3000,
-    reserved: new Set(),
-    managedPorts: new Set([3000]),
     nonInteractive: true,
     ask: async () => assert.fail("must not prompt"),
-    probe: async () => ({ available: false, owner: "datagallery pid=1" })
+    probe: async () => ({ available: false, managed: true })
   });
   assert.equal(selected, 3000);
 });
@@ -106,7 +98,6 @@ test("verifySelectedPorts fails when a port becomes occupied", async () => {
     verifySelectedPorts(
       [{ label: "Web", port: 3000 }],
       {
-        managedPorts: new Set(),
         retries: 0,
         probe: async () => ({ available: false, owner: "nginx pid=7" })
       }
@@ -114,25 +105,41 @@ test("verifySelectedPorts fails when a port becomes occupied", async () => {
     /Web port 3000 is already in use/
   );
 });
-test("verifySelectedPorts skips ports still held by the managed stack", async () => {
-  let probed = false;
-  await verifySelectedPorts(
-    [
-      { label: "Web", port: 3000 },
-      { label: "API", port: 8787 }
-    ],
-    {
-      managedPorts: new Set([3000]),
-      probe: async (port) => {
-        if (port === 3000) {
-          probed = true;
-          return { available: false, owner: "datagallery pid=1" };
-        }
-        return { available: true, owner: null };
-      }
-    }
+test("different local addresses can select the same port", async t => {
+  if (process.platform !== "linux") return t.skip("fixture uses Linux loopback aliases");
+  const server = createServer();
+  await new Promise(resolve => server.listen(0, "127.0.0.3", resolve));
+  t.after(() => new Promise(resolve => server.close(resolve)));
+  const port = server.address().port;
+  const web = { label: "Web", host: "127.0.0.1", port };
+  const api = { label: "API", host: "127.0.0.2", port };
+  assert.equal(await selectDeploymentPort({
+    ...web, defaultPort: port, reserved: [api], nonInteractive: true,
+  }), port);
+  await verifySelectedPorts([web, api], { retries: 0 });
+});
+
+test("Web localhost binds the first address while API localhost reserves both families", async t => {
+  const addresses = [{ address: "::1", family: 6 }, { address: "127.0.0.1", family: 4 }];
+  t.mock.method(dns, "lookup", async (hostname, options) => {
+    assert.equal(hostname, "localhost");
+    return options?.all ? addresses : addresses[0];
+  });
+  const probe = async () => ({ available: true });
+  const web = { label: "Web", host: "localhost", port: 3000 };
+  const api = { label: "API", host: "127.0.0.1", port: 3000, allAddresses: true };
+  await verifySelectedPorts([web, api], { probe });
+  await assert.rejects(
+    verifySelectedPorts([{ ...web, host: "::1" }, { ...api, host: "localhost" }], { probe }),
+    /already selected for another service/
   );
-  assert.equal(probed, false);
+});
+
+test("wildcard and specific addresses cannot select the same port on the same family", async () => {
+  await assert.rejects(verifySelectedPorts([
+    { label: "Web", host: "0.0.0.0", port: 3000 },
+    { label: "API", host: "127.0.0.1", port: 3000 },
+  ], { probe: async () => ({ available: true }) }), /already selected for another service/);
 });
 
 test("verifySelectedPorts retries briefly for transient TIME_WAIT occupancy", async () => {
@@ -140,7 +147,6 @@ test("verifySelectedPorts retries briefly for transient TIME_WAIT occupancy", as
   await verifySelectedPorts(
     [{ label: "Web", port: 3000 }],
     {
-      managedPorts: new Set(),
       retries: 3,
       retryDelayMs: 1,
       probe: async () => {
@@ -153,20 +159,17 @@ test("verifySelectedPorts retries briefly for transient TIME_WAIT occupancy", as
   assert.equal(attempts, 3);
 });
 
-test("describePortOwner matches exact port and not :30001 for :3000", async () => {
-  const owner = await describePortOwner(3000, {
+test("readPortListeners selects the local port and includes every socket owner", async () => {
+  const sockets = await readPortListeners(3000, {
     runSs: async () =>
       [
         "State Recv-Q Send-Q Local Address:Port Peer Address:Port Process",
         'LISTEN 0 511 0.0.0.0:30001 0.0.0.0:* users:(("other",pid=9,fd=3))',
-        'LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=42,fd=3))'
+        'LISTEN 0 511 0.0.0.0:3000 0.0.0.0:* users:(("node",pid=42,fd=3),("worker",pid=43,fd=3))'
       ].join("\n")
   });
-  assert.equal(owner, "node pid=42");
-
-  const noMatch = await describePortOwner(3000, {
-    runSs: async () =>
-      'LISTEN 0 511 0.0.0.0:30001 0.0.0.0:* users:(("other",pid=9,fd=3))\n'
-  });
-  assert.equal(noMatch, "unknown process");
+  assert.deepEqual(sockets, [{
+    host: "0.0.0.0", port: 3000, ipv6Only: false,
+    owners: [{ name: "node", pid: 42 }, { name: "worker", pid: 43 }],
+  }]);
 });

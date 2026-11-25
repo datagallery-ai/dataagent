@@ -2,13 +2,13 @@ import assert from "node:assert/strict";
 import { execFile, spawn } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
-import { mkdtemp, readdir, rm } from "node:fs/promises";
+import { copyFile, mkdtemp, readdir, rm } from "node:fs/promises";
 import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import os from "node:os";
 import path from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 
 const { HttpAgent } = createRequire(new URL("../ui/web/package.json", import.meta.url))("@ag-ui/client");
@@ -103,8 +103,8 @@ function checkEvents(events, fails) {
 }
 
 async function main() {
-  for (const file of ["ui/web/.next/BUILD_ID", "ui/tui/dist/index.js"]) {
-    assert(existsSync(path.join(ROOT, file)), `Run npm run build first: missing ${file}`);
+  for (const file of ["ui/web/.next/BUILD_ID", "dist/server", "dist/tui"]) {
+    assert(existsSync(path.join(ROOT, file)), `Run make build first: missing ${file}`);
   }
   const temporary = await mkdtemp(path.join(os.tmpdir(), "dataagent-package-"));
   const provider = modelServer();
@@ -121,20 +121,35 @@ async function main() {
     const run = (command, args, options = {}) => exec(command, args, {
       cwd: ROOT, env, timeout: 180_000, maxBuffer: 2_000_000, ...options,
     });
-    const distribution = path.join(temporary, "dist");
-    console.log("[smoke:agentkit-package] build wheel and sdist");
-    await run(process.execPath, [path.join(ROOT, "scripts/package-agentkit.mjs"), distribution]);
-    const constraints = path.join(distribution, "constraints.txt");
-    const wheel = (await readdir(distribution)).find(name => name.endsWith(".whl"));
-    assert(wheel);
-    assert((await readdir(distribution)).some(name => name.endsWith(".tar.gz")));
+    const serverDir = path.join(ROOT, "dist/server");
+    const tuiDir = path.join(ROOT, "dist/tui");
+    const wheels = (await readdir(serverDir)).filter(name => !name.startsWith("."));
+    const tarballs = await readdir(tuiDir);
+    assert(wheels.length === 1 && wheels[0].endsWith(".whl"), "Expected one Server wheel");
+    assert(tarballs.length === 1 && tarballs[0].endsWith(".tgz"), "Expected one TUI tarball");
+    const [wheel] = wheels;
+    const [tarball] = tarballs;
+    await copyFile(path.join(serverDir, wheel), path.join(temporary, wheel));
+    await copyFile(path.join(tuiDir, tarball), path.join(temporary, tarball));
     const venv = path.join(temporary, "venv");
     await run("uv", ["venv", "--python", env.UV_PYTHON || "3.12", venv]);
     const bin = path.join(venv, process.platform === "win32" ? "Scripts" : "bin");
     const python = path.join(bin, process.platform === "win32" ? "python.exe" : "python");
     const cli = path.join(bin, process.platform === "win32" ? "dataagent.exe" : "dataagent");
-    console.log("[smoke:agentkit-package] install into a clean environment");
-    await run("uv", ["pip", "install", "--python", python, "-c", constraints, path.join(distribution, wheel)]);
+    console.log("[smoke:agentkit-package] install the wheel and TUI tarball outside the checkout");
+    await run("uv", ["pip", "install", "--python", python, "./" + wheel], { cwd: temporary });
+    const npmOptions = { cwd: temporary, shell: process.platform === "win32" };
+    await run("npm", ["install", "--no-audit", "--no-fund", "./" + tarball], npmOptions);
+    for (const command of ["dataagent-cli", "da"]) {
+      const help = await run("npm", ["exec", "--offline", "--", command, "--help"], npmOptions);
+      assert.match(help.stdout, /--runtime-url/);
+      assert.doesNotMatch(help.stdout, /--workspace/);
+    }
+    await assert.rejects(
+      run("npm", ["exec", "--offline", "--", "dataagent-cli", "--workspace", "."], npmOptions),
+      error => error.code === 1 && /dataagent serve.*--runtime-url/.test(error.stderr)
+    );
+    const tuiEntry = pathToFileURL(path.join(temporary, "node_modules/@datagallery/tui/ui/tui/dist/index.js"));
     const apiPort = await reservePort();
     const api = `http://127.0.0.1:${apiPort}`;
     await run(python, ["-I", "-c", `
@@ -204,7 +219,7 @@ asyncio.run(main())
       catch (error) { if (!fails) throw error; }
       checkEvents(events, fails);
     }
-    const { runTui } = await import("../ui/tui/dist/index.js");
+    const { runTui } = await import(tuiEntry.href);
     let sourceStarted = false;
     const startBackend = async () => {
       sourceStarted = true;

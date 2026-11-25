@@ -16,7 +16,7 @@ from typing import Annotated, Literal
 
 from pydantic import ValidationError, create_model
 
-from dataagent.bootstrap.paths import absolute, output_directory
+from dataagent.bootstrap.paths import absolute, output_directory, read_home_template
 from dataagent.config.declarations import StrictModel, normalize_hooks
 from dataagent.config.settings import (
     SECTION_MODELS,
@@ -24,7 +24,7 @@ from dataagent.config.settings import (
     SemanticSettings,
     Settings,
 )
-from dataagent.config.strict_yaml import check_yaml_path, read_yaml
+from dataagent.config.strict_yaml import check_yaml_path, parse_yaml, read_yaml
 from dataagent.diagnostics.errors import DataAgentError
 
 ENV_REFERENCE = re.compile(r"\$env\{([A-Za-z_][A-Za-z0-9_]*)\}")
@@ -159,13 +159,20 @@ def _expand_model_value(value, field_sources, location):
 
 
 def load_layers(
-    home: Path, env: Mapping, cli_config: Path | None, *, dotenv: Path | None = None
+    home: Path,
+    env: Mapping,
+    cli_config: Path | None,
+    *,
+    dotenv: Path | None = None,
+    preview_home: bool = False,
 ) -> tuple[Layer, ...]:
     """Load the selected product file: explicit `--config`, otherwise Home."""
     layers = []
     for scope, path in _config_sources(home, cli_config):
         try:
-            layer = _load_layer(scope, path, env=env, home=home, dotenv=dotenv)
+            layer = _load_layer(
+                scope, path, env=env, home=home, dotenv=dotenv, preview_home=preview_home
+            )
         except MissingEnvironmentError:
             raise  # Same handling as a missing model variable: fixable in .env, not a file error.
         except ValueError as error:
@@ -233,18 +240,26 @@ def _config_sources(home: Path, cli_config: Path | None) -> list[tuple[Scope, Pa
 
 
 def _load_layer(
-    scope: Scope, path: Path, *, env: Mapping, home: Path, dotenv: Path | None = None
+    scope: Scope,
+    path: Path,
+    *,
+    env: Mapping,
+    home: Path,
+    dotenv: Path | None = None,
+    preview_home: bool = False,
 ) -> Layer | None:
     """Read one file; only an absent automatic configuration may be skipped."""
     check_yaml_path(path)
     if not path.exists() and not path.is_symlink():
         if scope == "cli":
             raise ValueError(f"Configuration file does not exist: {path}")
-        return None
-    if not path.is_file():
+        if scope != "user" or not preview_home:
+            return None
+        raw = parse_yaml(read_home_template("config.yaml"), path)
+    elif not path.is_file():
         raise ValueError(f"Expected a configuration file: {path}")
-
-    raw = read_yaml(path)
+    else:
+        raw = read_yaml(path)
     if scope == "plugin" and (
         set(raw) - {"plugins"}
         or not isinstance(raw.get("plugins", {}), dict)
