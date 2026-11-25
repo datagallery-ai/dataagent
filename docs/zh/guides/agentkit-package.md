@@ -1,6 +1,6 @@
 # Python 包部署
 
-DataAgent 的 Python 发行包名为 `datagallery-dataagent`，导入名和命令名都是 `dataagent`。可构建为 wheel 和源码包，包含 API、A2A、SDK、Home 模板、提示词与内置插件。后端运行需要 Python 3.12。Web/TUI 使用 Node.js ≥22.12.0，通过 HTTP 连接 Server。TUI 可单独用 npm 包安装，Web 从源码构建。
+DataAgent 的 Python 发行包名为 `datagallery-dataagent`，导入名和命令名都是 `dataagent`。可构建为 wheel 和源码包，包含 API、A2A、SDK、Home 模板、提示词与内置插件。后端支持 Python 3.11 和 3.12。Web/TUI 使用 Node.js ≥22.12.0，通过 HTTP 连接 Server。TUI 可单独用 npm 包安装，Web 从源码构建。
 
 ## 构建
 
@@ -17,13 +17,13 @@ wheel 版本来自 `pyproject.toml`。安装时按包元数据解析运行依赖
 将 wheel 复制到部署目录，该目录无需项目源码。在该目录执行：
 
 ```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python datagallery_dataagent-0.1.0-py3-none-any.whl
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python datagallery_dataagent-0.2.0-py3-none-any.whl
 ```
 
-已有 pip 的虚拟环境也可使用 `python -m pip install datagallery_dataagent-0.1.0-py3-none-any.whl`；前述 `uv pip` 命令不要求目标环境安装 pip。Windows 的解释器和 CLI 位于 `.venv\Scripts\`。
+已有 pip 的虚拟环境也可使用 `python -m pip install datagallery_dataagent-0.2.0-py3-none-any.whl`；前述 `uv pip` 命令不要求目标环境安装 pip。Windows 的解释器和 CLI 位于 `.venv\Scripts\`。
 
-`UV_PYTHON` 等环境变量供环境准备工具选择解释器；安装后的 `dataagent` 命令由所在虚拟环境的 Python 执行，不会根据这些变量切换运行中的解释器。包声明的 Python 范围仍为 3.12.x。
+`UV_PYTHON` 等环境变量供环境准备工具选择解释器；安装后的 `dataagent` 命令由所在虚拟环境的 Python 执行，不会根据这些变量切换运行中的解释器。包声明的 Python 范围为 `>=3.11,<3.13`。
 
 配置部署机器可达的模型服务，再启动安装后的命令：
 
@@ -54,10 +54,10 @@ export LLM_API_KEY=replace-with-your-key
 
 ```bash
 uv pip install --python .venv/bin/python \
-  "./datagallery_dataagent-0.1.0-py3-none-any.whl[video]"
+  "./datagallery_dataagent-0.2.0-py3-none-any.whl[video]"
 ```
 
-全部需要时，将安装参数改为 `"./datagallery_dataagent-0.1.0-py3-none-any.whl[all]"`。源码运行先执行 `uv sync --no-dev --extra video`，再用 `uv run --no-sync dataagent serve` 启动；不加 `--no-dev` 时默认包含开发组，全部功能加 `--extra all`。同步遵循 `uv sync` 的精确语义：每次显式选择所需 extras，未选中的包会被移除。直接用 uv 启动时加 `--no-sync`，避免重新解析源码锁文件。
+全部需要时，将安装参数改为 `"./datagallery_dataagent-0.2.0-py3-none-any.whl[all]"`。源码运行先执行 `uv sync --no-dev --extra video`，再用 `uv run --no-sync dataagent serve` 启动；不加 `--no-dev` 时默认包含开发组，全部功能加 `--extra all`。同步遵循 `uv sync` 的精确语义：每次显式选择所需 extras，未选中的包会被移除。直接用 uv 启动时加 `--no-sync`，避免重新解析源码锁文件。
 
 core 中的视频错误提示沿用上游原文；若提示安装 `deepagents[video]`，本产品应安装 `datagallery-dataagent[video]`，无需另装 Deep Agents。
 

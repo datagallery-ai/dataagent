@@ -132,7 +132,7 @@ async function main() {
     await copyFile(path.join(serverDir, wheel), path.join(temporary, wheel));
     await copyFile(path.join(tuiDir, tarball), path.join(temporary, tarball));
     const venv = path.join(temporary, "venv");
-    await run("uv", ["venv", "--python", env.UV_PYTHON || "3.12", venv]);
+    await run("uv", ["venv", venv]);
     const bin = path.join(venv, process.platform === "win32" ? "Scripts" : "bin");
     const python = path.join(bin, process.platform === "win32" ? "python.exe" : "python");
     const cli = path.join(bin, process.platform === "win32" ? "dataagent.exe" : "dataagent");

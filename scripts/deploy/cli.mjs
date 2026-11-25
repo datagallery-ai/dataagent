@@ -665,11 +665,11 @@ export async function runDeploymentDoctor(root, options = {}) {
     }
   }
   try {
-    const python = env.UV_PYTHON || "3.12";
-    const result = await run("uv", ["python", "find", python, "--no-python-downloads", "--show-version"], { cwd: root, env, timeout: 5000 });
+    const requestedPython = env.UV_PYTHON ? [env.UV_PYTHON] : [];
+    const result = await run("uv", ["python", "find", ...requestedPython, "--no-python-downloads", "--show-version"], { cwd: root, env, timeout: 5000 });
     record(`python local: ${result.stdout.trim()}`);
   } catch {
-    record("python local: missing (set UV_PYTHON to a Python 3.12 executable, or configure UV_PYTHON_INSTALL_MIRROR)");
+    record("python local: missing (set UV_PYTHON to a Python 3.11 or 3.12 executable, or configure UV_PYTHON_INSTALL_MIRROR)");
   }
 
   const inspection = await inspectManagedRuntime(root);

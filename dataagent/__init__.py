@@ -11,7 +11,7 @@ from dataagent.bootstrap.config_files import ConfigurationLoadError
 from dataagent.config.strict_yaml import read_yaml
 from dataagent.diagnostics.render import safe_error
 
-__version__ = "0.1.0"
+__version__ = "0.2.0"
 
 # Public SDK: prepare a PreparedRuntime, create an Agent, call it. Host interfaces live in
 # dataagent.host, raw graph assembly in dataagent.lowlevel.

@@ -23,7 +23,7 @@ The current backend has no registration/login, Web model management, datasource 
 
 ## 🚀 Run It Locally
 
-Requirements: Node.js ≥22.12.0 and uv; the backend uses Python 3.12. Install and run in the same environment. Do not share `node_modules` between Windows and WSL. This version has no Docker / Compose deployment.
+Requirements: Node.js ≥22.12.0 and uv; the backend supports Python 3.11 and 3.12. Install and run in the same environment. Do not share `node_modules` between Windows and WSL. This version has no Docker / Compose deployment.
 
 ### Linux one-click deployment
 
@@ -51,7 +51,7 @@ Closing a terminal or stopping log following does not stop the managed service. 
 
 For native Windows, macOS, other Linux distributions, or manual configuration:
 
-Before installation, ensure Node.js ≥22.12.0 and uv are on `PATH`. On restricted networks, select an available Python 3.12 interpreter and download sources using the [manual preparation steps](docs/en/quick-start.md#1-prepare-tools-and-download-sources) before running the installation commands below.
+Before installation, ensure Node.js ≥22.12.0 and uv are on `PATH`. On restricted networks, select an available Python 3.11 or 3.12 interpreter and download sources using the [manual preparation steps](docs/en/quick-start.md#1-prepare-tools-and-download-sources) before running the installation commands below.
 
 ```bash
 npm install --include=dev

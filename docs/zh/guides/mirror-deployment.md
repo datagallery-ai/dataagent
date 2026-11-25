@@ -4,16 +4,16 @@
 
 ## 先准备制品与环境
 
-需要 Node.js ≥22.12.0、npm、uv，以及 Python 3.12。已有可执行文件放在当前用户的 `PATH` 即可，脚本不会重复安装。若需安装系统依赖，确保配置的 apt / dnf / yum 仓库可达。
+需要 Node.js ≥22.12.0、npm、uv，以及 Python 3.11 或 3.12。已有可执行文件放在当前用户的 `PATH` 即可，脚本不会重复安装。若需安装系统依赖，确保配置的 apt / dnf / yum 仓库可达。
 
 - **Node**：优先由运维预装。如需脚本安装，导出 `DATAAGENT_NODE_PACKAGE_URL`，指向匹配系统和架构、包含 Node 与 npm 的 `.deb` 或 `.rpm` 文件。脚本用现有包管理器安装该文件，不配置 NodeSource；包的系统依赖仍由系统仓库提供。不设置时沿用公网 NodeSource。官方 tar 包应预先解压并加入 `PATH`。
 - **uv**：保持预装方式，不增加自动安装链路。可以从自定义镜像下载匹配平台的官方 uv 压缩包，解压后将 `uv`（以及可选的 `uvx`）安装到用户的 `PATH`。例如把解压目录中的文件安装到 `$HOME/.local/bin/uv`，再 `export PATH="$HOME/.local/bin:$PATH"`。也可使用 PyPI 镜像上的 uv 包，按 [uv 安装说明](https://docs.astral.sh/uv/getting-started/installation/) 安装。下载器、安装脚本及其后续制品都应来自可达的下载源。
-- **Python**：已有 Python 3.12 时导出 `UV_PYTHON=/opt/python3.12/bin/python3.12`。也支持 `UV_PYTHON=3.12`，由 uv 发现本地解释器。不另写解释器搜索逻辑。
+- **Python**：以 Python 3.11 为例，导出 `UV_PYTHON=/opt/python3.11/bin/python3.11`。也支持 `UV_PYTHON=3.11`，由 uv 发现本地解释器。不另写解释器搜索逻辑。
 
 使用已有解释器时，建议显式关闭 Python 下载，缺失即报错：
 
 ```bash
-export UV_PYTHON=/opt/python3.12/bin/python3.12
+export UV_PYTHON=/opt/python3.11/bin/python3.11
 export UV_PYTHON_DOWNLOADS=never
 ```
 

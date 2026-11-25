@@ -230,7 +230,7 @@ plugins:
 
 ### 6.1 前置条件
 
-需安装 uv 与 Node.js ≥22.12.0，Python 3.12 由安装流程自动下载。手动 npm 方式在 Linux / macOS / Windows 均可用；Linux 另有 `./deploy.sh` 一键部署（见仓库 README）。
+需安装 uv 与 Node.js ≥22.12.0。uv 会选择可用的 Python 3.11 或 3.12，也可按配置下载解释器。手动 npm 方式在 Linux / macOS / Windows 均可用；Linux 另有 `./deploy.sh` 一键部署（见仓库 README）。
 
 ### 6.2 环境变量
 

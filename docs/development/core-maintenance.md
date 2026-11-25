@@ -6,7 +6,7 @@
 
 子代理状态键与 deepagents 0.7.15 对齐。仓库不提供自动同步脚本。升级时对照上游行为，再运行 `tests`。
 
-`dataagent.core.__version__` 和图元数据中的 `dataagent_versions` 都是 `0.1.0.dev0`，不读取安装元数据。PyPI 包版本写在 `pyproject.toml`，为 `0.1.0`。
+`dataagent.core.__version__` 和图元数据中的 `dataagent_versions` 都是 `0.1.0.dev0`，不读取安装元数据。PyPI 包版本写在 `pyproject.toml`，为 `0.2.0`。
 
 ## 代码分层
 

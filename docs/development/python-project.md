@@ -6,11 +6,11 @@
 
 ## 出包与独立安装
 
-支持标准 wheel 和源码包。仅运行安装后的后端需要 Python 3.12；Web/TUI 通过 HTTP 连接，前端运行环境单独准备。构建、安装、前端连接及错误检查见 [发布](release.md) 和 [包部署](../zh/guides/agentkit-package.md)。
+支持标准 wheel 和源码包。仅运行安装后的后端需要 Python 3.11 或 3.12；Web/TUI 通过 HTTP 连接，前端运行环境单独准备。构建、安装、前端连接及错误检查见 [发布](release.md) 和 [包部署](../zh/guides/agentkit-package.md)。
 
 ## 快速启动
 
-源码方式需要 uv 和 Node.js ≥22.12.0，后端使用 Python 3.12，由 uv 发现已有解释器或按配置下载。在仓库根目录：
+源码方式需要 uv 和 Node.js ≥22.12.0，后端支持 Python 3.11 和 3.12，由 uv 发现已有解释器或按配置下载。在仓库根目录：
 
 ```bash
 npm install --include=dev

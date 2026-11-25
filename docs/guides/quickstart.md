@@ -7,7 +7,7 @@
 - macOS 或 Linux
 - uv
 - Node.js 22+
-- Python 3.12 和 uv
+- Python 3.11 或 3.12，以及 uv
 
 请为 DataAgent 使用独立的 Python 环境。包的导入名是 `dataagent`。
 
