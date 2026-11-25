@@ -285,6 +285,96 @@ def test_ingestion_updating_and_failed_keep_distinct_status(tmp_path, monkeypatc
     assert all(call["headers"] == {"X-Semantic-Scenario": "traffic_insight"} for call in _Http.calls)
 
 
+@pytest.mark.parametrize("trace_filter", [{}, {"traceId": None}])
+@pytest.mark.parametrize("count", [0, 1, 3, 100])
+def test_ingestion_status_lists_first_page(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, trace_filter: dict[str, Any], count: int
+) -> None:
+    service = _routed_service(
+        tmp_path,
+        {"business_twin": "http://default.example:1", "traffic_insight": "http://traffic.example:2"},
+        scenarios={"traffic_insight": "traffic_schema"},
+    )
+    statuses = ["normal", "updating", "failed"]
+    items = [{"traceId": f"T{i}", "status": statuses[i % 3]} for i in range(count)]
+    downstream = {
+        "items": [
+            {**item, "ingestionScenario": "traffic_schema", "createdAt": "2026-09-24T04:00:00Z"} for item in items
+        ],
+        "limit": 100,
+        "offset": 0,
+        "total": 150,
+    }
+
+    with _install(monkeypatch, service) as client:
+        _Http.response = _Response(downstream)
+        response = client.post(
+            OPERATION_PATH,
+            json={"type": "ingestion_status", "content": {"scenario": "traffic_insight", **trace_filter}},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == {"result": {"success": True, "items": items}}
+    assert _Http.calls == [
+        {
+            "url": "http://traffic.example:2/api/semantic/v1/ingestion-traces",
+            "params": {"limit": 100, "offset": 0},
+            "headers": {"X-Semantic-Scenario": "traffic_schema"},
+        }
+    ]
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        None,
+        {},
+        {"items": None},
+        {"items": [None]},
+        {"items": [{"status": "normal"}]},
+        {"items": [{"traceId": "", "status": "normal"}]},
+        {"items": [{"traceId": "T1", "status": "queued"}]},
+        {"items": [{"traceId": "T1", "status": []}]},
+        {"items": [{"traceId": "T1", "status": "normal"}, {"traceId": "T2"}]},
+    ],
+)
+def test_ingestion_status_list_rejects_invalid_downstream_payload(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, payload: Any
+) -> None:
+    service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
+
+    with _install(monkeypatch, service) as client:
+        _Http.response = _Response(payload)
+        response = client.post(
+            OPERATION_PATH, json={"type": "ingestion_status", "content": {"scenario": "traffic_insight"}}
+        )
+
+    _assert_failure(response, "failed to query ingestion status")
+
+
+def test_ingestion_status_list_preserves_downstream_error(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+    service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
+
+    with _install(monkeypatch, service) as client:
+        _Http.response = _Response(
+            {"errorCode": "SEMANTIC_UNAVAILABLE", "errorMessage": "service unavailable"}, status_code=503
+        )
+        response = client.post(
+            OPERATION_PATH, json={"type": "ingestion_status", "content": {"scenario": "traffic_insight"}}
+        )
+
+    assert response.status_code == 503
+    assert response.json() == {
+        "result": {
+            **_AGENT_FAILURE,
+            "code": "SEMANTIC_UNAVAILABLE",
+            "message": "service unavailable",
+            "http_status": 503,
+        }
+    }
+    assert _Http.calls[0]["headers"] is None
+
+
 def test_ingestion_status_omits_header_when_scenario_unset(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
     service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
 
@@ -356,13 +446,16 @@ def test_semantic_status_unknown_scenario_is_422(tmp_path, monkeypatch: pytest.M
     assert _Http.calls == []
 
 
-def test_ingestion_status_unknown_scenario_is_422(tmp_path, monkeypatch: pytest.MonkeyPatch) -> None:
+@pytest.mark.parametrize("trace_filter", [{}, {"traceId": "T1"}])
+def test_ingestion_status_unknown_scenario_is_422(
+    tmp_path, monkeypatch: pytest.MonkeyPatch, trace_filter: dict[str, Any]
+) -> None:
     service = _routed_service(tmp_path, {"traffic_insight": "http://traffic.example:2"})
 
     with _install(monkeypatch, service) as client:
         response = client.post(
             OPERATION_PATH,
-            json={"type": "ingestion_status", "content": {"scenario": "missing", "traceId": "T1"}},
+            json={"type": "ingestion_status", "content": {"scenario": "missing", **trace_filter}},
         )
 
     assert response.status_code == 422
@@ -373,6 +466,7 @@ def test_ingestion_status_unknown_scenario_is_422(tmp_path, monkeypatch: pytest.
 @pytest.mark.parametrize(
     ("trace_id", "error_type"),
     [
+        ("", "string_too_short"),
         ("A" * 129, "string_too_long"),
         ("\U00024025" * 277, "string_too_long"),
         ("T1\n", "string_pattern_mismatch"),

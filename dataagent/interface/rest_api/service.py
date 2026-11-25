@@ -61,9 +61,27 @@ def _trace_status(payload: Any) -> str | None:
     if not isinstance(items, list) or len(items) != 1 or not isinstance(items[0], dict):
         return None
     status = items[0].get("status")
-    if status not in _INGESTION_COMPLETED:
+    if not isinstance(status, str) or status not in _INGESTION_COMPLETED:
         return None
     return str(status)
+
+
+def _trace_items(payload: Any) -> list[dict[str, str]] | None:
+    """Read a page of trace IDs and statuses; an empty page is a valid result."""
+    if not isinstance(payload, dict) or not isinstance(payload.get("items"), list):
+        return None
+    items = []
+    for item in payload["items"]:
+        if not isinstance(item, dict):
+            return None
+        trace_id = item.get("traceId")
+        status = item.get("status")
+        if not isinstance(trace_id, str) or not trace_id.strip():
+            return None
+        if not isinstance(status, str) or status not in _INGESTION_COMPLETED:
+            return None
+        items.append({"traceId": surrogate_safe(trace_id), "status": status})
+    return items
 
 
 def _ingestion_result(status: str) -> dict[str, Any]:
@@ -312,8 +330,8 @@ class DataAgentService:
             return {"result": {"success": True, "status": "UP"}}
         return self._format_downstream_body(payload, status_code=200, fallback=_SEMANTIC_NOT_UP, agent=agent)
 
-    async def ingestion_status(self, scenario: str, trace_id: str) -> dict[str, Any]:
-        """Report one ingestion job. ``normal`` is complete; ``updating`` and ``failed`` stay distinct."""
+    async def ingestion_status(self, scenario: str, trace_id: str | None = None) -> dict[str, Any]:
+        """Report one job by trace ID, or the first 100 trace IDs and statuses."""
         agent: DataAgent | None = None
         try:
             agent = self._select(scenario)
@@ -321,7 +339,7 @@ class DataAgentService:
                 self._semantic_get,
                 agent,
                 "ingestion-traces",
-                params={"traceId": trace_id},
+                params={"limit": 100, "offset": 0} if trace_id is None else {"traceId": trace_id},
             )
         except UnknownScenarioError:
             raise
@@ -335,6 +353,11 @@ class DataAgentService:
         except Exception as exc:
             logger.exception("ingestion status failed: {}", {"type": exc.__class__.__name__})
             return self._format_error(_INGESTION_UNAVAILABLE, agent=agent)
+        if trace_id is None:
+            items = _trace_items(payload)
+            if items is None:
+                return self._format_error(_INGESTION_UNAVAILABLE, agent=agent)
+            return {"result": {"success": True, "items": items}}
         status = _trace_status(payload)
         if status is None:
             return self._format_error(_INGESTION_UNAVAILABLE, agent=agent)
