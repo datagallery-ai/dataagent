@@ -6,7 +6,7 @@
 # ============================================================================
 """metadata_recall 检索不限次 + 口径对照提示 UT。
 
-取消同 query 熔断与拒后业务词检索
+（用户指令）：取消同 query 熔断与拒后业务词检索
 轮次帽——检索次数不再受任何硬限制（防跑偏兜底由 AGENT_CONFIG.max_iter 与
 deadline 守卫承担）。保留口径对照提示（拒后台账口径 token 对照
 已检索池，mr 结果头部注入"优先核对"候选）。
@@ -194,3 +194,79 @@ def test_pool_note_skips_rejected_and_caps_three(monkeypatch, tmp_path):
     # 恰好 3 张对照候选
     assert msg.count("db.t_") == 3
     assert "db.t_other_dm" not in msg
+
+
+# ── 口径对照平分决胜（新扩池优先+服务位次，防字典序截断回归）────────────
+
+
+def _write_pool_context_file(tmp_path: Path, name: str, tables: list[str],
+                             created_at: str = "") -> None:
+    (tmp_path / ".semantic").mkdir(parents=True, exist_ok=True)
+    payload: dict[str, Any] = {"query": "q", "tables": tables}
+    if created_at:
+        payload["created_at"] = created_at
+    (tmp_path / ".semantic" / name).write_text(
+        json.dumps(payload, ensure_ascii=False), encoding="utf-8"
+    )
+
+
+def test_pool_note_tiebreak_prefers_newest_expand_and_service_order(monkeypatch, tmp_path):
+    """单 token 弱口径平分决胜：新扩池文件里的服务前排表优先于字典序更靠前的
+    老池表（防"golden 恰列字典序第 4 被上限 3 截断"回归）。
+
+    构造复刻实测形态：基础池文件（早 created_at）带 2 张字典序靠前的 app 表，
+    拒后扩池文件（晚 created_at）带 3 张 app 表（服务位次 0/1/2，其中位次 1
+    是口径正解形态表）——期望 top3 全部来自扩池文件且按位次排。
+    """
+    stubs = _install_stubs(monkeypatch, tmp_path)
+    _write_rejected_ledger(tmp_path, rounds=1, want_tokens=["app"],
+                           tables=["db.ads_rejected_app_dm"])
+    _write_pool_context_file(
+        tmp_path, "semantic_retrieve_context_base01.json",
+        ["db.a_app_old1_dm", "db.b_app_old2_dm", "db.ads_rejected_app_dm"],
+        created_at="2026-11-19T02:40:14.000000+00:00",
+    )
+    _write_pool_context_file(
+        tmp_path, "semantic_retrieve_context_new01.json",
+        ["db.ads_noise_app_dm", "db.z_gold_app_target_dm", "db.c_app_new3_dm"],
+        created_at="2026-11-19T02:57:59.000000+00:00",
+    )
+    r = _call("查找业务词新组合相关的表")
+    msg = r["original_msg"]
+    assert msg.startswith("【检索口径对照】")
+    # 新扩池三张按服务位次进 top3（noise@0、golden@1、new3@2）
+    assert "db.z_gold_app_target_dm" in msg
+    assert "db.ads_noise_app_dm" in msg
+    assert "db.c_app_new3_dm" in msg
+    # 老池字典序靠前的两张被新文件决胜挤出（上限 3）
+    assert "db.a_app_old1_dm" not in msg
+    assert "db.b_app_old2_dm" not in msg
+    # 被拒表不进对照候选
+    assert "db.ads_rejected_app_dm 描述" not in msg
+
+
+def test_pool_note_tiebreak_within_same_file_uses_service_position(monkeypatch, tmp_path):
+    """同文件内平分（同 created_at）→ 服务位次决胜：位次靠前者先进 top3。"""
+    stubs = _install_stubs(monkeypatch, tmp_path)
+    _write_rejected_ledger(tmp_path, rounds=1, want_tokens=["app"],
+                           tables=["db.ads_rejected_app_dm"])
+    # 同一文件 4 张单 token 命中表（位次 0/1/2/3）+ 无 created_at 的第二文件
+    # 一张字典序最靠前的表——同池同分时位次优先于表名
+    _write_pool_context_file(
+        tmp_path, "semantic_retrieve_context_same01.json",
+        ["db.z_app_pos0_dm", "db.a_app_pos1_dm", "db.m_app_pos2_dm", "db.b_app_pos3_dm"],
+        created_at="2026-11-19T03:00:00.000000+00:00",
+    )
+    _write_pool_context_file(
+        tmp_path, "semantic_retrieve_context_same02.json",
+        ["db.aaa_app_nocstamp_dm"],
+    )
+    r = _call("查找业务词新组合相关的表")
+    msg = r["original_msg"]
+    assert msg.startswith("【检索口径对照】")
+    assert "db.z_app_pos0_dm" in msg
+    assert "db.a_app_pos1_dm" in msg
+    assert "db.m_app_pos2_dm" in msg
+    # 第 4 位与无 created_at 的表都被挤出
+    assert "db.b_app_pos3_dm" not in msg
+    assert "db.aaa_app_nocstamp_dm" not in msg

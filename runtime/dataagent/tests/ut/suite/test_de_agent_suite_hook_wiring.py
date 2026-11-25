@@ -28,6 +28,8 @@ SUITE_NAME = "data_engineering"  # suite.yaml manifest name；目录名为 de_ag
 
 HOOK_WIRING = (
     ("hooks.hitl_auto_resolver.hitl_auto_resolver", "nodes.human_feedback.pre"),
+    ("hooks.deadline_guard.deadline_guard_pre", "nodes.planner.pre"),
+    ("hooks.deadline_guard.deadline_guard", "nodes.planner.post"),
     ("hooks.text_question_guard.text_question_guard", "nodes.planner.post"),
 )
 

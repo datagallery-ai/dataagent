@@ -331,6 +331,76 @@ class TestFollowupAskSkip:
         assert "complete" not in result
 
 
+class TestFrameworkTailStrip:
+    """评测框架"资源目录：…"尾巴不进检索 query/缓存键。
+
+    实证（q36 r2）：基础池 context 文件的 query 带着 work_dir 路径与产物
+    说明尾巴（adapter _query_text 追加），稀释语义相关性且 sha256 缓存键
+    携带运行期 stamp。剥离标记与 resolver 复述侧（_customer_restate_query）
+    一致；agent 的 user_query 消息保留尾巴（工作区指引有操作意义）。
+    """
+
+    TAILED_QUERY = (
+        "聚合各应用在NLU二、三级类目和标签下的搜索文本、得分以及两者的键值对序列。"
+        "\n\n资源目录：/home/zhanghao/.evo_eval/agent/20261123_1013_dab4/35\n"
+        "这个也是你的工作区，所有改动必须在这个目录内。\n"
+        "请提交以下评测产物，并严格使用指定的产物名称与格式：\n"
+        "1. sql: sql（必须，允许多份）；SQL 交付文件，允许多份"
+    )
+    CLEAN_QUERY = "聚合各应用在NLU二、三级类目和标签下的搜索文本、得分以及两者的键值对序列。"
+
+    def test_resolve_strips_tail_all_sources(self):
+        """get_current_query 与 state 兜底两路来源都剥尾巴。"""
+        from dataagent.core.flex.hooks.semantic_retrieve import _resolve_original_query
+
+        state = {"parent_user_query": self.TAILED_QUERY}
+        assert _resolve_original_query(state, MagicMock()) == self.CLEAN_QUERY
+        state2 = {"user_query": self.TAILED_QUERY}
+        assert _resolve_original_query(state2, MagicMock()) == self.CLEAN_QUERY
+
+    def test_clean_query_unchanged(self):
+        from dataagent.core.flex.hooks.semantic_retrieve import _resolve_original_query
+
+        state = {"parent_user_query": self.CLEAN_QUERY}
+        assert _resolve_original_query(state, MagicMock()) == self.CLEAN_QUERY
+
+    def test_base_retrieval_uses_clean_query(self):
+        """端到端：缓存查找与语义服务调用都用剥离后的 query，
+        而 agent 的 user_query 消息保留尾巴原样（注入块拼在其后）。"""
+        from dataagent.core.flex.hooks import semantic_retrieve as sr
+
+        state = {"user_query": self.TAILED_QUERY, "messages": [], "workspace": None}
+        with tempfile.TemporaryDirectory() as tmpdir:
+            state["workspace"] = tmpdir
+            with patch(
+                "dataagent.core.flex.hooks.semantic_retrieve.get_current_query",
+                return_value=self.TAILED_QUERY,
+            ), patch(
+                "dataagent.core.flex.hooks.semantic_retrieve.read_semantic_retrieve_context_cache",
+                return_value=None,
+            ) as mock_cache, patch(
+                "dataagent.core.flex.hooks.semantic_retrieve.SemanticServiceClient"
+            ) as mock_client_cls, patch(
+                "dataagent.core.flex.hooks.semantic_retrieve.get_semantic_retrieve_context",
+                return_value=_payload(),
+            ) as mock_retrieve:
+                result = sr.semantic_retrieve_context_loader(state, MagicMock())
+        mock_client_cls.from_config.assert_called_once()
+        assert mock_cache.call_args.args[0] == self.CLEAN_QUERY
+        assert mock_retrieve.call_args.args[0] == self.CLEAN_QUERY
+        # agent 消息保留尾巴（工作区指引）+ 注入块照常
+        assert result["user_query"].startswith(self.TAILED_QUERY)
+        assert "<semantic_retrieve_context>" in result["user_query"]
+        assert "db.new_candidate_dm" in result["user_query"]
+
+    def test_expand_query_strips_tail(self):
+        """扩池提取防御：业务词后混入尾巴（mr 增强 query 内嵌原文）时剥掉。"""
+        q = _extract_expand_query(
+            "用户本轮的检索需求：NLU 标签 序列。\n资源目录：/home/zhanghao/.evo_eval/agent/x/35\n产物说明"
+        )
+        assert q == "NLU 标签 序列"
+
+
 class TestBasePoolRejectedLedgerFilter:
     """基础池/扩池注入前的被拒表过滤（持久台账消费）。
 
@@ -460,3 +530,106 @@ class TestBasePoolRejectedLedgerFilter:
             assert "db.new_candidate_dm" in injected
             assert "db.ads_wrong_dm 描述" not in injected
             assert "db.ledger_rejected_dm 描述" not in injected
+
+
+class TestExtraInjectionSyncsContextIR:
+    """扩池注入的 context IR 同步。
+
+    planner prompt 的 user_query 取数自 context IR 初始节点而非
+    state["user_query"]——只改 state 不同步 IR 时，扩池块（含拒后回池的
+    golden 表）从未进入任何 planner 上下文，注入等于空注入。
+    首注入（_inject_semantic_retrieve_context）本就双写；本组 pin 扩池
+    注入与 runtime 缺席路径。
+    """
+
+    def _make_context_mock(self):
+        context = MagicMock()
+        context.initial_pt = "task_node"
+        return context
+
+    def test_extra_injection_syncs_augmented_query_to_ir(self):
+        from dataagent.core.flex.hooks.semantic_retrieve import (
+            _inject_extra_retrieve_context,
+        )
+
+        state = {
+            "user_query": (
+                f"{BUSINESS_QUERY}\n\n<semantic_retrieve_context>\n主 context\n"
+                "</semantic_retrieve_context>"
+            ),
+            "messages": [],
+        }
+        context = self._make_context_mock()
+        with patch(
+            "dataagent.core.flex.hooks.semantic_retrieve.get_context_for_flex_state",
+            return_value=context,
+        ):
+            result = _inject_extra_retrieve_context(state, _payload(), MagicMock())
+        assert result["user_query"].count("<semantic_retrieve_context>") == 2
+        context.modify_node.assert_called_once_with(
+            graph_node_label="task_node", changes={"query": result["user_query"]}
+        )
+        # 同步值必须与 state 写入值一致（同一 augmented_query 双写）
+        synced_query = context.modify_node.call_args.kwargs["changes"]["query"]
+        assert synced_query == result["user_query"]
+        assert "db.new_candidate_dm" in synced_query
+
+    def test_extra_injection_without_runtime_skips_sync_gracefully(self):
+        from dataagent.core.flex.hooks.semantic_retrieve import (
+            _inject_extra_retrieve_context,
+        )
+
+        state = {
+            "user_query": (
+                f"{BUSINESS_QUERY}\n\n<semantic_retrieve_context>\n主 context\n"
+                "</semantic_retrieve_context>"
+            ),
+            "messages": [],
+        }
+        with patch(
+            "dataagent.core.flex.hooks.semantic_retrieve.get_context_for_flex_state",
+            return_value=None,
+        ) as mock_get_context:
+            result = _inject_extra_retrieve_context(state, _payload(), None)
+        assert result["user_query"].count("<semantic_retrieve_context>") == 2
+        mock_get_context.assert_called_once()
+
+    def test_expand_flow_threads_runtime_to_ir_sync(self):
+        """完整扩池链路（_maybe_expand_retrieve_after_rejection）带 runtime 时
+        扩池块同步进 IR——q36 修复的链路级 pin（签名 threading 不丢 runtime）。"""
+        context = self._make_context_mock()
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = _make_workspace(tmpdir, marker=_marker())
+            state = {
+                "user_query": (
+                    f"{BUSINESS_QUERY}\n\n<semantic_retrieve_context>\n主 context\n"
+                    "</semantic_retrieve_context>"
+                ),
+                "messages": [],
+            }
+            with patch(
+                "dataagent.core.flex.hooks.semantic_retrieve.SemanticServiceClient"
+            ) as mock_client_cls, patch(
+                "dataagent.core.flex.hooks.semantic_retrieve.get_semantic_retrieve_context",
+                return_value=_payload(),
+            ), patch(
+                "dataagent.core.flex.hooks.semantic_retrieve.read_semantic_retrieve_context_cache",
+                return_value=None,
+            ), patch(
+                "dataagent.core.flex.hooks.semantic_retrieve.get_context_for_flex_state",
+                return_value=context,
+            ):
+                mock_client_cls.from_config.return_value = MagicMock()
+                result = _maybe_expand_retrieve_after_rejection(
+                    state,
+                    str(state["user_query"]).split("\n")[0],
+                    root,
+                    MagicMock(),
+                    None,
+                    None,
+                    MagicMock(),
+                )
+        assert result["user_query"].count("<semantic_retrieve_context>") == 2
+        context.modify_node.assert_called_once_with(
+            graph_node_label="task_node", changes={"query": result["user_query"]}
+        )

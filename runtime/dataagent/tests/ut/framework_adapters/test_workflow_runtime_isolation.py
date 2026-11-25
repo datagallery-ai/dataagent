@@ -25,6 +25,7 @@ from dataagent.core.cbb import BaseNode, BaseRouter, BaseState
 from dataagent.core.cbb.agent_env import Env
 from dataagent.core.cbb.runtime import Runtime
 from dataagent.core.flex.nodes.planner import Planner
+from dataagent.core.flex.workflow.state import FlexState
 from dataagent.core.framework_adapters.runtime.context import get_current_runtime
 from dataagent.core.framework_adapters.runtime.workflow import LangGraphWorkflow
 from dataagent.core.framework_adapters.runtime.workflow_backend import LangGraphWorkflowBackend
@@ -181,3 +182,62 @@ def test_runtime_workspace_is_not_stored_on_shared_env(tmp_path: Path) -> None:
 
     assert runtime_a.workspace_dir == workspace_a
     assert runtime_b.workspace_dir == workspace_b
+
+
+class _HitlBudgetProbeNode(BaseNode):
+    """Record what an in-graph consumer (resolver pre-hook / planner) sees for hitl_budget."""
+
+    def __init__(self, sink: dict[str, Any]) -> None:
+        super().__init__(name="hitl_probe", chat_model_name=None)
+        self._sink = sink
+
+    async def _aprocess(self, state: Any, runtime: Any = None) -> dict[str, Any]:
+        from dataagent.core.flex.hooks.hitl_common import get_hitl_budget
+
+        self._sink["raw"] = state.get("hitl_budget", "MISSING")
+        self._sink["budget"] = get_hitl_budget(state)
+        return {}
+
+
+class _HitlBudgetProbeRouter(BaseRouter):
+    """Route the single probe node directly to the graph end."""
+
+    def __init__(self) -> None:
+        super().__init__(entry_point="hitl_probe")
+        self.add_custom_rule("hitl_probe", lambda _state: "__end__")
+
+
+def _run_hitl_budget_probe(initial_state: dict[str, Any]) -> dict[str, Any]:
+    """Drive one ainvoke through LangGraphWorkflow with the real FlexState schema."""
+    sink: dict[str, Any] = {}
+    workflow = LangGraphWorkflow(
+        nodes=[_HitlBudgetProbeNode(sink)],
+        router=_HitlBudgetProbeRouter(),
+        state_class=FlexState,
+    )
+    backend = LangGraphWorkflowBackend(workflow)
+    asyncio.run(backend.ainvoke(initial_state, runtime=SimpleNamespace(max_iter=1)))
+    return sink
+
+
+def test_ainvoke_propagates_hitl_budget_through_flexstate() -> None:
+    """SDK 注入的 hitl_budget 必须穿过 LangGraph 输入过滤到达节点/Hook。
+
+    FlexState 未声明 hitl_budget 时，LangGraph 在 graph 输入处静默丢弃该键，
+    消费方恒读 DEFAULT_HITL_BUDGET=4——v46_test13q 实证 48/48 轮 resolver
+    日志 budget=4（AGENT_CONFIG.hitl_budget: 8 全程未生效）。
+    """
+    sink = _run_hitl_budget_probe({"messages": [], "hitl_budget": 8, "hitl_count": 2})
+
+    assert sink["raw"] == 8
+    assert sink["budget"] == 8
+
+
+def test_ainvoke_without_hitl_budget_keeps_default_fallback() -> None:
+    """未注入 hitl_budget 时键在 state 中缺省，兜底仍由 DEFAULT_HITL_BUDGET 提供。"""
+    from dataagent.core.flex.hooks.hitl_common import DEFAULT_HITL_BUDGET
+
+    sink = _run_hitl_budget_probe({"messages": []})
+
+    assert sink["raw"] == "MISSING"
+    assert sink["budget"] == DEFAULT_HITL_BUDGET

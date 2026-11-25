@@ -46,6 +46,21 @@ _FOLLOWUP_ASK_RE = re.compile(
     r"^\s*(请简要回答|请回答|请简要说明|请说明|请解释|为什么|请评估|请总结)",
 )
 
+# 评测框架尾巴剥离（检索 query 侧）：evo-eval adapter 在任务 query 后追加
+# "\n\n资源目录：<work_dir>\n这个也是你的工作区…请提交以下评测产物…"协议段
+# （agent_adapter_base._query_text）。尾巴混进检索 query 两害：① work_dir
+# 路径/产物说明文本稀释语义检索相关性；② sha256 缓存键携带运行期 stamp
+# 路径，query 变体（全文/截断）间键漂移 → 同一业务问题重复打分钟级重端点
+# （实测：基础池 context 的 query 带尾巴）。剥离标记="资源目录："
+# （与 resolver 侧 _customer_restate_query 的既有截断约定一致——回复侧
+# 已剥，此为检索侧；语料 145 题零该字样）。只剥检索/缓存用 query；
+# agent 的 user_query 消息保留尾巴原样（工作区指引对 agent 有操作意义）。
+_FRAMEWORK_QUERY_TAIL_RE = re.compile(r"\s*资源目录：.*$", re.DOTALL)
+
+
+def _strip_framework_tail(query: str) -> str:
+    return _FRAMEWORK_QUERY_TAIL_RE.sub("", query).strip()
+
 
 class _SemanticRetrieveNoResultError(RuntimeError):
     """Raised when semantic retrieval returns no usable table candidates."""
@@ -117,7 +132,7 @@ def semantic_retrieve_context_loader(state: dict[str, Any], runtime: Any) -> dic
 
     injected = _inject_semantic_retrieve_context(state, runtime, result, query)
     return _maybe_expand_retrieve_after_rejection(
-        injected, subagent_query, workspace_root, config_manager, run_id, sub_id
+        injected, subagent_query, workspace_root, config_manager, run_id, sub_id, runtime
     )
 
 
@@ -128,7 +143,7 @@ def _resolve_original_query(state: dict[str, Any], runtime: Any) -> str:
         logger.debug(f"[semantic_retrieve_context_loader] get_current_query skipped: {exc}")
         query = None
     if isinstance(query, str) and query.strip():
-        return query.strip()
+        return _strip_framework_tail(query)
 
     for value in (
         state.get("parent_user_query"),
@@ -137,7 +152,7 @@ def _resolve_original_query(state: dict[str, Any], runtime: Any) -> str:
         getattr(runtime, "user_query", None),
     ):
         if isinstance(value, str) and value.strip():
-            return value.strip()
+            return _strip_framework_tail(value)
     return ""
 
 
@@ -196,13 +211,27 @@ def _inject_semantic_retrieve_context(
 
     augmented_query = _build_augmented_user_query(base_query, context_text)
     state["user_query"] = augmented_query
+    _sync_augmented_query_to_context(state, runtime, augmented_query)
+    return state
+
+
+def _sync_augmented_query_to_context(
+    state: dict[str, Any],
+    runtime: Any,
+    augmented_query: str,
+) -> None:
+    """把改写后的 user_query 同步进 context IR 初始节点。
+
+    planner prompt 的 user_query 取数自 trajectory_graph.nodes[context.initial_pt]
+    的 query 字段（planner_prompt_builder），并非 state["user_query"]——只改
+    state 不同步 IR 时，注入的语义块对 planner 完全不可见。
+    """
     context = get_context_for_flex_state(state, runtime, swallow_errors=True)
     if context is not None and context.initial_pt:
         try:
             context.modify_node(graph_node_label=context.initial_pt, changes={"query": augmented_query})
         except Exception as exc:
             logger.debug(f"[semantic_retrieve_context_loader] query node sync failed: {exc}")
-    return state
 
 
 def _build_augmented_user_query(base_query: str, context_text: str) -> str:
@@ -224,6 +253,7 @@ def _maybe_expand_retrieve_after_rejection(
     config_manager: Any,
     run_id: Any,
     sub_id: Any,
+    runtime: Any = None,
 ) -> dict[str, Any]:
     """L1b-heavy：HITL 源表被拒后，按本轮子代理 query 的业务词再检索一次扩池。
 
@@ -308,7 +338,7 @@ def _maybe_expand_retrieve_after_rejection(
         if kept == 0:
             logger.info("[hitl_expand_retrieve] 过滤后无剩余候选，跳过注入")
             return state
-    return _inject_extra_retrieve_context(state, filtered)
+    return _inject_extra_retrieve_context(state, filtered, runtime)
 
 
 def _load_rejected_tables_ledger(workspace_root: Path) -> dict[str, Any]:
@@ -416,7 +446,7 @@ def _extract_expand_query(subagent_query: str) -> str | None:
         return None
     match = _MR_QUERY_PREFIX_RE.search(text)
     query = match.group(1).strip() if match else text
-    query = query.rstrip("。.").strip()
+    query = _strip_framework_tail(query).rstrip("。.").strip()
     if not query:
         return None
     if _SCHEMA_CHECK_RE.search(query):
@@ -441,7 +471,11 @@ def _consume_expand_marker(marker_path: Path) -> None:
         logger.debug(f"[hitl_expand_retrieve] marker consume failed: {exc}")
 
 
-def _inject_extra_retrieve_context(state: dict[str, Any], payload: dict[str, Any]) -> dict[str, Any]:
+def _inject_extra_retrieve_context(
+    state: dict[str, Any],
+    payload: dict[str, Any],
+    runtime: Any = None,
+) -> dict[str, Any]:
     """把扩池检索的表候选并入已注入的 context 块（追加第二个语义块）。"""
     context_text = str(payload.get("context_text") or "").strip()
     if not context_text:
@@ -449,7 +483,7 @@ def _inject_extra_retrieve_context(state: dict[str, Any], payload: dict[str, Any
     base_query = str(state.get("user_query") or "").strip()
     if not base_query or _SEMANTIC_RETRIEVE_CONTEXT_OPEN not in base_query:
         return state
-    state["user_query"] = (
+    augmented_query = (
         f"{base_query}\n\n"
         f"{_SEMANTIC_RETRIEVE_CONTEXT_OPEN}\n"
         "（补充检索：源表确认被拒后，按新业务词检索到的额外候选表，"
@@ -457,4 +491,9 @@ def _inject_extra_retrieve_context(state: dict[str, Any], payload: dict[str, Any
         f"{context_text}\n"
         f"{_SEMANTIC_RETRIEVE_CONTEXT_CLOSE}"
     )
+    # 与首注入同纪律：扩池块必须同步进 context IR 初始节点，否则对 planner
+    # 不可见（实测有 run 的 golden 表进了扩池池文件却从未出现在任何 planner
+    # 上下文——只改 state["user_query"] 的扩池注入是空注入）。
+    state["user_query"] = augmented_query
+    _sync_augmented_query_to_context(state, runtime, augmented_query)
     return state

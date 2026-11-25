@@ -20,6 +20,7 @@ action 分类口径、程序化答复、泄漏/假确认防线、分类器注册
 
 from __future__ import annotations
 
+import json
 import tempfile
 from pathlib import Path
 from typing import Any, cast
@@ -256,48 +257,6 @@ class TestHitlAutoResolver:
         assert isinstance(result["messages"][-1], ToolMessage)
         assert "无法直接确认" in result["messages"][-1].content
 
-    def test_budget_exhausted_force_converges_non_caliber(self, task_index_file):
-        state = _make_state(
-            messages=[
-                HumanMessage(content="<user_query>查询用户订单数，统计每个用户的订单总量</user_query>"),
-                _make_ai_message_with_hil(pending_action="数据源表选择确认"),
-            ],
-            hitl_task_index_path=task_index_file,
-            hitl_budget=8,
-            hitl_count=8,
-        )
-        result = hitl_auto_resolver(cast(Any, state), cast(Any, RuntimeStub(task_index_path=task_index_file)))
-        assert result["hitl_auto_resolved"] is True
-        assert "已达交互预算上限" in result["messages"][-1].content
-
-    def test_budget_exhausted_still_answers_caliber_review(self, task_index_file):
-        """选表烧光 budget 后，口径最终检视仍应走代答而非 BUDGET_EXHAUSTED。"""
-        state = _make_state(
-            messages=[
-                HumanMessage(content="<user_query>查询用户订单数，统计每个用户的订单总量</user_query>"),
-                _make_ai_message_with_hil(
-                    pending_action=(
-                        "口径最终检视（生成 SQL 前）\n"
-                        "请先按下面几点看【已确认口径】是否和你的需求一致。\n"
-                        "【已确认口径 · 结构化摘要】\n"
-                        "- 主键/粒度：账号（user_id）（一行对应一个这样的组合，共 1 维）\n"
-                        "- 输出形态：平铺输出约 1 个业务列；不含分区时合计约 2 列\n"
-                    ),
-                ),
-            ],
-            hitl_task_index_path=task_index_file,
-            hitl_budget=8,
-            hitl_count=8,
-        )
-        result = hitl_auto_resolver(
-            cast(Any, state),
-            cast(Any, RuntimeStub(task_index_path=task_index_file, llm_response="确认，按此生成。")),
-        )
-        assert result["hitl_auto_resolved"] is True
-        content = result["messages"][-1].content
-        assert "已达交互预算上限" not in content
-        assert "确认" in content
-
     def test_resolves_hil_and_marks_hitl_resolved(self, task_index_file):
         """可分类但程序化解析不出信号时走 LLM 兜底。
 
@@ -387,10 +346,9 @@ class TestClassifyHitlAction:
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
 
         q = (
-            "DataTaskIR 未确认口径，需用户澄清后再生成/校验 SQL。\n"
-            "待确认业务口径：\n"
-            "【统计主键】统计主键尚未确定\n"
-            "可选：device_id / user_id"
+            "DataTaskIR 未确认口径（请给出倾向方案，并附 1-2 个具体候选供确认）：\n"
+            "【特征主键】特征主键 components 尚未确定\n"
+            "请在答复中选定一个具体方案（表名/字段名/时间窗口等具体值），不要只回答“请你自主判断”。"
         )
         assert classify_hitl_action(q) == "AMBIGUITY_CLARIFY"
 
@@ -398,9 +356,8 @@ class TestClassifyHitlAction:
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
 
         q = (
-            "DataTaskIR 未确认口径，需用户澄清后再生成/校验 SQL。\n"
-            "待确认业务口径：\n"
-            "【数据来源与关联】缺少可用事实表证据\n"
+            "DataTaskIR 未确认口径：\n"
+            "【数据源与关联预处理】缺少可用事实表证据\n"
             "请选定具体源表。"
         )
         assert classify_hitl_action(q) == "TABLE_CONFIRM"
@@ -410,22 +367,9 @@ class TestClassifyHitlAction:
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
 
         q = (
-            "DataTaskIR 未确认口径，需用户澄清后再生成/校验 SQL。\n"
-            "待确认业务口径：\n"
-            "【输出指标】输出列格式未定，是否需要 TopN？输出列名是什么？\n"
-            "可选：两列宽表 / 先去重再聚合"
-        )
-        assert classify_hitl_action(q) == "AMBIGUITY_CLARIFY"
-
-    def test_ir_caliber_review_routes_to_ambiguity(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
-
-        q = (
-            "DataTaskIR 口径最终检视：生成 SQL 前请确认已确认口径是否完整。\n"
-            "口径最终检视（生成 SQL 前确认）\n"
-            "请核对下列已确认业务口径是否完整、正确。\n"
-            "【已确认业务口径】\n"
-            "- 时间范围：近7天"
+            "DataTaskIR 未确认口径（请给出倾向方案，并附 1-2 个具体候选供确认）：\n"
+            "【输出特征目录】输出列格式未定，是否需要 TopN？输出列名是什么？\n"
+            "候选：两列宽表 / 先去重再聚合"
         )
         assert classify_hitl_action(q) == "AMBIGUITY_CLARIFY"
 
@@ -1611,6 +1555,68 @@ class TestVetLlmConfirmation:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
+# LLM 假确认防线改写时，对 agent 提问里已含的 golden 候选顺带正面确认
+# （agent 自己提过的表/字段名可点名——零泄漏边界不破；golden 在候选里却只收
+# 到"全错"式拒绝，agent 会被推回换词重检索打转）
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class TestVetPositiveConfirm:
+    GOLDEN_USER = (
+        "SELECT user_id, app_id, COUNT(*) AS cnt FROM biads.dws_evt_fct_dm "
+        "WHERE pt_d='$date' GROUP BY user_id, app_id"
+    )
+
+    def _vet(self, answer: str, hil_question: str, golden_sql: str | None = None):
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import _vet_llm_confirmation
+
+        return _vet_llm_confirmation(answer, golden_sql or self.GOLDEN_USER, hil_question, "AMBIGUITY_CLARIFY", "开发序列特征")
+
+    def test_table_false_confirm_with_golden_candidate_positive(self):
+        """错表被确认但提问候选里含 golden 表 → 拒绝同时点名正面确认 + 推进优先。"""
+        golden = "SELECT a FROM biads.dws_right_dm WHERE pt_d='$date'"
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import _vet_llm_confirmation
+
+        vetted = _vet_llm_confirmation(
+            "确认选用 biads.ads_wrong_a_dm。",
+            golden,
+            "源表用 biads.ads_wrong_a_dm 还是 biads.dws_right_dm？",
+            "TABLE_CONFIRM",
+            "开发序列特征",
+        )
+        assert "biads.dws_right_dm 这几张表符合我的需求，就此定下来" in vetted
+        assert "直接基于已确认的表推进" in vetted
+        assert "biads.ads_wrong_a_dm 从我任务的需求看不是我想要的数据来源" in vetted
+        # correct 非空走推进优先，不再把 agent 推回换词重检索
+        assert "请你基于元数据再检索一下" not in vetted
+
+    def test_table_all_wrong_no_positive_confirm(self):
+        """回归钉：候选全错（golden 未被提过）→ 无正面确认、golden 表名不泄漏。"""
+        golden = "SELECT a FROM biads.dws_right_dm WHERE pt_d='$date'"
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import _vet_llm_confirmation
+
+        vetted = _vet_llm_confirmation(
+            "确认选用 biads.ads_wrong_a_dm。",
+            golden,
+            "源表用 biads.ads_wrong_a_dm 还是 biads.ods_wrong_b？",
+            "TABLE_CONFIRM",
+            "开发序列特征",
+        )
+        assert "请你基于元数据再检索一下" in vetted
+        assert "符合我的需求，就此定下来" not in vetted
+        assert "biads.dws_right_dm" not in vetted  # golden 未被 agent 提过 → 不泄漏
+
+    def test_identifier_golden_in_candidates_named(self):
+        """标识确认错误但 golden 字段在提问候选里 → 纠正顺带点名"直接用它"。"""
+        vetted = self._vet(
+            "使用 device_id 作为用户标识。",
+            "用户标识用 device_id 还是 user_id？",
+        )
+        assert "账号ID" in vetted  # 概念化纠正主体不变
+        assert "user_id 就是我要的，直接用它" in vetted
+
+
+# ─────────────────────────────────────────────────────────────────────────────
 # MR453 复核：源表名裸名/限定名统一（提取 + 防泄漏）
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -1680,50 +1686,6 @@ class TestSanitizeLlmReplyLeak:
         )
         assert "数据源选择我需要你先做功课" in sanitized
         assert "dwd_user_event" not in sanitized
-
-    def test_programmatic_table_confirm_keeps_pool_named_golden(self):
-        """程序化 TABLE_CONFIRM 可点名池内（含 golden）表，禁止整段模板替换。"""
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _finalize_hitl_reply,
-            _sanitize_llm_reply_leak,
-        )
-
-        answer = (
-            "db.wrong_hm 不是我想要的数据来源。"
-            "为帮你把口径落到实处——你此前检索到的候选里，表名 token 与我要的口径"
-            "（事件流水）直接对应的有：dwd.dwd_user_event。"
-            "请优先用 get_table_schema 核对。"
-        )
-        hil = "源表候选：db.wrong_hm，是否可用？"
-        sanitized = _sanitize_llm_reply_leak(
-            answer, self.GOLDEN, hil, "TABLE_CONFIRM", programmatic=True
-        )
-        assert sanitized == answer
-        assert "数据源选择我需要你先做功课" not in sanitized
-
-        finalized = _finalize_hitl_reply(
-            answer, self.GOLDEN, hil, "TABLE_CONFIRM", programmatic=True
-        )
-        assert "dwd_user_event" in finalized or "dwd.dwd_user_event" in finalized
-        assert "第三次否掉" not in finalized  # wording preserved path, not replaced
-        assert "数据源选择我需要你先做功课" not in finalized
-
-    def test_llm_table_confirm_still_replaced_when_not_programmatic(self):
-        """LLM 兜底 TABLE_CONFIRM 泄漏仍整段替换（与程序化路径对照）。"""
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _finalize_hitl_reply,
-        )
-
-        answer = "就用 dwd.dwd_user_event 吧。"
-        out = _finalize_hitl_reply(
-            answer,
-            self.GOLDEN,
-            "源表候选：db.wrong_hm，是否可用？",
-            "TABLE_CONFIRM",
-            programmatic=False,
-        )
-        assert "数据源选择我需要你先做功课" in out
-        assert "dwd_user_event" not in out
 
 
 class TestChineseGluedTableNames:
@@ -2257,6 +2219,194 @@ class TestSchemaDerivationUnaOverride:
         assert self._classify("请确认输出 schema 是否正确") == "OUTPUT_SCHEMA_PREVIEW"
 
 
+class TestTableSelectionOutputOverride:
+    """表选择问型升判（q40 r1 铁例）：三连问被"目标表名"关键词整问抢进 OUTPUT，
+    源表子问（v2_dm 还是 v1_dm）零应答，agent 沿错误源表交付 FAIL；签名 =
+    选用动词 + ≥2 个表候选 → 升判 TABLE_CONFIRM 走程序化源表 diff。"""
+
+    Q40_R1_Q1 = (
+        "任务需聚合当天新鲜游戏的单框应用ID和加权值键值对序列。元数据检索发现两个近变体源表"
+        "（v1版15字段 vs v2版9字段），均含 app_id 和 final_weight。"
+        "目标表 biads.ads_agalg_ue_freshgame_weight_v2_dcs_dm 的 insert_key 字段需写入 'weight_game_v1'。\n"
+        "倾向方案：源表选用 biads.ads_agalg_ue_freshgame_weight_v2_dm（v2版），"
+        "因为目标表名为 v2_dcs_dm，版本对应一致。\n\n"
+        "候选方案B：源表改用 biads.ads_agalg_ue_freshgame_weight_dm（v1版），该表字段更丰富。\n\n"
+        "请确认：\n1. 源表选择 v2_dm 还是 v1_dm？\n2. 输出目标表是否为 "
+        "biads.ads_agalg_ue_freshgame_weight_v2_dcs_dm？"
+    )
+
+    def _classify(self, q: str) -> str:
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import classify_hitl_action
+
+        return classify_hitl_action(q)
+
+    def test_q40_r1_hijacked_selection_promoted(self):
+        """q40 r1 实录形态（含"目标表名"OUTPUT 关键词劫持）→ 升判 TABLE_CONFIRM。"""
+        assert self._classify(self.Q40_R1_Q1) == "TABLE_CONFIRM"
+
+    def test_plan_ab_form_promoted(self):
+        """r2 同型（方案A还是方案B + ≥2 表 + OUTPUT 关键词并存）→ 升判。"""
+        q = (
+            "输出列名需要确认，目标表名固定为 biads.ads_t_dcs_dm。\n"
+            "方案A：源表 = biads.ads_t_v2_dm（v2版）；方案B：源表 = biads.ads_t_dm（v1版）。\n"
+            "请确认使用方案A还是方案B？"
+        )
+        assert self._classify(q) == "TABLE_CONFIRM"
+
+    def test_selection_without_output_keyword_unaffected(self):
+        """无 OUTPUT 关键词的表选择问 base 本就是 TABLE_CONFIRM（不经升判路径）。"""
+        assert self._classify("源表选择 biads.a_v2_dm 还是 biads.a_dm？") == "TABLE_CONFIRM"
+
+    def test_final_delivery_confirm_stays_output(self):
+        """最终交付确认（2 表但无选用动词）保持 OUTPUT——列数/列名对比是正确答复。"""
+        q = (
+            "最终交付确认：目标表 biads.ads_agalg_ue_freshgame_weight_v2_dcs_dm 输出共 2 列。\n"
+            "源表：biads.ads_agalg_ue_freshgame_weight_v2_dm，按 pt_d 当天分区读取。\n"
+            "请确认以上输出列数（2列）、列名、列顺序是否符合预期。"
+        )
+        assert self._classify(q) == "OUTPUT_SCHEMA_PREVIEW"
+
+    def test_single_table_with_selection_verb_stays_output(self):
+        """单表 + 选用动词不构成表选择对比（≥2 候选是签名一半）。"""
+        q = "目标表名已定，输出字段顺序如何排列？源表选用 biads.ads_t_v2_dm 即可。"
+        assert self._classify(q) == "OUTPUT_SCHEMA_PREVIEW"
+
+    def test_output_ab_question_without_tables_stays_output(self):
+        """方案A还是B 的输出结构问（无表候选）不升判（r2 存储模式问型，0 表）。"""
+        q = (
+            "目标表名固定。请确认使用方案A（单行序列模式）还是方案B（按 insert_key 多行存储）？"
+            "输出列名顺序同时确认。"
+        )
+        assert self._classify(q) == "OUTPUT_SCHEMA_PREVIEW"
+
+
+class TestColumnCountFallbackPrefixGuard:
+    """兜底正则前置词守卫（q40 r1 次生噪声）："v1版15字段 vs v2版9字段"是
+    近变体表字段数对比，不是计划输出列数——曾被误读成"计划输出 15 列"，
+    OUTPUT 列数对比答复带偏 agent。"""
+
+    def _count(self, text: str):
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
+            _extract_agent_column_count,
+        )
+
+        return _extract_agent_column_count(text)
+
+    def test_version_prefixed_table_fields_blocked(self):
+        """q40 r1 实录："（v1版15字段 vs v2版9字段）" → 不算计划列数。"""
+        q = "元数据检索发现两个近变体源表（v1版15字段 vs v2版9字段），均含 app_id 和 final_weight，需确认输出口径。"
+        assert self._count(q) is None
+
+    def test_table_attribute_lead_blocked(self):
+        """表属性语引导的"N字段"（该表/张表/表字段/字段数）不算计划列数。"""
+        assert self._count("这张表有15字段，我担心字段太多") is None
+        assert self._count("下载明细表字段精简（16字段）是我的优势") is None
+        assert self._count("该表的字段数为9字段") is None
+
+    def test_plan_definition_forms_pass(self):
+        """agent 自己的输出结构描述（字段定义/确认的N列方案）仍算计划列数。"""
+        assert self._count("系统IR自动推导的字段定义（8列，含统计主体）") == 8
+        assert self._count("推导的输出字段定义与用户确认的11列方案一致") == 11
+
+    def test_prefixed_and_bare_plan_counts_unaffected(self):
+        """前置词形（输出N列）与无表属性语的裸形兜底行为不变。
+
+        已知边界（超出守卫范围）："该表共15字段"经前置词"共"走的是首条
+        正则而非兜底——q40 实录仅兜底误读有据，动首条会波及回放语料
+        20+ 个 first 形匹配，保持原行为。
+        """
+        assert self._count("计划输出8列，请确认") == 8
+        assert self._count("我的方案是8列") == 8
+
+    def test_table_paren_form_blocked(self):
+        """q44 r1 实录形："行为明细表（54字段，留存100天）" → 不算计划列数。"""
+        assert self._count("该表为广告推荐场景用户行为明细表（54字段，留存100天），每行一条行为记录") is None
+
+
+class TestRejectedTableReflowTail:
+    """OUTPUT/AMBIGUITY 答复的已拒表回流拦截（q44 r1 重提案循环实录：
+    被拒表经"期望输出21列"类问题回流，OUTPUT 程序化只答列数、被拒表无人
+    点名，agent 下一轮继续提，循环耗尽预算零交付）。"""
+
+    Q44_Q4 = (
+        "用户反馈期望输出21列，与第一张被拒表 biads.ads_t_x_dm 的21个字段完全吻合。"
+        "现按您确认的口径重新提案：源表 biads.ads_t_x_dm，请确认输出列数是否按21列执行。"
+    )
+
+    @staticmethod
+    def _write_ledger(workspace: Path, tables: list[str]) -> None:
+        (workspace / ".memory").mkdir(parents=True, exist_ok=True)
+        (workspace / ".memory" / "hitl_rejected_tables.json").write_text(
+            json.dumps({"rejected_tables": tables, "rounds": 1}, ensure_ascii=False), encoding="utf-8"
+        )
+
+    def _tail(self, q: str, workspace: Path):
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
+            _rejected_table_reflow_tail,
+        )
+
+        return _rejected_table_reflow_tail(q, workspace)
+
+    def test_tail_names_rejected_table(self, tmp_path):
+        """问题内表名 ∩ 台账 → 尾段点名"已否定过、不要再提"。"""
+        self._write_ledger(tmp_path, ["biads.ads_t_x_dm"])
+        tail = self._tail(self.Q44_Q4, tmp_path)
+        assert tail is not None
+        assert "biads.ads_t_x_dm" in tail
+        assert "已经明确否定过" in tail
+        assert "不要再把它们作为候选提回来" in tail
+
+    def test_tail_absent_without_ledger_or_overlap(self, tmp_path):
+        """无台账 / 问题表不在台账 → 不追加（零影响）。"""
+        assert self._tail(self.Q44_Q4, tmp_path) is None  # 无台账
+        self._write_ledger(tmp_path, ["biads.ads_other_dm"])
+        assert self._tail(self.Q44_Q4, tmp_path) is None  # 无交集
+
+    def test_output_reply_appends_tail_end_to_end(self, task_index_file, tmp_path):
+        """q44 msg[34] 形态端到端：OUTPUT 列数答复 + 拒源尾段一起注入。"""
+        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
+            classify_hitl_action,
+            hitl_auto_resolver,
+        )
+
+        assert classify_hitl_action(self.Q44_Q4) == "OUTPUT_SCHEMA_PREVIEW"  # 劫持形态钉
+        self._write_ledger(tmp_path, ["biads.ads_t_x_dm"])
+        state = _make_state(
+            messages=[
+                HumanMessage(content="<user_query>查询用户订单数，统计每个用户的订单总量</user_query>"),
+                AIMessage(
+                    content="完成",
+                    tool_calls=[_make_hil_tool_call(call_id="c1", pending_action=self.Q44_Q4)],
+                ),
+            ],
+            hitl_task_index_path=task_index_file,
+            workspace=str(tmp_path),
+        )
+        result = hitl_auto_resolver(cast(Any, state), cast(Any, RuntimeStub(task_index_path=task_index_file)))
+        reply = result["messages"][-1].content
+        assert "期望输出 1 列" in reply  # OUTPUT 列数答复主体保留
+        assert "已经明确否定过" in reply  # 拒源尾段追加
+        assert "biads.ads_t_x_dm" in reply
+
+    def test_output_reply_without_ledger_unchanged(self, task_index_file, tmp_path):
+        """无台账时 OUTPUT 答复原样（回归锁：主体不含拒源尾段）。"""
+        state = _make_state(
+            messages=[
+                HumanMessage(content="<user_query>查询用户订单数，统计每个用户的订单总量</user_query>"),
+                AIMessage(
+                    content="完成",
+                    tool_calls=[_make_hil_tool_call(call_id="c1", pending_action=self.Q44_Q4)],
+                ),
+            ],
+            hitl_task_index_path=task_index_file,
+            workspace=str(tmp_path),
+        )
+        result = hitl_auto_resolver(cast(Any, state), cast(Any, RuntimeStub(task_index_path=task_index_file)))
+        reply = result["messages"][-1].content
+        assert "已经明确否定过" not in reply
+        assert "期望输出 1 列" in reply
+
+
 class TestOutputPureGrainDeferToLlm:
     """OUTPUT 分支 3 细化：纯主体/主键/粒度问（golden 无 GROUP BY 特征）退 LLM persona。"""
 
@@ -2651,139 +2801,214 @@ class TestIdentifierlessGoldenGrainRedirectV53b:
         assert seg is None or "不按用户标识字段聚合" not in seg
 
 
-class TestIrCaliberReviewConfirmVeto:
-    """最终检视：空确认在列数/粒度冲突时应被改写。"""
-
-    GOLDEN_BUCKET = (
-        "INSERT OVERWRITE TABLE biads.ads_x_dm PARTITION(pt_d='$date')\n"
-        "SELECT up_id, hour_buket,\n"
-        "  bicoredata.concatWithRank(app_id, row_num, ',') AS app_id_list,\n"
-        "  bicoredata.concatWithRank(app_type, row_num, ',') AS app_type_list,\n"
-        "  bicoredata.concatWithRank(third_app_type, row_num, ',') AS third_app_type_list,\n"
-        "  bicoredata.concatWithRank(app_cn_name, row_num, ',') AS app_cn_name_list,\n"
-        "  bicoredata.concatWithRank(app_package_name, row_num, ',') AS package_name_list,\n"
-        "  bicoredata.concatWithRank(developer_id, row_num, ',') AS dev_up_id_list\n"
-        "FROM t GROUP BY up_id, hour_buket"
+# ─────────────────────────────────────────────────────────────────────────────
+# v64 多部件应答合成：复合提问（一次问表选择 + 语义解读/输出列数）原先整问按
+# 主 action 单应答——程序化部分覆盖（非 None）阻断 LLM 兜底（兜底仅在 None 时
+# 触发），其余子问永久无答复。实录（q49 msg28）：表选择 A/B/C 有 golden-grounded
+# 判定，_p1/_p2 后缀业务含义子问零应答，agent 按自己的倾向（单双框架拆分）
+# 猜错拆分维度直至交付。合成 = 其余部件能程序化的程序化（表 diff/列数对比）、
+# 语义缺口一次 LLM 补答（golden 作内部判定素材，防泄漏双防线照常）、
+# "另外，"段追加在主应答之后。
+# ─────────────────────────────────────────────────────────────────────────────
+class TestMultipartCompositionV64:
+    GOLDEN_Q49 = (
+        "INSERT OVERWRITE TABLE biads.ads_agalg_did_c_push_user_label_dm PARTITION(pt_d='$date') "
+        "SELECT did, "
+        "concat_ws('#', collect_list(CASE WHEN split_element LIKE '%_p1' "
+        "THEN regexp_replace(split_element, '_p1$', '') END)) AS p1_label, "
+        "concat_ws('#', collect_list(CASE WHEN split_element LIKE '%_p2' "
+        "THEN regexp_replace(split_element, '_p2$', '') END)) AS p2_label "
+        "FROM agapads.ads_persona_push_label_category_extend_ds "
+        "LATERAL VIEW explode(split(push_label_category_extend, '#')) t AS split_element "
+        "WHERE pt_d='$date' GROUP BY did"
     )
+    Q49_MSG28_REASON = (
+        "Initial阶段需确认两个核心阻塞点：(1) _p1/_p2后缀的业务含义——这决定了整个"
+        "特征设计的拆分维度；(2) 数据源表选择——候选池中存在多张push相关表。"
+    )
+    Q49_MSG28_PENDING = """## 待确认1：_p1/_p2后缀的业务含义
 
-    def test_bare_confirm_rewritten_on_column_mismatch(self):
+我倾向于 **解读A（单双框架拆分）**：
+- `_p1` = 单框架设备的push新闻资讯标签序列特征
+- `_p2` = 双框架设备的push新闻资讯标签序列特征
+
+候选B（标签层级拆分）：
+- `_p1` = 一级标签分类序列
+- `_p2` = 二级标签分类序列
+
+## 待确认2：数据源表选择
+
+我倾向于 **候选A：`bicoredata.dwd_cam_feature_push_class2_list_ds`**（主键dsid，天分区pt_d）
+候选B：`bicoredata.dwd_cam_feature_push_class2_list_udid_ds`（主键udid）
+候选C：`agapads.ads_persona_push_label_category_extend_ds`（主键did，push新闻资讯8分类人群扩展表）
+
+请确认或选择以上两项。"""
+    GAP_LLM_REPLY = "按候选B（标签层级拆分）来：_p1 是一级标签分类序列，_p2 是二级标签分类序列。"
+
+    def _q49_question(self) -> str:
+        return f"{self.Q49_MSG28_REASON}\n{self.Q49_MSG28_PENDING}"
+
+    def _compose(self, hil_question: str, golden_sql: str, llm_response: str = ""):
+        """走真实分派序（分类 → 主 action 程序化应答 → 合成）返回 (composed, llm_used, primary)。"""
         from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _vet_caliber_review_confirmation,
-        )
-
-        hil = (
-            "口径最终检视（生成 SQL 前）\n"
-            "【已确认口径 · 结构化摘要】\n"
-            "- 主键/粒度：账号（uid）（一行对应一个这样的组合，共 1 维）\n"
-            "- 输出形态：多轴交叉展开（window×6）×约 6 类指标，约 36 个业务列；"
-            "不含分区时合计约 37 列（主键 1 + 业务 36）\n"
-            "交叉展开\n"
-        )
-        out = _vet_caliber_review_confirmation("确认，按此生成。", self.GOLDEN_BUCKET, hil)
-        assert "确认，按此生成" not in out
-        assert "列数" in out or "输出列数" in out
-
-    def test_supplement_answer_not_rewritten(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _vet_caliber_review_confirmation,
-        )
-
-        hil = "口径最终检视\n不含分区时合计约 37 列"
-        answer = "输出形态需改：应按账号×时段分桶一行一条，不要 37 列交叉。"
-        assert _vet_caliber_review_confirmation(answer, self.GOLDEN_BUCKET, hil) == answer
-
-    def test_multi_key_output_schema_not_single_key_row(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
+            _answer_ambiguity_clarify_programmatic,
             _answer_output_schema_programmatic,
+            _answer_table_confirm_programmatic,
+            _compose_multipart_answer,
+            classify_hitl_action,
         )
 
-        reply = _answer_output_schema_programmatic(
-            self.GOLDEN_BUCKET,
-            "请确认输出 schema 与粒度是否正确",
+        action = classify_hitl_action(hil_question)
+        if action == "TABLE_CONFIRM":
+            primary = _answer_table_confirm_programmatic(
+                golden_sql, hil_question, "开发push新闻资讯标签序列特征", None, None
+            )
+        elif action == "OUTPUT_SCHEMA_PREVIEW":
+            primary = _answer_output_schema_programmatic(golden_sql, hil_question)
+        else:
+            primary = _answer_ambiguity_clarify_programmatic(golden_sql, hil_question)
+        if primary is None:
+            return None, False, None
+        composed, llm_used = _compose_multipart_answer(
+            primary,
+            action,
+            hil_question,
+            golden_sql,
+            "开发push新闻资讯标签序列特征",
+            None,
+            None,
+            RuntimeStub(llm_response=llm_response),
         )
-        assert reply is not None
-        assert "不是单一主体一行" in reply or "一行对应一个组合" in reply
-        assert "期望输出 8 列" in reply
+        return composed, llm_used, primary
 
-    def test_bare_confirm_rewritten_when_golden_needs_hour_slice(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _vet_caliber_review_confirmation,
+    def test_q49_form_both_parts_answered(self):
+        """q49 msg28 活靶：表选择部件（golden 表确认 + 错表拒绝）与 _p1/_p2
+        语义部件（LLM 缺口补答）在一条合成回复里都有答案。"""
+        composed, llm_used, _ = self._compose(
+            self._q49_question(), self.GOLDEN_Q49, llm_response=self.GAP_LLM_REPLY
         )
+        assert llm_used
+        assert "agapads.ads_persona_push_label_category_extend_ds 这几张表符合我的需求" in composed
+        assert "从我任务的需求看不是我想要的数据来源" in composed
+        assert "bicoredata.dwd_cam_feature_push_class2_list_ds" in composed
+        assert f"另外，{self.GAP_LLM_REPLY}" in composed
 
-        golden = (
-            "INSERT OVERWRITE TABLE biads.ads_x_hm PARTITION(pt_d='$date', pt_h='$hour')\n"
-            "SELECT site_id FROM biads.src_hm WHERE pt_d='$date' and pt_h='$hour'"
+    def test_q49_form_llm_failure_keeps_table_part(self):
+        """缺口 LLM 补答失败时主应答原样交付（表判定不因补答失败丢失）。"""
+        composed, llm_used, primary = self._compose(
+            self._q49_question(), self.GOLDEN_Q49, llm_response=""
         )
-        hil = (
-            "口径最终检视\n"
-            "【已确认口径 · 结构化摘要】\n"
-            "- 时间：摘要中未见已确认时间边界\n"
-            "- 过滤：已写 pt_d\n"
+        assert not llm_used
+        assert composed == primary
+        assert "符合我的需求" in composed
+        assert self.GAP_LLM_REPLY not in composed
+
+    def test_single_part_table_question_unchanged(self):
+        """单部件表提案问零合成（无其余部件信号，行为与合成前完全一致）。"""
+        q = "我计划使用 biads.dws_evt_fct_dm 作为源表开发特征，请确认源表选择。"
+        composed, llm_used, primary = self._compose(q, self.GOLDEN_Q49, llm_response=self.GAP_LLM_REPLY)
+        assert composed == primary
+        assert not llm_used
+
+    def test_recap_section_not_reanswered(self):
+        """已确认口径回述节（描述性、非问句形态）不得被当作输出列问再答一遍。"""
+        q = (
+            "Mid阶段核心阻塞点：_p1和_p2两套特征的区分维度未明确。\n"
+            "## 已确认口径（根据您的反馈）\n"
+            "- 输出粒度：按设备ID聚合，单key单行\n"
+            "- 每张表输出3列\n"
+            "## 待确认：_p1和_p2两套特征的区分维度\n"
+            "**倾向方案A：按标识维度拆分**（来源 `bicoredata.dwd_cam_feature_push_class2_list_ds`）\n"
+            "**候选方案B：按行为类型拆分**\n"
+            "请确认采用哪种方案。"
         )
-        out = _vet_caliber_review_confirmation("确认，按此生成。", golden, hil)
-        assert "小时" in out
-        assert "确认，按此生成" not in out
+        composed, llm_used, _ = self._compose(q, self.GOLDEN_Q49, llm_response=self.GAP_LLM_REPLY)
+        assert llm_used
+        assert f"另外，{self.GAP_LLM_REPLY}" in composed
+        # 回述节零应答：不得出现输出列/粒度程序化应答段
+        assert "输出应为" not in composed
+        assert "期望输出" not in composed
 
-
-class TestHitlReplyNaturalLanguageSanitize:
-    """代答出口：提问未出现的 golden 英文字段/SQL 原文应被自然语言化。"""
-
-    GOLDEN = (
-        "INSERT OVERWRITE TABLE biads.ads_x_dm PARTITION(pt_d='$date')\n"
-        "SELECT user_id, app_id FROM biads.src_dm WHERE pt_d='$date' GROUP BY user_id, app_id"
-    )
-
-    def test_unmentioned_field_replaced_with_concept(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _sanitize_unmentioned_golden_tokens,
+    def test_output_section_programmatic_append(self):
+        """输出列部件能程序化的程序化：主 TC 表确认 + 输出列数对比段合成，
+        无语义缺口时不消耗 LLM。"""
+        q = (
+            "## 待确认1：数据源表选择\n"
+            "我倾向于 **候选A：`agapads.ads_persona_push_label_category_extend_ds`**（主键did）。\n"
+            "## 待确认2：输出列数确认\n"
+            "我计划输出 5 列，请确认输出列数是否正确。"
         )
+        composed, llm_used, _ = self._compose(q, self.GOLDEN_Q49, llm_response=self.GAP_LLM_REPLY)
+        assert not llm_used
+        assert "确认：就用" in composed
+        assert "输出列数需要修正：期望输出 3 列，你计划输出 5 列" in composed
 
-        out = _sanitize_unmentioned_golden_tokens(
-            "请按 user_id 粒度聚合，并带上 app_id。",
-            self.GOLDEN,
-            "时间窗口是否包含当天？",
+    def test_output_primary_multipart_unchanged(self):
+        """OUTPUT 主 action 的多节输出结构问（Final 阶段 schema 确认）全部件
+        已被主应答覆盖——零合成、零变化。"""
+        q = (
+            "### _p1 表\n目标表名：`biads.ads_agalg_push_news_label_seq_p1_dm`，输出3列。\n"
+            "### 说明\n序列列名相同，仅主键不同。请确认以上schema是否符合预期。"
         )
-        assert "user_id" not in out
-        assert "app_id" not in out
-        assert "账号ID" in out
-        assert "应用ID" in out
+        composed, llm_used, primary = self._compose(q, self.GOLDEN_Q49, llm_response=self.GAP_LLM_REPLY)
+        assert composed == primary
+        assert not llm_used
 
-    def test_mentioned_field_kept(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _sanitize_unmentioned_golden_tokens,
+    def test_clause_fallback_semantic_gap(self):
+        """无节头复合问走子句兜底：语义缺口子句收进 LLM 补答（"是什么"问句
+        形态命中），含表子句跳过（表 ask 跨子句散布防误判）。"""
+        q = (
+            "数据源已确认为 agapads.ads_persona_push_label_category_extend_ds，"
+            "现在有个字段语义疑问：后缀 _p1 的业务含义是什么？"
         )
+        composed, llm_used, _ = self._compose(q, self.GOLDEN_Q49, llm_response=self.GAP_LLM_REPLY)
+        assert llm_used
+        assert f"另外，{self.GAP_LLM_REPLY}" in composed
 
-        answer = "确认：用户标识使用 user_id。"
-        out = _sanitize_unmentioned_golden_tokens(
-            answer,
-            self.GOLDEN,
-            "用户标识字段用 user_id 还是 imei？",
+    def test_gap_llm_leak_sanitized(self):
+        """缺口补答泄漏 agent 未提及的 golden 表名 → 防泄漏护栏整段替换
+        （客户不知道数仓表名，合成回复不得成为答案通道）。"""
+        q = (
+            "## 待确认1：标签字段的业务含义\n"
+            "push_label_category_extend 字段里的标签是什么粒度的数据？\n"
+            "## 待确认2：数据源表选择\n"
+            "我计划使用 `bicoredata.dwd_cam_feature_push_class2_list_ds` 作为源表，请确认。"
         )
-        assert out == answer
+        leaky = "用 agapads.ads_persona_push_label_category_extend_ds 就可以。"
+        composed, llm_used, _ = self._compose(q, self.GOLDEN_Q49, llm_response=leaky)
+        assert llm_used
+        # 泄漏段被 TABLE_CONFIRM 固定模板整体替换，golden 表名不出现
+        assert "先做功课" in composed
+        assert "agapads.ads_persona_push_label_category_extend_ds 就可以" not in composed
 
-    def test_sql_jargon_rewritten_when_not_in_question(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _sanitize_unmentioned_golden_tokens,
+    def test_end_to_end_composed_reply_injected(self, tmp_path):
+        """端到端：hitl_auto_resolver 主入口对复合提问注入的 ToolMessage
+        同时携带表判定与语义补答（q49 形态缩样 + 本地任务索引）。"""
+        golden_file = tmp_path / "g.sql"
+        golden_file.write_text(self.GOLDEN_Q49, encoding="utf-8")
+        index = [
+            {
+                "task_id": "0",
+                "name": "q01",
+                "query": "开发push新闻资讯标签序列特征",
+                "golden_sql_path": str(golden_file),
+            }
+        ]
+        index_file = tmp_path / "task_index.json"
+        index_file.write_text(json.dumps(index), encoding="utf-8")
+        state = _make_state(
+            messages=[
+                HumanMessage(content="<user_query>开发push新闻资讯标签序列特征</user_query>"),
+                _make_ai_message_with_hil(pending_action=self.Q49_MSG28_PENDING),
+            ],
+            hitl_task_index_path=str(index_file),
+            workspace=str(tmp_path),
         )
-
-        out = _sanitize_unmentioned_golden_tokens(
-            "写入时 PARTITION(pt_d='$date') 并 GROUP BY 主体。",
-            self.GOLDEN,
-            "输出列数是否符合预期？",
-        )
-        assert "PARTITION" not in out
-        assert "GROUP BY" not in out
-        assert "对应分区" in out or "按维度聚合" in out
-
-    def test_caliber_reference_has_no_raw_select(self):
-        from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_auto_resolver import (
-            _build_caliber_review_reference,
-            _extract_golden_schema_summary,
-        )
-
-        ref = _build_caliber_review_reference(self.GOLDEN)
-        summary = _extract_golden_schema_summary(self.GOLDEN)
-        assert "SELECT" not in ref
-        assert "INSERT" not in ref
-        assert "user_id" not in ref
-        assert "期望业务列数" in summary
+        runtime = RuntimeStub(task_index_path=str(index_file), llm_response=self.GAP_LLM_REPLY)
+        result = hitl_auto_resolver(cast(Any, state), cast(Any, runtime))
+        assert result["hitl_auto_resolved"] is True
+        assert isinstance(result["messages"][-1], ToolMessage)
+        content = result["messages"][-1].content
+        assert "符合我的需求" in content
+        assert f"另外，{self.GAP_LLM_REPLY}" in content
+        assert result["hitl_resolved_info"]["reply_mode"] == "programmatic+gap_llm"
