@@ -24,16 +24,16 @@
 
 ## 优先级
 
-先区分三类内容：**产品配置**是 Home `config.yaml` 或显式 `--config` 二选一；**插件清单** `.plugin.yaml` 声明能力、依赖和可选 `defaults_file`；**插件业务参数**位于 `plugins.config.<id>`。插件清单本身不作为整份产品配置覆盖层。
+先区分三类内容：**产品配置**是 Home `config.yaml` 或显式 `--config` 二选一；**插件清单** `.plugin.yaml` 声明能力、依赖、可选 `params` 业务参数默认值和 `defaults_file`；**插件业务参数**位于 `plugins.config.<id>`。插件清单本身不作为整份产品配置覆盖层。
 
 实际准备过程：
 
 1. 读取选中的产品文件，以字段默认值补齐，得到初步的 `plugins.enabled/paths`。`--config` 替代 Home `config.yaml`，两份文件不叠加，cwd 的配置也不自动加入。
 2. 从内置、Home `plugins/<id>` 和显式 `plugins.paths` 查找插件，递归解析 `requires`。依赖先于依赖它的插件；独立项沿 `enabled` 顺序遍历，每个 ID 只处理一次。相同真实目录去重；同一启用 ID 对应不同目录时直接报错，没有“Home 覆盖内置”的规则。
-3. 按上述顺序读取已选插件清单中的 `defaults_file`，再叠加第 1 步选中的产品文件。未选中插件的默认文件不参与。默认文件只允许贡献 `plugins.config`，不能设置模型、server、根 Agent 或反过来启用其他插件。
+3. 按上述顺序先加载各插件清单中的 `params`（只贡献当前插件的参数，支持 `$env{NAME}`），再读取该插件的 `defaults_file`，再叠加第 1 步选中的产品文件。未选中插件的默认文件不参与。默认文件只允许贡献 `plugins.config`，不能设置模型、server、根 Agent 或反过来启用其他插件。
 4. 对合并结果补齐仍缺少的字段默认值；最终启用列表包含依赖插件。业务参数再交给插件工厂解析，插件自身参数模型的默认值补齐未传字段。当前内置 nl2sql 没有声明 `defaults_file`，其默认业务值来自 nl2sql 参数模型。
 
-因此，**同一业务字段的优先级**由低到高是：插件自身参数默认值 → 依赖/已选插件的 `defaults_file`（后者覆盖前者）→ 所选产品文件的 `plugins.config`。程序字段默认值只补缺省项，不覆盖显式值。
+因此，**同一业务字段的优先级**由低到高是：插件自身参数默认值 → 依赖/已选插件的默认值（每个插件先 `params` 再 `defaults_file`，后者覆盖前者）→ 所选产品文件的 `plugins.config`。程序字段默认值只补缺省项，不覆盖显式值。
 
 | 数据类型/字段 | 合并或覆盖规则 |
 | --- | --- |
@@ -78,7 +78,7 @@ plugins:
 
 这些片段用于说明合并；运行时仍需完整的模型与插件声明。只写 `plugins.config.demo` 不会启用 demo。
 
-相对路径按相应字段的声明规则解析：产品 `plugins.paths`、workspace 路径相对该产品文件；插件清单资源相对插件根，不能越界；`defaults_file` 中的运行 Hook 路径也相对插件根。业务参数里的普通字符串路径由插件解释，不能假定全被宿主转成绝对路径。`output_root` 规则见下文。未知产品字段、重复键、错误类型和非有限数值会使准备失败。
+相对路径按相应字段的声明规则解析：产品 `plugins.paths`、workspace 路径相对该产品文件；插件清单资源相对插件根，不能越界；`params.run_hooks` 和 `defaults_file` 中的运行 Hook 路径也相对插件根。业务参数里的普通字符串路径由插件解释，不能假定全被宿主转成绝对路径。`output_root` 规则见下文。未知产品字段、重复键、错误类型和非有限数值会使准备失败。
 
 实现和验证依据：[启动准备](../../dataagent/bootstrap/startup.py)、[字段合并](../../dataagent/bootstrap/config_files.py)、[依赖解析](../../dataagent/config/plugins.py)、[配置合并测试](../../tests/test_plugin_configuration.py)。插件字段见 [插件](../extensions/plugins.md)。
 

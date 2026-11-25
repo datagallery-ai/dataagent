@@ -29,6 +29,7 @@
 | --- | --- | --- | --- |
 | `id` | 字符串 | 必填 | 等于目录名 |
 | `requires` | 插件 ID 数组 | `[]` | 自动启用本地传递依赖，依赖先加载 |
+| `params` | 对象或省略 | `{}` | 当前插件的业务参数默认值；低于 defaults_file 和产品 plugins.config 的优先级 |
 | `defaults_file` | 相对路径或省略 | 省略 | 只含 plugins.config 的 YAML 默认片段 |
 | `system_prompt_file` | 相对路径或省略 | 省略 | UTF-8 Markdown |
 | `tools` | 对象 | `{}` | 本地 ID 到 `{ "entrypoint": "file.py:symbol", "scope": "all" }` |

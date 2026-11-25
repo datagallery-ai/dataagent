@@ -12,8 +12,10 @@ from types import MappingProxyType
 from dataagent.bootstrap.config_files import (
     ENV_REFERENCE,
     ConfigSource,
+    Layer,
     _load_layer,
     expand_env,
+    freeze,
     load_layers,
     merge,
 )
@@ -264,6 +266,27 @@ def _configure_plugins(paths, layers, settings, environment, dotenv):
     selected = resolve_plugins(settings.plugins, candidates.plugin_roots)
     defaults = []
     for root, spec in selected:
+        if spec.params:
+            source = contained_path(root, ".plugin.yaml")
+            params = expand_env(
+                spec.params,
+                environment,
+                source=source,
+                home=paths.home,
+                location=("params",),
+                dotenv=dotenv,
+            )
+            defaults.append(
+                Layer(
+                    scope="plugin",
+                    path=source,
+                    data=freeze({"plugins": {"config": {spec.id: params}}}),
+                    env=environment,
+                    home=paths.home,
+                    base_dir=root,
+                    dotenv=dotenv,
+                )
+            )
         if spec.defaults_file is not None:
             check_yaml_path(Path(spec.defaults_file))
             layer = _load_layer(
