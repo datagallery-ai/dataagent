@@ -14,6 +14,7 @@ from dataagent.assembly.context import AgentContext
 from dataagent.bootstrap.discovery import extension_revision
 from dataagent.bootstrap.startup import refresh_extensions
 from dataagent.config.declarations import HookSpec
+from dataagent.config.strict_yaml import read_yaml
 from dataagent.extensions.hooks import compile_hook
 from dataagent.extensions.run_hooks import RunHook
 
@@ -271,3 +272,98 @@ def test_subagent_services_expose_only_factory_inputs():
         "outputs_dir",
         "run_hooks",
     ]
+
+
+def _inline_params(plugin, params):
+    path = plugin / ".plugin.yaml"
+    manifest = json.loads(path.read_text())
+    manifest["params"] = params
+    path.write_text(json.dumps(manifest))
+
+
+def test_inline_params_merge_overrides_and_refresh(tmp_path, monkeypatch):
+    plugin = _plugin(tmp_path / "home", "a", config={"a": {"quality": {"sample_size": 20}}})
+    monkeypatch.setenv("TOOL_TEST_ENDPOINT", "startup")
+    _inline_params(
+        plugin,
+        {
+            "quality": {"sample_size": 10, "exclude_fields": ["id"]},
+            "endpoint": "$env{TOOL_TEST_ENDPOINT}",
+        },
+    )
+    runtime = _runtime(tmp_path, ["a"], {"a": {"quality": {"exclude_fields": []}}})
+    context = AgentContext(runtime)
+    assert context.get_plugin_config("a") == {
+        "quality": {"sample_size": 20, "exclude_fields": []},
+        "endpoint": "startup",
+    }
+    assert any(item.path == plugin / ".plugin.yaml" for item in runtime.report.configs)
+    # Invocation uses the prepared configuration; refresh rereads the manifest and environment.
+    revision = extension_revision(runtime)
+    _inline_params(plugin, {"quality": {"enabled": True}, "endpoint": "$env{TOOL_TEST_ENDPOINT}"})
+    monkeypatch.setenv("TOOL_TEST_ENDPOINT", "refreshed")
+    assert extension_revision(runtime) != revision
+    refreshed = refresh_extensions(runtime)
+    assert AgentContext(refreshed).get_plugin_config("a") == {
+        "quality": {"sample_size": 20, "exclude_fields": [], "enabled": True},
+        "endpoint": "refreshed",
+    }
+    assert context.get_plugin_config("a")["endpoint"] == "startup"
+
+
+def test_inline_params_bind_run_hooks_to_plugin_root(tmp_path):
+    plugin = _plugin(tmp_path / "home", "a")
+    _inline_params(
+        plugin,
+        {
+            "run_hooks": {"before_run": [{"entrypoint": "hooks.py:prepare"}]},
+        },
+    )
+    runtime = _runtime(tmp_path, ["a"])
+    (binding,) = runtime.extensions.run_hooks["a"]
+    assert binding.base_dir == plugin.resolve()
+    assert binding.spec.entrypoint == "hooks.py:prepare"
+    assert binding.spec.event == "before_run"
+    refreshed = refresh_extensions(runtime)
+    assert len(refreshed.extensions.run_hooks["a"]) == 1
+
+
+def test_de_agent_manifest_params_reach_runtime(tmp_path):
+    root = Path(__file__).resolve().parents[1] / "dataagent/plugins/de-agent"
+    manifest = read_yaml(root / ".plugin.yaml")
+    public = read_yaml(root / "config.yaml")["plugins"]["config"]["de-agent"]
+    assert set(manifest["params"]) == {
+        "word_roots",
+        "data_task_ir",
+        "delivery",
+        "dataops",
+        "sql_checkers",
+        "history_sql",
+    }
+    assert set(public) == {"model", "allowed_databases"}
+    runtime = _runtime(tmp_path, ["de-agent"])
+    context = AgentContext(runtime)
+    assert context.get_plugin_config("de-agent") == {**public, **manifest["params"]}
+    assert context.get_plugin_config("de-agent")["history_sql"] == {
+        "enabled": False,
+        "corpus_path": None,
+    }
+    assert context.get_plugin_config("de-agent")["dataops"]["timeout_s"] == 3600
+    assert (
+        context.get_plugin_config("de-agent")["sql_checkers"]["dataops_validation_enabled"] is True
+    )
+    # The existing explicit product override contract remains unchanged.
+    runtime = _runtime(
+        tmp_path,
+        ["de-agent"],
+        {
+            "de-agent": {
+                "dataops": {"timeout_s": 45},
+                "history_sql": {"enabled": True},
+            }
+        },
+    )
+    params = AgentContext(runtime).get_plugin_config("de-agent")
+    assert params["history_sql"] == {"enabled": True, "corpus_path": None}
+    assert params["dataops"]["timeout_s"] == 45
+    assert params["dataops"]["poll_interval_ms"] == 30000

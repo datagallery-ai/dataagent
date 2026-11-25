@@ -288,6 +288,7 @@ class PluginSpec(StrictModel):
     requires: list[Annotated[str, Field(pattern=f"^{NAME_PATTERN}$")]] = Field(default_factory=list)
     # Files relative to the plugin root: plugins.config defaults and the prompt.
     defaults_file: str | None = Field(default=None, min_length=1)
+    params: dict[str, JsonValue] = Field(default_factory=dict, repr=False)
     system_prompt_file: str | None = Field(default=None, min_length=1)
     tools: dict[str, ToolSpec] = Field(default_factory=dict)
     skills: list[str] = Field(default_factory=list)
