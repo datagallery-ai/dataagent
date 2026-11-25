@@ -29,12 +29,16 @@ __all__ = [
     "ResumeDecision",
     "TriggerDecision",
     "PreparedRuntime",
+    "RecallError",
+    "RecallOptions",
     "SemanticServiceClient",
     "SubagentServices",
+    "build_sql_service",
     "collect_model_stream",
     "create_agent",
     "load_mcp_tools",
     "prepare_runtime",
+    "recall_database",
     "safe_error",
     "read_yaml",
 ]
@@ -52,9 +56,13 @@ _LAZY = {
     "create_agent": ("dataagent.client", "create_agent"),
     "Agent": ("dataagent.client", "Agent"),
     "AgentContext": ("dataagent.assembly.context", "AgentContext"),
+    "RecallError": ("dataagent.db_explore", "RecallError"),
+    "RecallOptions": ("dataagent.db_explore", "RecallOptions"),
     "SubagentServices": ("dataagent.extensions.subagents", "SubagentServices"),
+    "build_sql_service": ("dataagent.data_gateway.sql_service", "build_sql_service"),
     "collect_model_stream": ("dataagent.model_stream", "collect_model_stream"),
     "load_mcp_tools": ("dataagent.extensions.mcp", "load_mcp_tools"),
+    "recall_database": ("dataagent.db_explore", "recall_database"),
 }
 
 

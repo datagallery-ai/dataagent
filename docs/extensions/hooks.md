@@ -43,6 +43,10 @@ dataagent:
 结果替换必须含对应 tool_call_id 的 ToolMessage。
 替换 Command 时须保留需要的其他状态更新；推荐通过 dataclasses.replace(result, update=...) 构造。
 
+标准子代理的状态 Hook 可用 LangChain 的 `@hook_config(can_jump_to=[...])` 声明跳转目标，
+并在状态更新中返回 `jump_to`。例如 `"end"` 结束当前子代理，`"model"` 返回当前子代理的模型调用。
+子代理通过 `task` 将结果交还给父 Agent。根级配置 Hook 维持默认路由。
+
 异步 Hook 需要 `ainvoke` 或 `astream`。同步 Hook 两种调用都可以。取消异步任务不能强行停掉已经在线程里运行的同步函数。
 
 ## 顺序和错误
