@@ -3,12 +3,14 @@
 import asyncio
 import json
 import logging
+from dataclasses import replace
 from uuid import UUID
 
 import httpx
 import pytest
-from conftest import ScriptedModel
+from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage
+from test_a2a_hitl import pending, response_for
 from test_a2a_server import _GatedModel, client_for, message, rpc, stream_turn, task_of
 
 from dataagent.diagnostics.errors import DataAgentError
@@ -76,6 +78,50 @@ async def test_a2a_ids_connect_response_session_trace_and_logs(runtime, caplog):
     (saved,) = audit_records(caplog, "a2a.trace.saved")
     assert saved["request_id"] == details["requestId"]
     assert saved["trace_file"] == str(trace_file)
+
+
+async def test_a2a_resume_completion_log_uses_the_resumed_run_id(runtime, caplog):
+    caplog.set_level(logging.INFO)
+    plugins = runtime.settings.plugins.model_copy(update={"enabled": ("data-qa",)})
+    runtime = replace(runtime, settings=runtime.settings.model_copy(update={"plugins": plugins}))
+    model = ScriptedModel(
+        responses=[
+            call("data-qa__request_human_feedback", {"question": "继续吗？"}),
+            AIMessage(content="已完成。"),
+        ]
+    )
+    async with client_for(runtime, model) as client:
+        paused = task_of(await rpc(client, message("先确认。", "correlated-resume")))
+        (interrupt,) = pending(paused)
+        resumed = await rpc(client, response_for(paused, {interrupt["id"]: "继续"}))
+        finished = task_of(resumed)
+        queried = await rpc(
+            client,
+            {
+                "jsonrpc": "2.0",
+                "id": "query",
+                "method": "GetTask",
+                "params": {"id": finished["id"]},
+            },
+        )
+
+    assert finished["status"]["state"] == "TASK_STATE_COMPLETED"
+    creation = metadata(paused)
+    assert metadata(finished) == creation
+    records = {
+        event["request_id"]: event for event in audit_records(caplog, "a2a.request.finished")
+    }
+    resume_record = records[resumed.headers["X-Request-ID"]]
+    (completed,) = audit_records(caplog, "a2a.assembly.completed")
+    assert resume_record["root_run_id"] == completed["root_run_id"] != creation["rootRunId"]
+    assert resume_record["task_root_run_id"] == creation["rootRunId"]
+    assert records[queried.headers["X-Request-ID"]]["root_run_id"] == creation["rootRunId"]
+    (saved,) = [
+        event
+        for event in audit_records(caplog, "a2a.trace.saved")
+        if event["request_id"] == resume_record["request_id"]
+    ]
+    assert saved["root_run_id"] == resume_record["root_run_id"]
 
 
 @pytest.mark.parametrize(
@@ -232,15 +278,10 @@ async def test_a2a_anonymous_nonblocking_query_list_cancel(runtime, caplog):
         assert metadata(canceled)["error"]["code"] == "CANCELLED"
         assert metadata(canceled)["requestId"] == response.headers["X-Request-ID"]
         assert canceled_response.headers["X-Request-ID"] != response.headers["X-Request-ID"]
-        # CancelTask acknowledges before trace/checkpoint cleanup has finished.
-        async with asyncio.timeout(5):
-            while not any(
-                r.get("task_id") == task["id"]
-                for r in audit_records(caplog, "a2a.assembly.cancelled")
-            ):
-                await asyncio.sleep(0.01)
+        assert any(
+            r.get("task_id") == task["id"] for r in audit_records(caplog, "a2a.assembly.cancelled")
+        )
     assert not audit_records(caplog, "a2a.assembly.completed")
-    assert audit_records(caplog, "a2a.assembly.cancelled")
 
 
 async def test_a2a_web_conflict_has_stable_task_code(runtime):

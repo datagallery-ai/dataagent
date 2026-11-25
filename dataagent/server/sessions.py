@@ -168,6 +168,18 @@ class Sessions:
             )
             await self.db.commit()
 
+    async def interrupt_waiting(self, user_id: str, thread_id: str, run_id: str) -> None:
+        """Mark a waiting turn as interrupted if it is still current."""
+        async with self._write_lock:
+            await self.db.execute(
+                """
+                UPDATE sessions SET status='interrupted', updated_at=?
+                WHERE user_id=? AND thread_id=? AND status='waiting' AND last_run_id=?
+            """,
+                (datetime.now(UTC).isoformat(), user_id, thread_id, run_id),
+            )
+            await self.db.commit()
+
 
 class SessionTurn:
     """One GUI or TUI turn against the shared session index.
@@ -239,6 +251,7 @@ def public_session(row: dict) -> dict:
         "title": row["title"],
         "createdAt": row["created_at"],
         "updatedAt": row["updated_at"],
-        "status": row["status"],
+        # Preserve the status enum used by the session clients.
+        "status": "interrupted" if row["status"] == "waiting" else row["status"],
         "hasCheckpoint": bool(row["last_checkpoint_id"]),
     }

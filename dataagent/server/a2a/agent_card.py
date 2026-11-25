@@ -45,8 +45,8 @@ def build_agent_card(
         name=name,
         description=description,
         version=__version__,
-        default_input_modes=["text/plain"],
-        default_output_modes=["text/plain"],
+        default_input_modes=["text/plain", "application/json"],
+        default_output_modes=["text/plain", "application/json"],
         capabilities=AgentCapabilities(streaming=False),
         skills=[
             AgentSkill(
@@ -54,8 +54,8 @@ def build_agent_card(
                 name="Chat",
                 description="Send a text message and receive the agent's final answer",
                 tags=["chat", "data-agent"],
-                input_modes=["text/plain"],
-                output_modes=["text/plain"],
+                input_modes=["text/plain", "application/json"],
+                output_modes=["text/plain", "application/json"],
             ),
         ],
         supported_interfaces=[

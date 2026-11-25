@@ -356,6 +356,11 @@ def _public_run_error(event, secrets: tuple[str, ...]) -> RunErrorEvent:
     return RunErrorEvent(message=message, code=code)
 
 
+def _a2a_owns_interruption(state) -> bool:
+    """A2A answers must go through the Task and its pause ID."""
+    return bool(state.interrupts and (state.metadata or {}).get("dataagent_a2a_task_id"))
+
+
 async def load_session_checkpoint(app, user_id: str, thread_id: str):
     """Return the session row and the messages the next turn continues from.
 
@@ -382,7 +387,9 @@ async def load_session_checkpoint(app, user_id: str, thread_id: str):
         message.model_dump(by_alias=True)
         for message in langchain_messages_to_agui(state.values.get("messages", []))
     ]
-    row["pendingInteractions"] = pending_interactions(state)
+    row["pendingInteractions"] = (
+        [] if _a2a_owns_interruption(state) else pending_interactions(state)
+    )
     return row, messages
 
 
@@ -394,7 +401,9 @@ def session_detail(row: dict, messages: list) -> dict:
         "messages": messages,
         "pendingInteractions": row.get("pendingInteractions", []),
         "notice": (
-            None
+            "This run is waiting for human input."
+            if row["status"] == "waiting"
+            else None
             if not incomplete
             else "Previous run did not complete. Restored the saved checkpoint."
             if row["last_checkpoint_id"]
@@ -556,6 +565,8 @@ def register_conversation_routes(
                 # comes from continuation_configurable.
                 config["configurable"] = continuation_configurable(thread_id, row)
                 state = await graph.aget_state({"configurable": config["configurable"]})
+                if _a2a_owns_interruption(state):
+                    raise HTTPException(409, "Answer the pending interaction through A2A")
                 pending = pending_interactions(state)
                 if body.answers is not None:
                     if not set(body.answers).issubset({item["interruptId"] for item in pending}):

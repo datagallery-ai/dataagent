@@ -379,6 +379,7 @@ def test_public_sdk_exports_only_the_high_level_path():
         "diagnostic_traceback",
         "log_context",
         "register_log_secrets",
+        "safe_interrupt_fields",
     }
     assert dataagent.lowlevel.__all__ == ["build_graph"]
     for name in ("build_graph", "load_extensions", "refresh_extensions", "error_code"):

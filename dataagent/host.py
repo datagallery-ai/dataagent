@@ -15,7 +15,7 @@ from dataagent.diagnostics.logging import (
     log_context,
     register_log_secrets,
 )
-from dataagent.diagnostics.render import ERROR_CODES, error_code, log_event
+from dataagent.diagnostics.render import ERROR_CODES, error_code, log_event, safe_interrupt_fields
 
 __all__ = [
     "ServerSettings",
@@ -31,4 +31,5 @@ __all__ = [
     "diagnostic_traceback",
     "log_context",
     "register_log_secrets",
+    "safe_interrupt_fields",
 ]

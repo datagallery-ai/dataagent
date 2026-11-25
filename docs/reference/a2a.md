@@ -47,7 +47,7 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
 | `params.message` | `SendMessage` 必填 | A2A Message 对象 |
 | `params.message.messageId` | 必填 | 非空，新消息用新编号；不承诺执行去重 |
 | `params.message.role` | 必填 | 用户输入使用 `"ROLE_USER"` |
-| `params.message.parts` | 必填 | 非空数组，本服务需要至少一段非空 `text`，多段文本合并为输入 |
+| `params.message.parts` | 必填 | 普通消息需要非空 `text`；HITL 恢复使用下文约定的单个 `data` part |
 | `params.message.contextId` | 可选 | 省略生成 UUID；续聊复用返回值，路径安全 ID 最长 128 字符 |
 | `params.message.taskId` | 可选 | 新任务省略；只允许引用已有任务，不能用它自建任务号，终态任务不能续接 |
 | `params.configuration` | 可选 | 省略采用协议 SDK 默认值 |
@@ -58,9 +58,9 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
 
 `contextId` 必须是最长 128 的路径安全 ID（字母、数字、下划线和连字符）。它同时是 LangGraph 的 `thread_id` 和会话目录名。省略时由协议生成 UUID。下一条消息从会话索引里记下的检查点继续，和 `/api/v1/runs` 是同一条。报错或取消也会把图已经到达的检查点写进这个索引。同一 context 上的调用串行执行。
 
-只读取文本 part。空文本或非法 `contextId` 使任务进入 `TASK_STATE_FAILED`，不会调用模型。成功时最终回答在 `result.task.artifacts`，状态是 `TASK_STATE_COMPLETED`。
+普通消息只读取文本 part。空文本或非法 `contextId` 使任务进入 `TASK_STATE_FAILED`，不会调用模型。HITL 响应单独解析，不作为新的用户文本交给模型。成功时最终回答在 `result.task.artifacts`，状态是 `TASK_STATE_COMPLETED`。
 
-这条会话记在进程用户（`default` 或 `--user`）的会话索引里。登记发生在读取 checkpoint 之前。`thread_id` 全局唯一：该 id 已经属于另一个 profile 时，任务失败，模型不会被调用。
+这条会话记在进程用户（`default` 或 `--user`）的会话索引里。先校验归属及待决中断，再登记本次运行。`thread_id` 全局唯一：该 id 已经属于另一个 profile 时，任务失败，模型不会被调用。
 
 默认匿名访问，所有访问者属于一个共享团队：能列举、读取、续接和取消同一实例内的任务。不同浏览器或客户端使用相同 `contextId` 就会进入同一段对话。日志里的 `user_id` 是进程 profile，不是访问者身份。
 
@@ -159,7 +159,7 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 
 | 方式 | 配置 | 返回与后续操作 |
 | --- | --- | --- |
-| 同步等待结果 | 省略或 `false` | HTTP 请求等待本轮结束，最终 Task 在 `result.task`；仍须检查失败/取消状态 |
+| 同步等待结果 | 省略或 `false` | HTTP 请求等到本轮结束或需要人工输入，Task 在 `result.task`；检查其实际状态 |
 | 异步任务 | `true` | 先取得 `result.task.id`，后台继续执行；用 `GetTask` 轮询到终态，必要时 `CancelTask` |
 | 流式结果 | 不支持 | Card `streaming=false`，不提供 A2A token/event 流 |
 | 完成回调 | 未配置 | 当前未接入 Push 通知发送链路，使用任务查询 |
@@ -199,11 +199,84 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 | `GetTask.params.historyLength` | 可选 | 非负整数，限制返回历史 |
 | `ListTasks.params` | 可传 `{}` | `contextId` 可选过滤会话；默认不包含 artifacts，按需设 `includeArtifacts: true` |
 
-Python `A2ACaller.send` 是可 `await` 的异步函数，但其当前请求等待最终结果，没有暴露 `returnImmediately` 参数；“Python 异步 I/O”与“先返回协议任务号”是两个维度。提前返回/轮询的实现依据见 [协议服务装配](../../dataagent/server/a2a/server.py)，项目内请求参考 [A2A 任务测试](../../tests/test_a2a_server.py)。
+Python `A2ACaller.send` 是可 `await` 的异步函数，但其当前请求等待本轮结果或外部输入，没有暴露 `returnImmediately` 参数；“Python 异步 I/O”与“先返回协议任务号”是两个维度。提前返回/轮询的实现依据见 [协议服务装配](../../dataagent/server/a2a/server.py)，项目内请求参考 [A2A 任务测试](../../tests/test_a2a_server.py)。
 
-停止轮询或关闭客户端不等于取消，需发送 `CancelTask`。Task 默认存于内存，进程重启后旧任务号不可查询，但同一 Home 下的会话和 checkpoint 可继续；这不是恢复旧 Task。`serve-a2a` 不提供 `/healthz`、`/ready`、会话或产物 API。
+停止轮询或关闭客户端不等于取消，需发送 `CancelTask`。Task 默认存于内存，进程重启后旧任务号不可查询。普通会话可从同一 Home 下的 checkpoint 继续；等待人工的会话还需要原任务关联，本阶段的限制见下文。这不是恢复旧 Task。`serve-a2a` 不提供 `/healthz`、`/ready`、会话或产物 API。
 
 本服务没有执行去重、自动重试或幂等承诺；超时后不要直接重发可能产生副作用的任务。
+
+## 原生 HITL 暂停与恢复 { #a2a-hitl }
+
+A2A 适配 LangGraph 原生 `interrupt()` / `Command(resume=...)`，不要求流式接口。业务工具或中间件触发中断后，Task 返回 `TASK_STATE_INPUT_REQUIRED`；此时未完成，不生成最终回答 artifact。同步调用在中断处返回，非阻塞调用可通过 `GetTask` 看到相同状态。
+
+`status.message.parts` 同时提供文本和以下结构化 `data` part。`kind` 是本服务定义的数据约定；`interrupts[].id/value` 对应原生中断，具体值由触发它的工具或中间件定义。待办使用 `pauseId` 标识当前暂停轮次。对外载荷保留完整的非敏感内容，密码或令牌等字段会脱敏。审批待办提供工具名称、脱敏参数和审批规则。执行依据服务端 Checkpoint 保存的参数或经批准的编辑。
+
+```json
+{
+  "data": {
+    "kind": "dataagent.hitl.request",
+    "pauseId": "pause-1",
+    "interrupts": [{
+      "id": "interrupt-1",
+      "value": {
+        "kind": "human_feedback",
+        "question": "按含税口径统计吗？",
+        "tool_call_id": "call-1"
+      }
+    }]
+  }
+}
+```
+
+收到人工答复后，继续调用同一个 `POST /a2a/jsonrpc`，携带版本头及按需启用的 Bearer 头。消息使用原 `taskId/contextId` 和新的 `messageId`，只包含一个 `data` part：
+
+```json
+{
+  "jsonrpc": "2.0", "id": "resume-1", "method": "SendMessage",
+  "params": {
+    "message": {
+      "role": "ROLE_USER", "messageId": "human-response-1",
+      "taskId": "task-1", "contextId": "thread-1",
+      "parts": [{"data": {
+        "kind": "dataagent.hitl.response",
+        "pauseId": "pause-1",
+        "responses": {"interrupt-1": "按含税口径。"}
+      }}]
+    }
+  }
+}
+```
+
+示例 ID 必须替换成实际返回值。每次暂停返回新的 `pauseId`，答复须带上当前值，即使原生中断 ID 与上一次相同。`responses` 是“原生中断 ID → 原生恢复值”的映射。对于 `data-qa__request_human_feedback`，值是答复文本；对于原生工具审批中间件，值是它要求的决定对象，例如：
+
+```json
+{"interrupt-1":{"decisions":[{"type":"approve"}]}}
+```
+
+普通原生中断的 `value` 含有绝对值大于等于 `2^53` 的数值时，待办以 `valueJson` 字符串携带完整 JSON，替代 `value`。例如 `{"id":"interrupt-1","valueJson":"{\"records\":[9223372036854775809]}"}`。答复含这类数值时，用 `responsesJson` 替代 `responses`，例如 `"responsesJson":"{\"interrupt-1\":{\"id\":9223372036854775809}}"`。客户端读写这两种字符串时须保留数值精度。直接用普通数值提交超范围答复会收到参数错误，待办保留。
+
+审批的 `action_requests[].args` 通常是对象。如果其中含有绝对值大于等于 `2^53` 的数值，服务端将整个参数对象编码为 JSON 文本，以保留整数 ID 的每一位。客户端可直接展示文本；编辑时应使用支持任意精度整数的解析器，或保留原始 JSON 文本。在 `edited_action.args` 中以字符串提交这份 JSON，例如 `"{\"id\":9223372036854775809}"`。直接提交含超范围数值的对象会收到参数错误，原待办可继续使用。直接批准时只提交 `approve`，工具使用 checkpoint 中的原参数。若待办含脱敏字段，编辑参数中仍出现 `[REDACTED]` 会被拒绝；要编辑请提供实际参数，要保留整份原参数请直接批准。
+
+拒绝示例为 `{"decisions":[{"type":"reject","message":"本次不允许执行。"}]}`。可选决定由原生中断的 `review_configs` 给出；批量工具审批按 `action_requests` 顺序提供对应决定。服务端把值转换为原生恢复命令，批准才执行工具，拒绝由原生中间件返回拒绝结果。澄清答复不等于审批通过。
+
+- 恢复后保持同一个 A2A Task，可再次进入 `INPUT_REQUIRED`，也可完成、失败或取消。Task metadata 保留创建请求的关联 ID，每次恢复另有自己的请求审计和 Trace。完成日志的 `root_run_id` 指向本轮执行，`task_root_run_id` 关联 Task 创建时的运行。
+- 入口校验拒绝错误或过期中断号、审批决定格式不符、缺少原任务以及发给等待中任务的普通文本，并返回 JSON-RPC 参数错误。修正后可用原任务和有效中断号重试。
+- 答复如果通过入口校验后才因并发重试而过期，服务返回 Task 的当前状态。若仍在等待人工输入，请按返回的新待办答复。
+- 恢复时如果同一会话被其他运行临时占用，Task 回到 `INPUT_REQUIRED`，状态消息提示稍后重试，结构化待办保留原 `pauseId` 和中断号。会话释放后可重新提交这份答复。
+- 等待期间会保存 Checkpoint 并释放执行占用。同一 context 的新任务不能绕过待决中断；需对原 Task 提交结构化响应。
+- `CancelTask` 在会话收尾后返回取消状态。取消待人工任务时，会话标为 `interrupted`，并保留检查点供查看。重新开始业务需使用新的 context。取消或终态 Task 不接受恢复。
+- 本阶段沿用进程内 TaskStore，不保证等待期间重启后的 A2A 恢复；旧 Task 丢失后应使用新 context 重新发起。原生 Checkpoint 本身仍保留。
+- 这是入站 A2A 的最小适配，不改变 REST/Web/TUI 的恢复接口，不增加审批策略配置。`A2ACaller.send` / 远端工具当前仍主要提供文本调用，结构化 HITL 响应按本节直接使用 JSON-RPC。未接入个人审批身份或多级审批。
+
+可控模型下的完整协议验证见 [test_a2a_hitl.py](../../tests/test_a2a_hitl.py)：覆盖两个服务入口、同步/非阻塞、中断查询、人工答复、多次中断、原生工具批准/拒绝及取消。
+
+在仓库根目录运行最小闭环，无需真实模型或语义服务：
+
+```bash
+uv run --locked pytest tests/test_a2a_hitl.py -q
+```
+
+手动联调可先在现有模型配置中启用 `data-qa` 插件，请主代理调用 `data-qa__request_human_feedback`；收到实际中断后按上述格式回复。工具审批用例由测试装配启用原生 `interrupt_on`，本次没有新增产品审批规则配置。
 
 ## 入站调用与本地子代理
 

@@ -5,6 +5,9 @@ from uuid import uuid4
 
 import httpx
 import pytest
+from a2a.helpers import new_task, new_text_status_update_event
+from a2a.server.agent_execution import AgentExecutor
+from a2a.types.a2a_pb2 import TaskState
 from conftest import ScriptedModel
 from langchain_core.messages import AIMessage
 
@@ -93,6 +96,10 @@ async def test_agent_card_uses_the_request_host(runtime):
     card = response.json()
     assert card["name"] == "DataAgent"
     assert card["skills"][0]["id"] == "chat"
+    for modes in ("defaultInputModes", "defaultOutputModes"):
+        assert set(card[modes]) == {"text/plain", "application/json"}
+    for modes in ("inputModes", "outputModes"):
+        assert set(card["skills"][0][modes]) == {"text/plain", "application/json"}
     assert card["capabilities"]["streaming"] is False
     interfaces = card["supportedInterfaces"]
     assert len(interfaces) == 1
@@ -127,6 +134,47 @@ async def test_invocation_failure_redacts_secrets(runtime):
     text = task["status"]["message"]["parts"][0]["text"]
     assert "test-secret" not in text
     assert "[REDACTED]" in text
+
+
+@pytest.mark.parametrize("base", [AgentExecutor, AgentKitExecutor])
+async def test_custom_executor_can_resume_with_plain_text(runtime, base):
+    class TextExecutor(base):
+        def __init__(self):
+            pass
+
+        async def execute(self, context, event_queue):
+            if context.current_task is None:
+                await event_queue.enqueue_event(
+                    new_task(
+                        task_id=context.task_id,
+                        context_id=context.context_id,
+                        state=TaskState.TASK_STATE_SUBMITTED,
+                    )
+                )
+                state, text = TaskState.TASK_STATE_INPUT_REQUIRED, "Which city?"
+            else:
+                state, text = TaskState.TASK_STATE_COMPLETED, context.get_user_input()
+            await event_queue.enqueue_event(
+                new_text_status_update_event(
+                    task_id=context.task_id,
+                    context_id=context.context_id,
+                    state=state,
+                    text=text,
+                )
+            )
+
+        async def cancel(self, context, event_queue):
+            raise NotImplementedError
+
+    async with client_for(runtime, ScriptedModel(responses=[]), executor=TextExecutor()) as client:
+        waiting = task_of(await rpc(client, message("Start", "custom-executor")))
+        assert waiting["status"]["state"] == "TASK_STATE_INPUT_REQUIRED"
+        answer = message("Paris", waiting["contextId"])
+        answer["params"]["message"]["taskId"] = waiting["id"]
+        finished = task_of(await rpc(client, answer))
+    assert finished["id"] == waiting["id"]
+    assert finished["status"]["state"] == "TASK_STATE_COMPLETED"
+    assert finished["status"]["message"]["parts"] == [{"text": "Paris"}]
 
 
 @pytest.mark.parametrize("explicit_token", [None, "secret-token"])
