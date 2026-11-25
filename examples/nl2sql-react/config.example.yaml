@@ -1,0 +1,45 @@
+schema_version: 4
+dataagent:
+  model: primary
+  limits:
+    timeout_seconds: 1800
+    model_calls_per_agent: 32
+    tool_calls_per_agent: 64
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+    temperature: 0
+    max_retries: 2
+plugins:
+  enabled:
+  - nl2sql-react
+  config:
+    nl2sql-react:
+      max_rows: 1000
+      query_timeout_seconds: 30
+      control:
+        ambiguity: clarify
+        max_probes_per_issue: 4
+        max_total_probes: 8
+        max_issues: 6
+        max_contract_revisions: 1
+        max_answer_attempts: 3
+      dbexplore:
+        max_steps: 8
+        max_tool_calls: 24
+        max_parallel_tools: 8
+        prefetch_schema: true
+        max_tables: 8
+        max_rows: 20
+        max_context_chars: 48000
+        timeout_seconds: 90
+        query_timeout_seconds: 5
+      database:
+        engine: sqlite
+        dialect: sqlite
+        db_id: $env{BIRD_DB_ID}
+        description: BIRD SQLite database
+        path: $env{NL2SQL_DATABASE_PATH}

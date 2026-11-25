@@ -13,6 +13,7 @@
 """Verify explicit stream collection and caller-controlled native agent streaming."""
 
 import json
+from dataclasses import replace
 from types import SimpleNamespace
 
 import httpx
@@ -118,10 +119,16 @@ def response(body, *, tool=False):
 @pytest.mark.parametrize("mode", ["planner_events", "planner_invoke", "collect", "plain"])
 async def test_native_call_modes_use_correct_http_protocol(runtime, mode):
     requests = []
+    alias = runtime.settings.dataagent.model
+    models = dict(runtime.settings.models)
+    extra_body = {"thinking": {"type": "enabled"}, "reasoning_effort": "max"}
+    models[alias] = models[alias].model_copy(update={"extra_body": extra_body})
+    runtime = replace(runtime, settings=runtime.settings.model_copy(update={"models": models}))
 
     async def handler(request):
         body = json.loads(request.content)
         requests.append(body)
+        assert {key: body[key] for key in extra_body} == extra_body
         return response(body)
 
     async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:

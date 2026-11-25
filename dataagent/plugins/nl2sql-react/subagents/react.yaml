@@ -1,0 +1,29 @@
+schema_version: 1
+name: nl2sql-react
+description_file: prompts/description.md
+tools:
+- review_query
+- search_objects
+- execute_sql
+- db_explore
+- update_query_state
+- finish_query
+skills: []
+filesystem_tools:
+- read_file
+hooks:
+- event: before_agent
+  entrypoint: nl2sql_local/hooks/sql_rules.py:prepare_sql_rules
+- event: before_agent
+  entrypoint: nl2sql_local/hooks/examples.py:prepare_examples
+- event: after_model
+  entrypoint: nl2sql_local/query_control/flow.py:after_model
+- event: before_agent
+  entrypoint: nl2sql_local/hooks/context.py:prepare_context
+- event: before_tool
+  entrypoint: nl2sql_local/query_control/flow.py:before_tool
+- event: after_tool
+  entrypoint: nl2sql_local/query_control/flow.py:after_tool
+- event: after_agent
+  entrypoint: nl2sql_local/query_control/flow.py:after_agent
+system_prompt_file: prompts/agent.md
