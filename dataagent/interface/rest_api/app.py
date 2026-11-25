@@ -120,11 +120,11 @@ class IngestionStatusContent(BaseModel):
 
     scenario: str = Field(min_length=1)
     # 128 chars keeps the percent-encoded query far under httpx's 65536-char URL limit.
-    traceId: str = Field(min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$")
+    traceId: str | None = Field(default=None, min_length=1, max_length=128, pattern=r"^[^\x00-\x1f\x7f]+$")
 
 
 class IngestionStatusRequest(BaseModel):
-    """Ask whether one ingestion job, identified by traceId, has finished."""
+    """Query one ingestion job by traceId, or list up to 100 jobs when omitted."""
 
     model_config = ConfigDict(extra="forbid")
 
