@@ -80,14 +80,18 @@ from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_resolver_assets imp
     _CONFIRM_DIRECTIVE_RE,
     _CONFIRMED_REFERENCE_MARKERS,
     _FIELD_CONCEPT_MAP,
+    _GAP_TOPUP_PROMPT,
     _IR_CALIBER_REVIEW_MARKERS,
     _IR_HITL_AMBIGUITY_TITLES,
     _IR_HITL_MARKERS,
     _IR_HITL_SOURCE_TITLES,
+    _MULTIPART_HEADER_RE,
     _NEGATED_CONFIRM_RE,
+    _PART_ASK_FORM_RE,
     _QUALIFIED_TABLE_NAME_RE,
     _REQUEST_CONFIRM_FORM_RE,
     _SCHEMA_DERIVATION_MARKERS,
+    _SEMANTIC_ASK_MARKERS,
     _TABLE_CONVERGENCE_MARKERS,
     _HITL_AUTO_RESOLVER_PROMPT,
     _IDENTIFIER_FIELD_CANDIDATES,
@@ -95,6 +99,7 @@ from dataagent.core.suite.builtin_suites.de_agent.hooks.hitl_resolver_assets imp
     _TABLE_PROPOSAL_RE,
     _TABLE_PRONOUN_RE,
     _TABLE_SCOPE_CONTEXT_RE,
+    _TABLE_SELECTION_ASK_RE,
     _TABLE_SUFFIX_GRAINS,
     _TIME_RHS_TOKEN,
     _TIME_VAR_SEMANTICS,
@@ -265,6 +270,33 @@ def _table_proposal_una_override(hil_question: str, base_action: str) -> str | N
     return "TABLE_CONFIRM"
 
 
+def _table_selection_output_override(hil_question: str, base_action: str) -> str | None:
+    """表选择问型升判修正：OUTPUT_SCHEMA_PREVIEW → TABLE_CONFIRM。
+
+    实证：三连问（源表选择 v2_dm 还是 v1_dm / 输出目标表是否为 X /
+    序列格式）被 pending_action 里"目标表名为"关键词整问抢进 OUTPUT——关键词
+    序 OUTPUT 在前，"源表选用/方案A"等 TABLE_CONFIRM 关键词被压住；OUTPUT
+    程序化只做列数对比（且"v1版15字段"被列数兜底正则误读），源表子问零应答，
+    agent 沿错误源表交付 FAIL。同型问 r2 无"目标表名"字样即正确落
+    TABLE_CONFIRM，程序化 diff 拒错表后 agent 换 golden 源表交付——双证。
+
+    签名 = 选用动词（hitl_resolver_assets._TABLE_SELECTION_ASK_RE）+ ≥2 个
+    不同表候选（表提案对比的最小规模；单表+选用动词不升判）。满足时源表判定
+    是唯一能推进的答复。仅动 OUTPUT 侧（劫持方向）；IR 标记问由
+    _ir_hitl_override 在链上先行接管。回放语料 82 个 OUTPUT 问零命中本签名
+    （含 ≥2 表的 14 个 OUTPUT 问均无选用动词，含"方案A…还是/源表…还是"的
+    更宽变体也零命中，已仿真验证）。
+    """
+    if base_action != "OUTPUT_SCHEMA_PREVIEW":
+        return None
+    q = hil_question or ""
+    if not _TABLE_SELECTION_ASK_RE.search(q):
+        return None
+    if len(_extract_agent_tables(q)) < 2:
+        return None
+    return "TABLE_CONFIRM"
+
+
 def _schema_derivation_una_override(hil_question: str, base_action: str) -> str | None:
     """列构成确认误路由修正：UNA → OUTPUT_SCHEMA_PREVIEW。
 
@@ -284,6 +316,7 @@ _HITL_CLASSIFIER = HitlQuestionClassifier(
     default_action=HITL_DEFAULT_ACTION,
     overrides=(
         _ir_hitl_override,  # IR queue markers first — never UNA-reject DataTaskIR asks
+        _table_selection_output_override,  # 表选择问型升判（IR 之后：IR 标记问优先）
         _mixed_question_override,
         _caliber_gap_override,
         _table_proposal_una_override,
@@ -618,7 +651,15 @@ def _describe_golden_time_window(golden_sql: str, time_field: str) -> str:
 
 
 def _extract_agent_column_count(text: str) -> int | None:
-    """从 agent 提问文本提取其计划的输出列数（如"输出 8 列"/"8个字段"）。"""
+    """从 agent 提问文本提取其计划的输出列数（如"输出 8 列"/"8个字段"）。
+
+    兜底正则前置词守卫：裸"N列/N字段"常是表字段数描述而非计划输出列数
+    （近变体对比"v1版15字段 vs v2版9字段"、表属性括注"行为明细表（54字段，
+    留存100天）"曾被误读成"计划输出 15/54 列"，OUTPUT 列数对比答复带偏
+    agent）。数字前 8 字符窗内含表属性语（版/该表/张表/表字段/字段数/表（）
+    时不算计划列数；"字段定义（8列""确认的11列方案"等 agent 自己的输出
+    结构描述不受影响。
+    """
     if not text:
         return None
     m = re.search(r"(?:输出|共|包含|计划|设计)[^0-9]{0,6}(\d{1,3})\s*(?:个?\s*(?:列|字段|column))", text)
@@ -626,7 +667,9 @@ def _extract_agent_column_count(text: str) -> int | None:
         return int(m.group(1))
     m = re.search(r"(\d{1,3})\s*(?:个?\s*(?:列|字段|column))", text)
     if m:
-        return int(m.group(1))
+        lead = text[max(0, m.start() - 8):m.start()]
+        if not re.search(r"版|该表|张表|表字段|字段数|表（", lead):
+            return int(m.group(1))
     return None
 
 
@@ -692,7 +735,7 @@ def _count_golden_output_columns(golden_sql: str) -> int | None:
 
 def _extract_golden_schema_summary(golden_sql: str) -> str:
     """输出形态的业务概要（供 LLM 内部判断；不含原始 SELECT / 目标表名）。
-
+ 
     列数与粒度用自然语言描述，避免把英文列名清单塞进 prompt 诱发照搬。
     """
     if not golden_sql:
@@ -718,8 +761,8 @@ def _extract_golden_schema_summary(golden_sql: str) -> str:
 def _extract_relevant_sql_snippet(golden_sql: str, hil_question: str) -> str:
     """兼容旧调用：改为返回概念化口径参考，不再回传 golden SQL 原文行。"""
     return _build_caliber_review_reference(golden_sql)
-
-
+ 
+ 
 def _build_caliber_review_reference(golden_sql: str) -> str:
     """口径/最终检视参考块：结构/粒度/时间的业务描述，不含 SQL 原文与英文字段。"""
     if not golden_sql:
@@ -751,8 +794,8 @@ def _build_caliber_review_reference(golden_sql: str) -> str:
             "（读和写都要落到该小时；不是当天全部小时聚合）"
         )
     return "\n".join(parts)
-
-
+ 
+ 
 def _extract_ir_review_column_count(hil_question: str) -> int | None:
     """从最终检视摘要提取 IR 宣称的业务列规模。"""
     text = hil_question or ""
@@ -770,8 +813,8 @@ def _extract_ir_review_column_count(hil_question: str) -> int | None:
             except ValueError:
                 continue
     return None
-
-
+ 
+ 
 def _looks_like_bare_caliber_confirm(answer: str) -> bool:
     """是否为几乎无纠正信息的确认句（最终检视确认门槛用）。"""
     text = (answer or "").strip()
@@ -782,8 +825,8 @@ def _looks_like_bare_caliber_confirm(answer: str) -> bool:
     return bool(
         re.search(r"确认|按此生成|可以生成|按此推进|没问题|无遗漏", text)
     )
-
-
+ 
+ 
 def _vet_caliber_review_confirmation(
     answer: str,
     golden_sql: str,
@@ -794,7 +837,7 @@ def _vet_caliber_review_confirmation(
         return answer
     if not _looks_like_bare_caliber_confirm(answer):
         return answer
-
+ 
     conflicts: list[str] = []
     golden_cols = _count_golden_output_columns(golden_sql)
     ir_cols = _extract_ir_review_column_count(hil_question)
@@ -804,7 +847,7 @@ def _vet_caliber_review_confirmation(
             f"输出列数需对齐任务要求（约 {golden_cols} 列），当前摘要约 {ir_cols} 列，"
             "请先改输出形态再生成"
         )
-
+ 
     traits = _infer_golden_calliber_traits(golden_sql)
     gb_keys = traits.get("group_by_keys") or []
     q = hil_question or ""
@@ -821,7 +864,7 @@ def _vet_caliber_review_confirmation(
                 "粒度应是主体与分桶维的组合（一行一个组合），"
                 "不要做成单一主体一行再把时段摊成多列宽表"
             )
-
+ 
     if re.search(r"\bpt_h\s*=\s*['\"]?\$hour", golden_sql, re.IGNORECASE):
         hour_ok = bool(re.search(r"指定小时|单小时|pt_h|那个小时|任务指定的那一个小时", q + answer))
         all_hours_claim = bool(re.search(r"全部小时|所有小时|当天小时", q + answer))
@@ -830,16 +873,15 @@ def _vet_caliber_review_confirmation(
                 "时间需为指定小时切片：同一天内只取任务指定的那一个小时，"
                 "读和写都要落到该小时，不要聚合成当天全部小时"
             )
-
+ 
     if not conflicts:
         return answer
-
+ 
     rewritten = "；".join(conflicts) + "。请按上述业务口径调整后再生成，不要按当前摘要直接确认。"
     logger.info(
         f"[hitl_auto_resolver] IR_CALIBER_REVIEW 确认闸改写空确认: {rewritten[:120]!r}"
     )
     return rewritten
-
 
 def hitl_auto_resolver(
     state: FlexState,
@@ -889,13 +931,13 @@ def hitl_auto_resolver(
 
     logger.debug(f"[hitl_auto_resolver] 原始 query: {original_query[:80]!r}...")
 
-    # 3. 提取 HIL 问题（须在 budget 硬收敛前完成：口径最终检视可占用预留一轮）
+    # 3. 提取 HIL 问题
     hil_question = extract_hil_question(feedback_call)
     if not hil_question:
         logger.debug("[hitl_auto_resolver] 无法提取 HIL 问题内容，跳过")
         return inject_fallback_reply(state, messages, feedback_call, reason="no_hil_question")
 
-    # 4. Budget 机制检查（口径最终检视免强制收敛，避免选表等中途问把预算烧光后无法代答）
+    # 4. Budget 机制检查（口径复核类询问豁免：预算耗尽仍答复，不强制收敛）
     budget = get_hitl_budget(state, original_state)
     turn_count = get_hitl_turn_count(state, original_state)
     logger.info(f"[hitl_auto_resolver] budget={budget}, turn_count={turn_count}")
@@ -1423,6 +1465,51 @@ def _record_rejected_tables(
         logger.warning(f"[hitl_auto_resolver] 已拒绝源表台账写入失败: {exc}")
 
 
+def _load_rejected_ledger_tables(workspace_root: Path | None) -> list[str]:
+    """读持久被拒台账（.memory/hitl_rejected_tables.json）的表清单。
+
+    无台账/损坏/无 workspace 时返回空 list（无拒绝历史 = 不拦截）。
+    """
+    if workspace_root is None:
+        return []
+    try:
+        payload = json.loads(
+            (workspace_root / ".memory" / "hitl_rejected_tables.json").read_text(encoding="utf-8")
+        )
+    except Exception:
+        return []
+    tables = payload.get("rejected_tables") if isinstance(payload, dict) else None
+    if not isinstance(tables, list):
+        return []
+    return [str(t) for t in tables if str(t or "").strip()]
+
+
+def _rejected_table_reflow_tail(hil_question: str, workspace_root: Path | None) -> str | None:
+    """OUTPUT/AMBIGUITY 答复的已拒表回流拦截尾段。
+
+    实证：被拒表经 OUTPUT/AMBIGUITY 类问题回流（"基于您期望输出
+    21列的反馈，被拒的第一张表恰好有21个字段……现按您确认的口径重新提案"）
+    ——这两个 action 的程序化应答只做列数/口径，不碰源表判定，被拒表无人
+    点名，agent 下一轮继续提，重提案循环耗尽交互预算零交付。答复追加拒源
+    尾段：问题内表名 ∩ 持久台账 → 客户口吻点名"已否定过、不要再提"，把
+    TABLE_CONFIRM 的拒绝语义延伸到其余 action 的答复通道。表名均在台账里
+    （agent 自己提过、被拒过），零泄漏边界不破。
+    """
+    if workspace_root is None:
+        return None
+    rejected = _load_rejected_ledger_tables(workspace_root)
+    if not rejected:
+        return None
+    reflow = [t for t in _extract_agent_tables(hil_question) if any(_tables_match(t, r) for r in rejected)]
+    if not reflow:
+        return None
+    return (
+        f"另外，{'、'.join(reflow)} 这几张表我之前已经明确否定过，"
+        "请不要再把它们作为候选提回来；请避开这几张表推进后续工作"
+        "（若确实需要新的数据源，请基于元数据检索整理新的 2-3 个选项来找我确认）。"
+    )
+
+
 def _answer_table_confirm_programmatic(
     golden_sql: str,
     hil_question: str,
@@ -1551,7 +1638,7 @@ def _sanitize_llm_reply_leak(
     *,
     programmatic: bool = False,
 ) -> str:
-    """防泄漏护栏：回复中出现 agent 未提到的 golden 表名即视为答案泄漏。
+    """防泄漏护栏：LLM 回复中出现 agent 未提到的 golden 表名即视为答案泄漏。
 
     客户角色不知道数仓表名；golden 表名被 LLM 报出 = 替 agent 做了 schema linking。
     - LLM + TABLE_CONFIRM：整体替换为客户口吻固定模板（要求给候选选项）；
@@ -1605,7 +1692,6 @@ def _sanitize_llm_reply_leak(
             )
     return sanitized
 
-
 _SQL_JARGON_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bINSERT\s+OVERWRITE\b", re.IGNORECASE), "写入结果"),
     (re.compile(r"\bPARTITION\s*\([^)]*\)", re.IGNORECASE), "对应分区"),
@@ -1616,11 +1702,11 @@ _SQL_JARGON_PATTERNS: tuple[tuple[re.Pattern[str], str], ...] = (
     (re.compile(r"\bcollect_set\b", re.IGNORECASE), "去重后拼接"),
     (re.compile(r"\brow_number\s*\(\s*\)\s*over\b", re.IGNORECASE), "按序编号"),
 )
-
-
+ 
+ 
 def _sanitize_unmentioned_golden_tokens(answer: str, golden_sql: str, hil_question: str) -> str:
     """剥除回复中提问未出现的 golden 英文字段 / SQL 黑话，改成业务话。
-
+ 
     允许复述 Agent 提问已写出的表名/字段；禁止把参考 SQL 原文挪进客户口吻答复。
     """
     if not answer:
@@ -1628,12 +1714,12 @@ def _sanitize_unmentioned_golden_tokens(answer: str, golden_sql: str, hil_questi
     text = answer
     q = hil_question or ""
     q_low = q.lower()
-
+ 
     # SQL 黑话：提问未出现该关键字时改写
     for pat, repl in _SQL_JARGON_PATTERNS:
         if pat.search(text) and not pat.search(q):
             text = pat.sub(repl, text)
-
+ 
     # 已知字段/标识：提问未提则换成概念名
     tokens: set[str] = set()
     tokens.update(str(f).lower() for f in _IDENTIFIER_FIELD_CANDIDATES)
@@ -1643,7 +1729,7 @@ def _sanitize_unmentioned_golden_tokens(answer: str, golden_sql: str, hil_questi
     for m in re.findall(r"\b[a-z][a-z0-9_]{2,}\b", (golden_sql or "").lower()):
         if m in _FIELD_CONCEPT_MAP or m in tokens:
             tokens.add(m)
-
+ 
     for tok in sorted(tokens, key=len, reverse=True):
         if len(tok) < 3:
             continue
@@ -1664,8 +1750,8 @@ def _sanitize_unmentioned_golden_tokens(answer: str, golden_sql: str, hil_questi
             flags=re.IGNORECASE,
         )
     return text
-
-
+ 
+ 
 def _finalize_hitl_reply(
     answer: str,
     golden_sql: str,
@@ -1675,7 +1761,7 @@ def _finalize_hitl_reply(
     programmatic: bool = False,
 ) -> str:
     """统一出口：表名防泄漏 + 未提及英文字段/SQL 原文自然语言化。
-
+ 
     ``programmatic=True`` 时 TABLE_CONFIRM 不做整段模板替换（保留程序化拒绝/
     升级与池内表名核对建议），其余 action 仍可做泄漏表名占位剥除。
     """
@@ -1806,7 +1892,15 @@ def _vet_llm_confirmation(
                 concepts = _clause_identifier_concepts(clause)
                 if concepts and golden_concept not in concepts:
                     if not id_redirected:
-                        out.append(_identifier_redirect_clause(golden_concept, concepts))
+                        redirect = _identifier_redirect_clause(golden_concept, concepts)
+                        # golden 标识字段已在 agent 提问候选里（agent 自己
+                        # 列过，点名不破零泄漏）→ 顺带正面确认，agent 不必再回
+                        # 字段清单逐个核对
+                        if golden_id and re.search(
+                            rf"\b{re.escape(golden_id)}\b", hil_question, re.IGNORECASE
+                        ):
+                            redirect += f"你列的候选里 {golden_id} 就是我要的，直接用它。"
+                        out.append(redirect)
                         id_redirected = True
                         logger.info(
                             f"[hitl_auto_resolver] LLM 假确认防线：标识体系纠正（子句概念 {sorted(concepts)} 与 golden 不符）"
@@ -1816,9 +1910,19 @@ def _vet_llm_confirmation(
                 wrong_tables = _vet_table_offending_tables(clause, golden_tables, agent_tables)
                 if wrong_tables:
                     if not table_redirected:
+                        # golden 已在 agent 提问候选里（agent 自己提过，点名
+                        # 不破零泄漏）→ 拒绝答复带正面确认；correct 非空走推进
+                        # 优先模板（不再把 agent 推回换词重检索——曾出现手握
+                        # 正解候选仍被推回检索的拒绝-重检索循环）
+                        correct_tables = list(
+                            dict.fromkeys(
+                                t for t in agent_tables
+                                if any(_tables_match(t, g) for g in golden_tables)
+                            )
+                        )
                         out.append(
                             _table_rejection_reply(
-                                [],
+                                correct_tables,
                                 wrong_tables,
                                 query_head,
                                 _near_variant_caliber_hint(golden_tables, wrong_tables),
@@ -1826,7 +1930,8 @@ def _vet_llm_confirmation(
                         )
                         table_redirected = True
                         logger.info(
-                            f"[hitl_auto_resolver] LLM 假确认防线：源表假确认纠正（被错误确认: {wrong_tables}）"
+                            f"[hitl_auto_resolver] LLM 假确认防线：源表假确认纠正（被错误确认: {wrong_tables}，"
+                            f"正面确认: {correct_tables}）"
                         )
                     continue
         out.append(clause)
@@ -2052,6 +2157,176 @@ def _load_golden_sql_for_reply(matched_task: dict, state: Any, runtime: Any) -> 
     return "", golden_sql_path
 
 
+def _split_question_parts(hil_question: str) -> list[str] | None:
+    """复合提问按 markdown 节切分部件；无节头结构时返回 None（调用方回退子句切分）。
+
+    结构化提问用节承载多个待确认项（"## 待确认1：…"/"## 待确认2：…"）——
+    节是 agent 组织子问的天然单元，表候选/选项清单不会被句读打散。≥2 个
+    节头才走节切分；首个节头之前的 preamble 是提问动机复述（reason 段），
+    非独立子问，丢弃；末节头之后的尾段（"请确认或选择以上两项"）并入末节。
+    """
+    text = hil_question or ""
+    headers = list(_MULTIPART_HEADER_RE.finditer(text))
+    if len(headers) < 2:
+        return None
+    parts: list[str] = []
+    for i, m in enumerate(headers):
+        end = headers[i + 1].start() if i + 1 < len(headers) else len(text)
+        seg = text[m.start() : end].strip()
+        if seg:
+            parts.append(seg)
+    return parts or None
+
+
+def _part_has_semantic_ask(text: str) -> bool:
+    """语义类子问：含义/区分维度提问，或口径缺口标记（映射/机制/取用层级）。
+
+    这类子问没有程序化应答器（表判定/列数对比/口径原语均覆盖不到），
+    只能由 LLM 以 golden 为内部判定素材补答。
+    """
+    return any(marker in text for marker in _SEMANTIC_ASK_MARKERS) or any(
+        marker in text for marker in _CALIBER_GAP_FOLLOWUP_MARKERS
+    )
+
+
+def _part_is_output_ask(text: str) -> bool:
+    """输出列/输出结构类子问（列数对比可程序化应答的信号范围）。"""
+    if any(kw in text for kw in HITL_ACTION_KEYWORDS["OUTPUT_SCHEMA_PREVIEW"]):
+        return True
+    if re.search(r"\d+\s*列", text):
+        return True
+    return any(marker in text for marker in _SCHEMA_DERIVATION_MARKERS)
+
+
+def _question_part_signature(part: str, primary_action: str) -> str | None:
+    """部件级动作签名：semantic / table / output / covered / None。
+
+    判定序（防误触发的三层收敛）：
+    1. 非问句形态（描述性段落/背景铺垫/已确认回述）→ None，不应答；
+    2. 主 action 族部件 → covered：整问程序化应答（含 _with_caliber 口径
+       追加）已覆盖该部件，跳过防重复应答与重复副作用（表判定副作用：
+       拒绝台账/扩池标记只随主应答写一次）；
+    3. 其余按 语义 > 表选择 > 输出列 识别。语义优先：含义/维度类子问的
+       选项里可能内嵌表名（"方案A：按标识拆分，来源 X 表"），按表部件
+       程序化应答会答非所问。
+    口径原语子问（标识/时间/去重）不在此识别——任何主 action 下都由
+    _with_caliber / AMBIGUITY 应答覆盖（golden 特征可解析时），落到
+    None 自然跳过。
+    """
+    text = part or ""
+    if not text.strip() or not _PART_ASK_FORM_RE.search(text):
+        return None
+    table_sig = bool(_extract_agent_tables(text)) and bool(
+        _TABLE_PROPOSAL_RE.search(text) or _TABLE_SELECTION_ASK_RE.search(text)
+    )
+    output_sig = _part_is_output_ask(text)
+    if primary_action == "TABLE_CONFIRM" and table_sig:
+        return "covered"
+    if primary_action == "OUTPUT_SCHEMA_PREVIEW" and output_sig:
+        return "covered"
+    if _part_has_semantic_ask(text):
+        return "semantic"
+    if table_sig:
+        return "table"
+    if output_sig:
+        return "output"
+    return None
+
+
+def _compose_multipart_answer(
+    primary_answer: str,
+    primary_action: str,
+    hil_question: str,
+    golden_sql: str,
+    original_query: str,
+    messages: list | None,
+    workspace_root: Path | None,
+    runtime: Any,
+) -> tuple[str, bool]:
+    """多部件应答合成：主 action 程序化应答之外，识别并补答其余子问部件。
+
+    背景：复合提问（一次同时问源表选择 + 字段后缀业务含义 + 输出列数）
+    原先整问按主 action 单应答——程序化应答部分覆盖（非 None）即整问
+    返回，LLM 兜底（仅在程序化 None 时触发）被阻断，其余子问永久无
+    答复，agent 只能按自己的倾向猜。
+
+    合成策略（能程序化的程序化，语义类一次 LLM 补答）：
+    - 节头结构（≥2 个 markdown 节）→ 节级部件：表选择/输出列部件先跑
+      各自程序化应答器（表 diff / 列数对比），程序化 None 的部件连同
+      语义部件收进缺口清单；
+    - 无节头 → 子句兜底（保守：只补语义缺口子问与输出列子句，不做
+      表部件应答——表选择 ask 常跨子句散布，子句级表检测会误判）；
+    - 缺口清单一次 LLM 调用补答（golden 作内部判定素材；防泄漏双防线
+      _sanitize_llm_reply_leak + _vet_llm_confirmation 照常在补答段运行）。
+
+    返回 (合成答复, 是否发生 LLM 补答)；无其余部件时原样返回主应答。
+    """
+    sections = _split_question_parts(hil_question)
+    append_segments: list[str] = []
+    gap_sections: list[str] = []
+    if sections is not None:
+        for sec in sections:
+            sig = _question_part_signature(sec, primary_action)
+            if sig in (None, "covered"):
+                continue
+            if sig == "table":
+                sub = _answer_table_confirm_programmatic(
+                    golden_sql, sec, original_query, messages, workspace_root
+                )
+                if sub:
+                    append_segments.append(sub)
+                else:
+                    gap_sections.append(sec)
+            elif sig == "output":
+                sub = _answer_output_schema_programmatic(golden_sql, sec)
+                if sub:
+                    append_segments.append(sub)
+                else:
+                    gap_sections.append(sec)
+            else:
+                gap_sections.append(sec)
+    else:
+        for clause in _split_clauses(hil_question or ""):
+            clause = clause.strip()
+            if not clause or not _PART_ASK_FORM_RE.search(clause):
+                continue
+            if _extract_agent_tables(clause):
+                continue
+            if _part_has_semantic_ask(clause):
+                gap_sections.append(clause)
+            elif primary_action != "OUTPUT_SCHEMA_PREVIEW" and _part_is_output_ask(clause):
+                sub = _answer_output_schema_programmatic(golden_sql, clause)
+                if sub:
+                    append_segments.append(sub)
+
+    llm_used = False
+    if gap_sections:
+        prompt = _GAP_TOPUP_PROMPT.format(
+            gap_questions="\n\n".join(gap_sections)[:2000],
+            original_query=(original_query or "")[:500],
+            golden_sql=(golden_sql or "")[:4000],
+        )
+        gap_answer = _generate_answer_from_prompt(prompt, runtime)
+        if gap_answer:
+            gap_answer = _sanitize_llm_reply_leak(gap_answer, golden_sql, hil_question, primary_action)
+            gap_answer = _vet_llm_confirmation(
+                gap_answer, golden_sql, hil_question, primary_action, original_query
+            )
+            append_segments.append(gap_answer)
+            llm_used = True
+        else:
+            logger.warning(
+                "[hitl_auto_resolver] 缺口部件 LLM 补答失败，仅交付主应答与程序化部件"
+            )
+
+    if not append_segments:
+        return primary_answer, False
+    composed = primary_answer
+    for seg in append_segments:
+        composed = f"{composed}\n另外，{seg}"
+    return composed, llm_used
+
+
 def _generate_and_inject_reply(
     feedback_call: dict,
     messages: list,
@@ -2136,15 +2411,30 @@ def _generate_and_inject_reply_v2(
         programmatic_answer = _answer_ambiguity_clarify_programmatic(golden_sql, hil_question)
 
     if programmatic_answer:
-        answer = _finalize_hitl_reply(
+        # 多部件应答合成：主 action 程序化应答部分覆盖时，复合提问的其余
+        # 子问部件（表选择/输出列/语义解读）不再被阻断——能程序化的程序化，
+        # 语义缺口一次 LLM 补答（见 _compose_multipart_answer）。
+        answer, gap_llm_used = _compose_multipart_answer(
             programmatic_answer,
-            golden_sql,
-            hil_question,
             action,
-            programmatic=True,
+            hil_question,
+            golden_sql,
+            original_query,
+            messages,
+            _resolve_agent_workspace_root(state, runtime),
+            runtime,
         )
+        if action in {"OUTPUT_SCHEMA_PREVIEW", "AMBIGUITY_CLARIFY"}:
+            # 已拒表回流拦截——这两个 action 的程序化应答不碰源表判定，
+            # 被拒表经列数/口径问题回流时无人点名（重提案循环实录）
+            reflow_tail = _rejected_table_reflow_tail(
+                hil_question, _resolve_agent_workspace_root(state, runtime)
+            )
+            if reflow_tail:
+                answer = f"{answer}\n{reflow_tail}"
         logger.info(
-            f"[hitl_auto_resolver] action={action} 程序化回答命中（不走 LLM）: {answer[:120]!r}"
+            f"[hitl_auto_resolver] action={action} 程序化回答命中"
+            f"{'（含缺口部件 LLM 补答）' if gap_llm_used else '（不走 LLM）'}: {answer[:120]!r}"
         )
         tool_call_id = feedback_call.get("id", "")
         updated_messages = inject_tool_message(messages, tool_call_id, answer)
@@ -2156,7 +2446,7 @@ def _generate_and_inject_reply_v2(
             "task_id": matched_task.get("task_id"),
             "golden_sql_path": golden_sql_path,
             "action": action,
-            "reply_mode": "programmatic",
+            "reply_mode": "programmatic+gap_llm" if gap_llm_used else "programmatic",
         }
         return updated_messages, resolved_info
 
@@ -2197,12 +2487,13 @@ def _generate_and_inject_reply_v2(
             golden_sql=_build_caliber_review_reference(golden_sql) or "(无可用参考口径)",
             agent_hil_question=hil_question,
         )
-
+        
     # 调用 LLM 生成回复
     answer = _generate_answer_from_prompt(prompt, runtime)
     if not answer:
         logger.warning(f"[hitl_auto_resolver] LLM 生成回复失败（action={action}），转兜底回复")
         return None
+
 
     # 假确认防线：LLM 顺着 agent 确认了与 golden 实质冲突的选项时改写
     answer = _vet_llm_confirmation(answer, golden_sql, hil_question, action, original_query)

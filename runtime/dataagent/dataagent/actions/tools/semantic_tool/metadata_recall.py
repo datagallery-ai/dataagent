@@ -305,11 +305,15 @@ def _load_rejected_ledger(workspace_path: Path) -> dict[str, Any]:
         return {}
 
 
-def _load_pool_tables(workspace_path: Path) -> list[str]:
+def _load_pool_tables(workspace_path: Path) -> dict[str, tuple[str, int]]:
     """读 workspace/.semantic/semantic_retrieve_context_*.json 的 tables 并集
-    （= agent 已检索池：基础池 + 扩池全部 context 文件的表清单）。"""
-    tables: list[str] = []
-    seen: set[str] = set()
+    （= agent 已检索池：基础池 + 扩池全部 context 文件的表清单）。
+
+    返回 {表名: (该表出现的最新 context 文件的 created_at, 它在该文件 tables
+    列表中的位次)}——位次即服务端返回排序。拒绝后经扩池新带回的表（常含
+    golden）携带最新 created_at，口径对照据此优先新近检索的候选。
+    """
+    meta: dict[str, tuple[str, int]] = {}
     try:
         for path in sorted((workspace_path / ".semantic").glob("semantic_retrieve_context_*.json")):
             try:
@@ -317,13 +321,18 @@ def _load_pool_tables(workspace_path: Path) -> list[str]:
             except Exception:
                 continue
             entries = payload.get("tables") if isinstance(payload, dict) else None
-            for t in entries if isinstance(entries, list) else []:
-                if isinstance(t, str) and t.strip() and t not in seen:
-                    seen.add(t)
-                    tables.append(t)
+            if not isinstance(entries, list):
+                continue
+            created_at = str(payload.get("created_at") or "")
+            for idx, t in enumerate(entries):
+                if isinstance(t, str) and t.strip():
+                    table = t.strip()
+                    prev = meta.get(table)
+                    if prev is None or created_at > prev[0]:
+                        meta[table] = (created_at, idx)
     except Exception as exc:
         logger.debug(f"[metadata_recall] 已检索池读取失败: {exc}")
-    return tables
+    return meta
 
 
 def _table_name_tokens(table: str) -> set[str]:
@@ -340,22 +349,36 @@ def _tables_loose_match(a: str, b: str) -> bool:
 
 
 def _match_pool_tables_by_tokens(
-    pool_tables: list[str], want_tokens: list[str], rejected: list[str]
+    pool_meta: dict[str, tuple[str, int]], want_tokens: list[str], rejected: list[str]
 ) -> list[str]:
-    """池内表名 token 对照：含任一口径 token 的池内表（剔除被拒表），按命中
-    token 数降序（golden 通常命中全部口径 token 自然居首），上限 3 张。"""
+    """池内表名 token 对照：含任一口径 token 的池内表（剔除被拒表），按
+    （命中 token 数降序 → 所属 context 文件新近度[新优先] → 服务返回位次 →
+    表名）排序，上限 3 张。
+
+    命中数 golden 通常命中全部口径 token 自然居首；弱口径 token（单 token
+    命中多表）平分时，决胜=新近扩池带回 + 服务排序靠前——拒绝后的新扩池
+    里 golden 常在服务前排，而按表名字典序会把老池表排前把它截掉（实测
+    有 run 的 golden 恰列字典序第 4 被上限 3 截断）。created_at 缺失（""）
+    排最后（ISO 时间串字典序=时间序，倒序即新优先）。
+    """
     want_set = set(want_tokens)
-    if not want_set or not pool_tables:
+    if not want_set or not pool_meta:
         return []
-    matches: list[tuple[int, str]] = []
-    for table in pool_tables:
+    recency_rank = {
+        created_at: rank
+        for rank, created_at in enumerate(
+            sorted({meta[0] for meta in pool_meta.values()}, reverse=True)
+        )
+    }
+    matches: list[tuple[int, str, int, int]] = []
+    for table, (created_at, position) in pool_meta.items():
         if any(_tables_loose_match(table, r) for r in rejected):
             continue
         hit = _table_name_tokens(table) & want_set
         if hit:
-            matches.append((len(hit), table))
-    matches.sort(key=lambda kv: (-kv[0], kv[1]))
-    return [t for _, t in matches[:_MAX_POOL_HINT_TABLES]]
+            matches.append((len(hit), table, recency_rank[created_at], position))
+    matches.sort(key=lambda kv: (-kv[0], kv[2], kv[3], kv[1]))
+    return [table for _, table, _, _ in matches[:_MAX_POOL_HINT_TABLES]]
 
 
 def _build_pool_caliber_note(workspace_path: Path) -> str:

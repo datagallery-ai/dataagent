@@ -374,12 +374,19 @@ class TestAstreamRetryContinuationMessage:
 
         request_messages = [payload.get("messages", []) for payload in captured_payloads]
         retry_contents = [messages[-1].get("content", "") for messages in request_messages[1:]]
+        retry_temperatures = [payload.get("temperature") for payload in captured_payloads[1:]]
         assert chunks == []
         assert original_messages == [{"role": "user", "content": "solve the task"}]
         assert request_messages[0] == original_messages
         assert all(messages[:-1] == original_messages for messages in request_messages[1:])
         assert all(len(messages) == len(original_messages) + 1 for messages in request_messages[1:])
-        assert retry_contents == ["继续", "continue"]
+        # LLMRepetitionError 走破循环升级链（非"继续"续写池——续写会强化重复循环）：
+        # attempt1/attempt2 追加 breakout 消息前两条，attempt>=2 提升 temperature。
+        assert retry_contents == [
+            llm_client_module._ASTREAM_REPETITION_BREAKOUT_MESSAGES[0],
+            llm_client_module._ASTREAM_REPETITION_BREAKOUT_MESSAGES[1],
+        ]
+        assert retry_temperatures == [None, llm_client_module._ASTREAM_REPETITION_BREAKOUT_TEMPERATURE]
 
     def test_retry_messages_remain_unique_beyond_default_retry_count(self):
         """Configured retry counts above the built-in variants should still receive unique text."""

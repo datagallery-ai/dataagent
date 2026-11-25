@@ -1,5 +1,3 @@
-# Copyright (c) Huawei Technologies Co., Ltd. 2026. All rights reserved.
-#
 # Licensed under the Apache License, Version 2.0 (the "License");
 # you may not use this file except in compliance with the License.
 # You may obtain a copy of the License at
@@ -100,6 +98,16 @@ _ASTREAM_RETRY_CONTINUATION_MESSAGES: tuple[str, ...] = (
     "resume",
 )
 """流式重试时临时追加到请求副本的 user message；不进入调用方 messages 或 Agent state。"""
+
+_ASTREAM_REPETITION_BREAKOUT_MESSAGES: tuple[str, ...] = (
+    "检测到重复输出，请直接调用工具执行下一步，不要重复已确认的思考内容。",
+    "已多次重复，立即调用 complete_current_todo 或下一个工具，禁止再生成重复的思考文本。",
+    "重复仍未打破。请立即停止思考，直接调用任意可用工具推进任务，不要再生成文本。",
+)
+"""repetition_detected 重试时追加的破循环 user message；按 attempt 升级措辞。"""
+
+_ASTREAM_REPETITION_BREAKOUT_TEMPERATURE: float = 0.7
+"""repetition_detected 重试到第 2 次及以后临时提升的 temperature，增加采样多样性以打破循环。"""
 
 # ── 重复检测常量 ────────────────────────────────────────────────────────────────
 DEFAULT_REPETITION_DETECTION_ENABLED: bool = True
@@ -374,6 +382,21 @@ _RETRYABLE_CATEGORIES = frozenset(
         LLMErrorCategory.REPETITION_DETECTED,
     }
 )
+
+
+def _stream_silent_window() -> float:
+    """流式静默窗（秒）：距上一个有意义 chunk 的最大允许间隔。
+
+    默认 600s（深度推理模型首 token 前的长思考也在其内；历史实证挂死型
+    是 60-73min 级，600s 窗足以区分）。环境变量 ``DATAAGENT_STREAM_SILENT_WINDOW``
+    可覆盖（秒）。
+    """
+    raw = os.getenv("DATAAGENT_STREAM_SILENT_WINDOW", "")
+    try:
+        value = float(raw) if raw else 600.0
+    except ValueError:
+        value = 600.0
+    return max(value, 30.0)
 
 # 流式读流阶段额外可重试：无 finish_reason 的静默中断
 _STREAM_RETRYABLE_CATEGORIES = _RETRYABLE_CATEGORIES | frozenset({LLMErrorCategory.STREAM_INTERRUPTED})
@@ -1399,21 +1422,37 @@ class LLMClient:
         return True
 
     @staticmethod
-    def _astream_payload_for_attempt(payload: dict[str, Any], attempt: int) -> dict[str, Any]:
-        """Return the base payload or an isolated retry copy with one continuation user message."""
+    def _astream_payload_for_attempt(
+        payload: dict[str, Any],
+        attempt: int,
+        *,
+        repetition: bool = False,
+    ) -> dict[str, Any]:
+        """Return the base payload or an isolated retry copy with one continuation user message.
+
+        当 ``repetition=True`` 时（上一次 attempt 因 ``LLMRepetitionError`` 失败），
+        不再追加"继续"（会强化循环），改为追加破循环指令；attempt>=2 时再提升
+        temperature 到 ``_ASTREAM_REPETITION_BREAKOUT_TEMPERATURE`` 增加采样多样性。
+        """
         if attempt <= 0:
             return payload
-        prompt_index = attempt - 1
-        if prompt_index < len(_ASTREAM_RETRY_CONTINUATION_MESSAGES):
-            content = _ASTREAM_RETRY_CONTINUATION_MESSAGES[prompt_index]
-        else:
-            content = f"continue retry {attempt}"
         base_messages = payload.get("messages", [])
         if not isinstance(base_messages, list):
             return payload
         retry_messages = list(base_messages)
-        retry_messages.append({"role": "user", "content": content})
         retry_payload = dict(payload)
+        if repetition:
+            prompt_index = min(attempt - 1, len(_ASTREAM_REPETITION_BREAKOUT_MESSAGES) - 1)
+            content = _ASTREAM_REPETITION_BREAKOUT_MESSAGES[prompt_index]
+            if attempt >= 2:
+                retry_payload["temperature"] = _ASTREAM_REPETITION_BREAKOUT_TEMPERATURE
+        else:
+            prompt_index = attempt - 1
+            if prompt_index < len(_ASTREAM_RETRY_CONTINUATION_MESSAGES):
+                content = _ASTREAM_RETRY_CONTINUATION_MESSAGES[prompt_index]
+            else:
+                content = f"continue retry {attempt}"
+        retry_messages.append({"role": "user", "content": content})
         retry_payload["messages"] = retry_messages
         return retry_payload
 
@@ -1664,9 +1703,14 @@ class LLMClient:
         max_attempts = self._resolve_max_attempts(kwargs)
         request_url = self._endpoint()
 
+        last_retry_was_repetition = False
         for attempt in range(max_attempts + 1):
             stream_state = _AStreamState()
-            attempt_payload = self._astream_payload_for_attempt(payload, attempt)
+            attempt_payload = self._astream_payload_for_attempt(
+                payload,
+                attempt,
+                repetition=last_retry_was_repetition,
+            )
             try:
                 async for msg in self._astream_iter(
                     payload=attempt_payload,
@@ -1687,6 +1731,7 @@ class LLMClient:
                     detail=e.detail,
                     snippet=e.content_snippet[:200],
                 )
+                last_retry_was_repetition = True
                 continue
             except Exception as e:
                 mapped = map_httpx_exception(e, model=self._model, api_base=self._api_base)
@@ -1698,6 +1743,7 @@ class LLMClient:
                         detail=mapped.message,
                         status_code=mapped.status_code,
                     )
+                    last_retry_was_repetition = False
                     continue
                 self._audit_llm_call(success=False, stream=True)
                 raise mapped from e
@@ -1712,6 +1758,7 @@ class LLMClient:
                         detail=finish_error.message,
                         status_code=finish_error.status_code,
                     )
+                    last_retry_was_repetition = False
                     continue
                 self._audit_llm_call(success=False, stream=True)
                 raise finish_error
@@ -1730,6 +1777,7 @@ class LLMClient:
                     detail=e.detail,
                     snippet=e.content_snippet[:200],
                 )
+                last_retry_was_repetition = True
                 continue
             self._audit_llm_call(success=True, stream=True)
             return
@@ -1861,7 +1909,15 @@ class LLMClient:
         messages: list[Any],
         state: _AStreamState,
     ) -> AsyncIterator[LLMClientMessage]:
-        """Open the SSE stream and yield parsed chunk messages, raising on HTTP errors."""
+        """Open the SSE stream and yield parsed chunk messages, raising on HTTP errors.
+
+        流式静默窗看门狗：SSE 网关的 keepalive 心跳会不断重置 httpx 的 read
+        timeout（每收到任意字节即重置），"流活零数据"可无限挂死（实证
+        73min；67min 近挂起自恢复）。看门狗按 **有意义 chunk** 计时：
+        距上一个真实 chunk 超过 ``_stream_silent_window`` 秒即抛可重试的
+        ``LLMCallError(STREAM_INTERRUPTED)``；连续两行间隔超过同窗也判死流。
+        已产生输出的流不重试（_astream_can_retry 防半途重复输出）。
+        """
         client = httpx.AsyncClient(timeout=timeout, verify=httpx_verify())
         try:
             req = client.build_request("POST", request_url, headers=self._headers(), json=payload)
@@ -1870,8 +1926,38 @@ class LLMClient:
                 await resp.aread()
                 resp.raise_for_status()
 
-            async for line in resp.aiter_lines():
+            line_iter = resp.aiter_lines().__aiter__()
+            last_meaningful = time.monotonic()
+            last_chunk_count = state.chunk_count
+            while True:
+                try:
+                    line = await asyncio.wait_for(
+                        line_iter.__anext__(), timeout=_stream_silent_window()
+                    )
+                except StopAsyncIteration:
+                    break
+                except asyncio.TimeoutError as exc:
+                    raise LLMCallError(
+                        LLMErrorCategory.STREAM_INTERRUPTED,
+                        f"stream watchdog: no line within {_stream_silent_window():.0f}s "
+                        f"(dead stream; model={self._model})",
+                        model=self._model,
+                        request_url=request_url,
+                    ) from exc
                 msg = self._astream_parse_line(line, messages, state)
+                if state.chunk_count > last_chunk_count:
+                    # 真实 chunk 到达（keepalive/心跳行不增计数）——刷新静默计时
+                    last_chunk_count = state.chunk_count
+                    last_meaningful = time.monotonic()
+                elif time.monotonic() - last_meaningful > _stream_silent_window():
+                    raise LLMCallError(
+                        LLMErrorCategory.STREAM_INTERRUPTED,
+                        f"stream watchdog: no meaningful chunk within "
+                        f"{_stream_silent_window():.0f}s (keepalive-only hang; "
+                        f"model={self._model}, chunks={state.chunk_count})",
+                        model=self._model,
+                        request_url=request_url,
+                    )
                 if msg is not None:
                     yield msg
             if not state.finish_reason and not self._astream_try_synthesize_finish_reason(state):
