@@ -127,7 +127,7 @@ it("missing Python environments report the preparation command without creating 
   const environment = join(directory, "missing");
   process.env.UV_PROJECT_ENVIRONMENT = environment;
   try {
-    await assert.rejects(startBackend(), /Python environment is missing.*npm run prepare:python/);
+    await assert.rejects(startBackend(), /Python environment is missing.*uv sync/);
     assert.equal(existsSync(environment), false);
   } finally {
     if (previous === undefined) delete process.env.UV_PROJECT_ENVIRONMENT;
@@ -211,6 +211,8 @@ it("default runTui resolves root dotenv before probing and preserves startup ove
   const root = mkdtempSync(join(tmpdir(), "tui-root-listen-"));
   const source = fileURLToPath(new URL("../../../", import.meta.url));
   try {
+    mkdirSync(join(root, "dataagent"));
+    writeFileSync(join(root, "dataagent/__main__.py"), "");
     cpSync(join(source, "ui/tui/dist"), join(root, "ui/tui/dist"), { recursive: true });
     symlinkSync(join(source, "ui/tui/node_modules"), join(root, "ui/tui/node_modules"), process.platform === "win32" ? "junction" : "dir");
     cpSync(join(source, "ui/shared"), join(root, "ui/shared"), { recursive: true });

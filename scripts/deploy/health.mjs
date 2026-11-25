@@ -1,5 +1,3 @@
-import net from "node:net";
-
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -16,26 +14,6 @@ export async function probeHttp(url, options = {}) {
   } finally {
     clearTimeout(timer);
   }
-}
-
-export async function probeTcp(host, port, options = {}) {
-  const timeoutMs = options.timeoutMs ?? 5000;
-  return new Promise((resolve) => {
-    const socket = net.connect({ host, port });
-    const timer = setTimeout(() => {
-      socket.destroy();
-      resolve({ ok: false, error: "timeout" });
-    }, timeoutMs);
-    socket.once("connect", () => {
-      clearTimeout(timer);
-      socket.end();
-      resolve({ ok: true });
-    });
-    socket.once("error", (error) => {
-      clearTimeout(timer);
-      resolve({ ok: false, error: error.message });
-    });
-  });
 }
 
 async function resolveProcessAlive(config) {

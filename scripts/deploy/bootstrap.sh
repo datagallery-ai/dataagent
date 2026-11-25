@@ -4,18 +4,25 @@
 MIN_NODE_VERSION="22.12.0"
 
 command_skips_install() {
+  local saw_deploy=0 non_interactive=0 reconfigure=0
   while [[ "$#" -gt 0 ]]; do
     case "$1" in
-      --config|--runtime-url|--web-host|--web-port)
+      --config|--web-host|--web-port)
         shift
-        if [[ "$#" -gt 0 ]]; then shift; fi
+        if [[ "$#" -eq 0 || "${1//[[:space:]]/}" == "" || "$1" == -* ]]; then return 0; fi
+        shift
         ;;
-      start|restart|status|logs|stop|doctor|help) return 0 ;;
-      deploy|tui) return 1 ;;
-      *) shift ;;
+      --non-interactive) non_interactive=1; shift ;;
+      --reconfigure) reconfigure=1; shift ;;
+      deploy)
+        if [[ "${saw_deploy}" -eq 1 ]]; then return 0; fi
+        saw_deploy=1
+        shift
+        ;;
+      *) return 0 ;;
     esac
   done
-  return 1
+  [[ "${non_interactive}" -eq 1 && "${reconfigure}" -eq 1 ]]
 }
 
 has_non_interactive_flag() {

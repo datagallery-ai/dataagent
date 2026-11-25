@@ -10,7 +10,9 @@
 npm run start:tui
 ```
 
-地址来自 Home `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`npm run start -- --config` 绑到另一份文件的端口时，不带参数的 TUI 不会跟着走；Home 那个地址空着，就会按 Home 再起一个后端。要连已经起来的那一个，用 `--runtime-url`。`./deploy.sh tui` 连接这次 `./deploy.sh start` 记下的 API 地址。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
+地址来自 Home `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`npm run start -- --config` 绑到另一份文件的端口时，不带参数的 TUI 不会跟着走；Home 那个地址空着，就会按 Home 再起一个后端。要连已经起来的那一个，用 `--runtime-url`。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
+
+`./deploy.sh tui` 连接已有后端，地址优先取 `--runtime-url`，其次是最近一次托管启动记录的 API 地址，再其次是 Home 配置。例如 `./deploy.sh tui --runtime-url http://127.0.0.1:8791`。
 
 恢复最近的服务端会话：
 

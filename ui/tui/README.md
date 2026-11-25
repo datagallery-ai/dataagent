@@ -8,7 +8,9 @@ Terminal interface for the datagallery monorepo.
 From the repository root:
 
 ```bash
-npm install
+npm install --include=dev
+uv sync --no-dev
+npm run build:tui
 npm run start:tui
 ```
 

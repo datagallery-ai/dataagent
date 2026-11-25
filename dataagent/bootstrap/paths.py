@@ -407,6 +407,10 @@ def _parse_session_binding(
     return SessionBinding(user_id, thread_id, tuple(workspaces), outputs)
 
 
+def read_home_template(name: str) -> str:
+    return files("dataagent.bootstrap").joinpath("templates", name).read_text("utf-8")
+
+
 def initialize_home(home: Path, *, initialize_config: bool = True) -> None:
     """Create private Home resources; an explicit product file skips the Home config entirely."""
     for path in (home, *(home / name for name in ("skills", "hooks", "plugins", "runtime"))):
@@ -430,9 +434,7 @@ def initialize_home(home: Path, *, initialize_config: bool = True) -> None:
                 raise ValueError(f"Expected a file: {destination}") from None
             continue
         with os.fdopen(descriptor, "w", encoding="utf-8") as stream:
-            stream.write(
-                files("dataagent.bootstrap").joinpath("templates", template).read_text("utf-8")
-            )
+            stream.write(read_home_template(template))
 
 
 def builtin_plugins_path() -> Path:

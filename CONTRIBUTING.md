@@ -10,10 +10,11 @@ Thanks for helping improve this project.
 
 ## Local Setup
 
-Node.js 22+ and uv are required. `npm install` syncs the Python environment at the repository root by default. `npm run build` compiles the web app and TUI.
+Use Node.js ≥22.12.0, uv, and Python 3.12. Install frontend dependencies with `npm install --include=dev` and prepare the Python development environment with `uv sync`. `npm run build` compiles the web app and TUI.
 
 ```bash
-npm install
+npm install --include=dev
+uv sync
 cp .env.example .env
 npm run build
 npm run start

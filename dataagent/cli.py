@@ -1,6 +1,7 @@
 """Single backend entrypoint for the console command and python -m dataagent.server."""
 
 import argparse
+import errno
 import json
 import logging
 import os
@@ -49,15 +50,25 @@ def runtime_url(host: str, port: int) -> str:
 
 
 def check_port(host: str, port: int):
-    with socket.socket() as probe:
-        try:
-            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
-            probe.bind((host, port))
-            probe.listen(1)
-        except OSError:
-            raise RuntimeError(
-                f"Port {host}:{port} is occupied; no existing process was changed"
-            ) from None
+    try:
+        addresses = socket.getaddrinfo(host, port, type=socket.SOCK_STREAM)
+        for family, kind, protocol, _, address in addresses:
+            with socket.socket(family, kind, protocol) as probe:
+                probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+                if family == socket.AF_INET6:
+                    # asyncio's TCP server binds IPv6 independently of IPv4.
+                    probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, 1)
+                probe.bind(address)
+                probe.listen(1)
+    except OSError as error:
+        reason = (
+            "is occupied"
+            if error.errno == errno.EADDRINUSE
+            else f"cannot be bound ({error.strerror})"
+        )
+        raise RuntimeError(
+            f"Port {host}:{port} {reason}; no existing process was changed"
+        ) from None
 
 
 def _parser() -> argparse.ArgumentParser:

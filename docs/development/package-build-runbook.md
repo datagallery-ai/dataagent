@@ -2,7 +2,7 @@
 
 本文回答“从仓库代码怎样得到可以交付的 `.whl` 和 `.tgz`”。包边界和启动契约见[发布方案](package-distribution.md)。
 
-**当前只有 Python wheel 的出包路径可直接执行。UI 合包脚本和统一出包入口尚未实现。** 下文分别给出当前命令、目标流程和需要实现的脚本，不能把目标流程中的脚本名当成已有文件。
+**当前 `make build` 将 Server wheel 和 TUI npm 包分别生成到 `dist/server/` 和 `dist/tui/`。** 下文将 Web 和 TUI 合包的流程是设计方案。现有流水线命令和目录见[发布说明](release.md)。
 
 ## 1. 先看出包路径
 
@@ -26,7 +26,7 @@ ui/ 启动器 ──────┘        ↑
 | 在该发行目录执行 `npm pack` | npm 已支持；依赖上一项完成 | `datagallery-dataagent-ui-<版本>.tgz` |
 | `npm run package` | 待新增统一入口 | 两个包、文件清单、版本清单及校验值 |
 
-不能直接在当前仓库根目录执行 `npm pack` 来代替 UI 合包。根 package 是开发工作区，文件边界、命令入口和安装钩子都不符合发行设计。
+不能直接在当前仓库根目录执行 `npm pack` 来代替 UI 合包。根 package 是开发工作区，文件边界和命令入口都不符合发行设计。
 
 ## 2. 现在如何打主包
 
@@ -63,7 +63,7 @@ datagallery_dataagent-0.3.0-py3-none-any.whl
 ```bash
 # 构建机准备 Node 22+、Python 3.12 和 uv
 # 安装 JS 构建依赖；Python 环境在下一步单独准备
-SKIP_POSTINSTALL_BUILD=1 npm ci
+npm install --include=dev
 uv sync --locked
 
 # 以下两个 npm script 待实现
@@ -190,7 +190,7 @@ npm shrinkwrap
 
 随后审核并验收生成的 `npm-shrinkwrap.json`，将其保存为 UI 发行输入。版本变动时同步更新其中的根包元数据。日常出包只复制这个锁，验证与 `package.json` 一致。
 
-需要实际安装依赖进行审核时，在发行暂存目录执行 `npm ci --omit=dev`。该目录的 package.json 不含开发依赖和安装钩子。第三方安装脚本按目标平台验收；不能用 `--ignore-scripts` 的安装结果代替需要安装脚本的真实运行验收。
+需要实际安装依赖进行审核时，在发行暂存目录执行 `npm install --omit=dev`。该目录的 package.json 不含开发依赖和安装钩子。第三方安装脚本按目标平台验收；不能用 `--ignore-scripts` 的安装结果代替需要安装脚本的真实运行验收。
 
 ### 步骤六：生成 npm tgz
 

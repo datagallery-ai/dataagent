@@ -17,7 +17,7 @@ export function configurationExists(file) {
   }
 }
 export function parseConfigYaml(text, file = '<yaml>') {
-  // Deployment help and dependency installation must work before npm ci.
+  // Deployment help and dependency installation must work before installing frontend dependencies.
   const { parseDocument, isMap, isSeq, isScalar, isAlias, LineCounter } = require('yaml');
   const lines = new LineCounter();
   function fail(category, offset) {

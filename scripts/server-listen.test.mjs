@@ -18,7 +18,7 @@ function tempHome() {
 function runPython(args, options) {
   return spawnSync(
     "uv",
-    ["run", "--project", agentkit, "--python", "3.12", "python", ...args],
+    ["run", "--no-sync", "--project", agentkit, "python", ...args],
     { cwd: agentkit, encoding: "utf8", ...options },
   );
 }

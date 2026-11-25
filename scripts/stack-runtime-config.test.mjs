@@ -1,10 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtempSync, mkdirSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
+import { mkdtempSync, readFileSync, realpathSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { readServerListen } from "../ui/shared/server-listen.mjs";
-import { controlPlaneIsRunning, ensurePythonEnvironment } from "./stack-runner.mjs";
+import { controlPlaneIsRunning } from "./stack-runner.mjs";
 import { venvPython } from "../ui/shared/python-environment.mjs";
 import {
   formatStackEndpoints,
@@ -63,6 +65,7 @@ test("prints actual configured endpoints", () => {
 });
 
 test("rejects invalid ports", () => {
+  assert.throws(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--web-port", " "]), /--web-port/);
   assert.throws(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--web-port", "70000"]), /--web-port/);
 });
 
@@ -80,14 +83,6 @@ test("web listen flags require a value", () => {
   assert.throws(() => resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/test-home" }, ["--web-port", "--web"]), /--web-port requires a value/);
 });
 
-test("one click reports GUI, API, and a ready TUI", () => {
-  const config = resolveStackRuntimeConfig({ DATAAGENT_HOME: "/no/such/dataagent-home" });
-  const output = formatStackEndpoints(config, { startApi: true, startWeb: true, tuiReady: true });
-  assert.match(output, /GUI: http:\/\/127\.0\.0\.1:3000/);
-  assert.match(output, /API: http:\/\/127\.0\.0\.1:8790/);
-  assert.match(output, /TUI: npm run start:tui/);
-});
-
 test("control plane probe accepts the conversation health envelope", async () => {
   const ready = await controlPlaneIsRunning("http://127.0.0.1:8790", async () => Response.json({
     success: true,
@@ -100,33 +95,28 @@ test("control plane probe accepts the conversation health envelope", async () =>
   assert.equal(down, false);
 });
 
-test("one click syncs the python environment only when it is missing", async () => {
-  const rootDir = mkdtempSync(join(tmpdir(), "dataagent-start-"));
-  const calls = [];
-  try {
-    assert.equal(await ensurePythonEnvironment(rootDir, (...command) => calls.push(command)), true);
-    const python = venvPython(join(rootDir, "."));
-    mkdirSync(join(python, ".."), { recursive: true });
-    writeFileSync(python, "fixture");
-    assert.equal(await ensurePythonEnvironment(rootDir, (command) => calls.push(command)), false);
-  } finally {
-    rmSync(rootDir, { recursive: true, force: true });
-  }
-  assert.deepEqual(calls, [[process.execPath, ["scripts/python-environment.mjs", "--no-dev"]]]);
+test("API startup reports a missing environment without preparing it", (t) => {
+  const root = mkdtempSync(join(tmpdir(), "dataagent-start-"));
+  t.after(() => rmSync(root, { recursive: true, force: true }));
+  const result = spawnSync(process.execPath, [fileURLToPath(new URL("./start.mjs", import.meta.url)), "--api"], {
+    env: { ...process.env, UV_PROJECT_ENVIRONMENT: join(root, "missing"), DATAAGENT_HOME: root },
+    encoding: "utf8", timeout: 5000,
+  });
+  assert.equal(result.status, 1, result.stderr);
+  assert.match(result.stderr, /Python environment is missing.*Run uv sync/);
+  assert.doesNotMatch(result.stdout, /DataGallery endpoints/);
 });
 
-test("api and web scripts use the same stack entry as one-click start", () => {
+test("root scripts expose frontend builds and startup", () => {
   const scripts = JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")).scripts;
-  const postinstall = readFileSync(new URL("./postinstall.mjs", import.meta.url), "utf8");
   assert.equal(scripts.build, "npm run build:web && npm run build:tui");
-  assert.equal(postinstall.includes("syncPythonEnvironment"), true);
-  assert.equal(scripts["prepare:python"], "node scripts/python-environment.mjs");
-  assert.match(scripts["test:product"], /uv run --no-project --no-sync/);
+  assert.equal(scripts.postinstall, undefined);
+  assert.equal(scripts["prepare:python"], undefined);
+  assert.equal(scripts["test:product"], undefined);
   assert.equal(scripts["build:web"], "npm --workspace @datagallery/web run build");
   assert.equal(scripts["build:tui"], "npm --workspace @datagallery/tui run build");
-  assert.equal(scripts["test:tui"], "npm --workspace @datagallery/tui run test");
+  assert.equal(scripts["test:tui"], "npm --workspace @datagallery/tui run test --");
   assert.match(scripts["test:deploy"], /scripts\/password-only-cutover\.test\.mjs/);
-  assert.equal(scripts["start:api"], "node scripts/start.mjs --api");
   assert.equal(scripts["start:web"], "node scripts/start.mjs --web");
   assert.equal(scripts.start, "node scripts/start.mjs");
   assert.equal(scripts["start:tui"], "node -- ui/tui/dist/index.js");
@@ -135,16 +125,13 @@ test("api and web scripts use the same stack entry as one-click start", () => {
   assert.equal(scripts["dev:web"], undefined);
 });
 
-test("dev and start:api both default the API to loopback", () => {
+test("the stack defaults the API to loopback and launches dataagent serve", () => {
   const env = { DATAAGENT_HOME: "/no/such/dataagent-home" };
   const dev = resolveStackRuntimeConfig(env);
   const startApi = pythonControlPlaneLaunch("/repo", env);
   assert.equal(dev.apiHost, "127.0.0.1");
   assert.equal(startApi.env, env);
   assert.deepEqual(startApi.args.slice(-2), ["dataagent", "serve"]);
-  const manualReload = pythonControlPlaneLaunch("/repo", env, true);
-  assert.equal(manualReload.env, env);
-  assert.deepEqual(manualReload.args.slice(-3), ["dataagent", "serve", "--reload"]);
 });
 
 test("--config replaces Home server and is passed to dataagent serve", () => {
@@ -159,7 +146,7 @@ test("--config replaces Home server and is passed to dataagent serve", () => {
   const env = { DATAAGENT_HOME: home };
   try {
     const config = resolveStackRuntimeConfig(env, ["--config", selected]);
-    const startApi = pythonControlPlaneLaunch("/repo", env, false, config.configPath);
+    const startApi = pythonControlPlaneLaunch("/repo", env, config.configPath);
     assert.equal(config.apiHost, "0.0.0.0");
     assert.equal(config.apiPort, "8877");
     assert.deepEqual(startApi.args.slice(-4), ["dataagent", "serve", "--config", selected]);
@@ -181,7 +168,7 @@ test("start anchors a relative --config to the caller before the stack cwd chang
     assert.equal(config.configPath, selected);
     assert.equal(config.apiPort, "8877");
     process.chdir(repo);
-    const launch = pythonControlPlaneLaunch(repo, {}, false, config.configPath);
+    const launch = pythonControlPlaneLaunch(repo, {}, config.configPath);
     assert.deepEqual(launch.args.slice(-2), ["--config", selected]);
     assert.equal(readServerListen({}, config.configPath).port, "8877");
     writeFileSync(join(repo, "team.yaml"), JSON.stringify({ server: { host: "127.0.0.1", port: 1 } }));
@@ -211,7 +198,7 @@ test("server.host and server.port come from config.yaml", () => {
     }));
     const ipv6 = resolveStackRuntimeConfig(env);
     assert.equal(webLaunch(ipv6).env.API_PROXY_TARGET, "http://[::]:8877");
-    assert.match(formatStackEndpoints(ipv6, { startApi: true, startWeb: false, tuiReady: false }), /http:\/\/\[::\]:8877/);
+    assert.match(formatStackEndpoints(ipv6, { startApi: true, startWeb: false }), /http:\/\/\[::\]:8877/);
     assert.equal(startApi.env, env);
     assert.deepEqual(startApi.args.slice(-2), ["dataagent", "serve"]);
   } finally {

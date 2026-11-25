@@ -13,7 +13,7 @@ const COMMANDS = new Set([
 ]);
 
 export function parseDeployArgs(argv = []) {
-  const tokens = [...argv];
+  const tokens = argv.some(token => token === "-h" || token === "--help") ? ["help"] : argv;
   let command = "deploy";
   let reconfigure = false;
   let nonInteractive = false;
@@ -74,11 +74,11 @@ export function parseDeployArgs(argv = []) {
   if (runtimeUrl != null && command !== "tui") {
     throw new Error("--runtime-url is only valid with tui");
   }
-  if ((webHost != null || webPort != null) && !["deploy", "start", "restart"].includes(command)) {
-    throw new Error("--web-host and --web-port are only valid with deploy, start, or restart");
+  if ((webHost != null || webPort != null) && !["deploy", "start", "restart", "doctor"].includes(command)) {
+    throw new Error("--web-host and --web-port are only valid with deploy, start, restart, or doctor");
   }
-  if (config != null && !["deploy", "start", "restart"].includes(command)) {
-    throw new Error("--config is only valid with deploy, start, or restart");
+  if (config != null && !["deploy", "start", "restart", "doctor"].includes(command)) {
+    throw new Error("--config is only valid with deploy, start, restart, or doctor");
   }
 
   return { command, reconfigure, nonInteractive, runtimeUrl, webHost, webPort, config };
@@ -86,22 +86,24 @@ export function parseDeployArgs(argv = []) {
 
 export function deploymentHelp() {
   return `./deploy.sh [deploy] [--reconfigure | --non-interactive] [--web-host <host>] [--web-port <port>] [--config <path>]
-./deploy.sh start|restart [--web-host <host>] [--web-port <port>] [--config <path>]
-./deploy.sh stop|status|logs|doctor|tui|help
+./deploy.sh start|restart|doctor [--web-host <host>] [--web-port <port>] [--config <path>]
+./deploy.sh stop|status|logs|help
 ./deploy.sh tui [--runtime-url <url>]
 
 deploy   Configure, install, build (including TUI), start, and verify. Existing deployments use a maintenance window.
 start    Start an existing build. Does not install or build. Web defaults to 127.0.0.1:3000.
 stop     Stop only the managed DataGallery process group. Keeps configuration and data.
-restart  Stop and start an existing build. Does not install or build.
+restart  Check and reuse the running deployment's settings, then stop and start. Flags override saved settings.
 status   Read process state and probe the API address recorded at start.
 logs     Show recent runtime logs and continue following them. Ctrl+C does not stop DataGallery.
-doctor   Run read-only dependency, configuration, port, permission, disk, and health checks. The API address is the one recorded at start.
-tui      Start the local TUI in the foreground against the API address recorded at start. It uses /api/v1/runs.
-help     Show this help.
+doctor   Run read-only dependency, configuration, port, permission, disk, and health checks.
+tui      Run the foreground client. Use --runtime-url to select an API, or omit it to use the saved address or Home config.
+help     Show this help (also -h or --help).
 
+Deploy, restart, and doctor use explicit options first, then a running deployment's saved settings, then defaults.
+An explicit --web-port is checked directly without prompting for another Web port.
 One-click deploy builds the TUI so it is ready. Start it in another terminal with ./deploy.sh tui.
-That command connects to the API address recorded at start and does not launch a backend.
+The deploy.sh tui command connects to an existing API.
 npm run start:tui uses Home config.yaml and starts a backend when that address is down.
 The TUI does not stay running with the Web/API stack.
 `;

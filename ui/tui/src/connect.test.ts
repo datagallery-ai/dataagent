@@ -1,9 +1,11 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
 import { mkdtempSync } from "node:fs";
-import { mkdtemp, writeFile } from "node:fs/promises";
+import { mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { it } from "node:test";
+import { fileURLToPath } from "node:url";
 import { configuredListen } from "./backend.js";
 import { runTui } from "./index.js";
 import { store } from "./state/store.js";
@@ -13,6 +15,26 @@ import { createInitialLiveRun, reduceLiveRunEvent } from "./state/live-run-state
 
 /** Success envelope used by every /api/v1 JSON route. */
 const ok = (data: unknown) => Response.json({ success: true, data });
+
+it("starts the CLI through the symlink used by npm bin", async (t) => {
+  if (process.platform === "win32") return t.skip("npm uses command shims on Windows");
+  const directory = await mkdtemp(join(tmpdir(), "dataagent-tui-bin-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const entry = join(directory, "dataagent-cli");
+  await symlink(fileURLToPath(new URL("./index.js", import.meta.url)), entry);
+  const result = spawnSync(process.execPath, [entry, "--help"], { encoding: "utf8", timeout: 10_000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.match(result.stdout, /--runtime-url/);
+});
+
+it("allows importing the CLI from a process with a non-file argument", () => {
+  const url = new URL("./index.js", import.meta.url).href;
+  const result = spawnSync(process.execPath, [
+    "--input-type=module", "-e", `await import(${JSON.stringify(url)})`, "--", "--help",
+  ], { encoding: "utf8", timeout: 10_000 });
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(result.stdout, "");
+});
 
 function startedBackend(runtimeUrl = "http://127.0.0.1:8790/api/v1/runs") {
   const controller = new AbortController();

@@ -186,7 +186,8 @@ export async function startManagedStack(root, options = {}) {
     startedAt: new Date().toISOString(),
     commitSha: options.commitSha ?? null,
     ports: options.ports ?? null,
-    listen: options.listen ?? null
+    listen: options.listen ?? null,
+    configPath: options.configPath ?? null
   };
   await writeDeploymentState(root, state);
   return state;

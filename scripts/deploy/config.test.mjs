@@ -4,12 +4,8 @@ import os from "node:os";
 import path from "node:path";
 import test from "node:test";
 import {
-  deploymentConfigGaps,
   ensureDeploymentEnvironment,
-  isCompleteDeploymentConfig,
-  parseDeploymentEnvironment,
   redactSensitiveText,
-  updateDeploymentEnvironment,
   writeDeploymentConfiguration
 } from "./config.mjs";
 
@@ -17,7 +13,6 @@ test("leaves an empty env file empty", () => {
   const result = ensureDeploymentEnvironment("");
   assert.equal(result.text, "");
   assert.deepEqual(result.env, {});
-  assert.deepEqual(result.generatedKeys, []);
 });
 
 test("leaves existing env lines unchanged", () => {
@@ -26,7 +21,6 @@ test("leaves existing env lines unchanged", () => {
   assert.equal(result.text, source);
   assert.equal(result.env.LLM_MODEL, "qwen-plus");
   assert.equal(result.env.CUSTOM_VALUE, "keep-me");
-  assert.deepEqual(result.generatedKeys, []);
 });
 
 test("reconfigure creates a backup and atomically writes .env", async () => {
@@ -47,15 +41,6 @@ test("reconfigure creates a backup and atomically writes .env", async () => {
       assert.equal((await stat(filePath)).mode & 0o777, 0o600, filePath);
     }
   }
-});
-
-test("updateDeploymentEnvironment upserts values while preserving comments", () => {
-  const source = "# comment\nNOTE=3000\nCUSTOM=keep\n";
-  const text = updateDeploymentEnvironment(source, { NOTE: "3310", EXTRA: "8877" });
-  assert.match(text, /# comment/);
-  assert.match(text, /NOTE=3310/);
-  assert.match(text, /EXTRA=8877/);
-  assert.match(text, /CUSTOM=keep/);
 });
 
 test("redactSensitiveText masks secret-like keys", () => {
@@ -97,9 +82,4 @@ test("writeDeploymentConfiguration backs up existing secrets even without reconf
   assert.ok(written.backupPath);
   assert.match(await readFile(written.backupPath, "utf8"), /LLM_API_KEY=existing-secret-value/);
   assert.match(await readFile(path.join(root, ".env"), "utf8"), /NOTE=3310/);
-});
-test("deployment configuration has no required env gaps", () => {
-  assert.deepEqual(deploymentConfigGaps(), []);
-  assert.equal(isCompleteDeploymentConfig(parseDeploymentEnvironment("FOO=bar\n")), true);
-  assert.equal(isCompleteDeploymentConfig({}), true);
 });

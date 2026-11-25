@@ -28,6 +28,10 @@ def runner(monkeypatch, tmp_path):
         (["--tier", "ut", "--scope", "agentkit", "--no-sync"], ["agentkit-ut"]),
         (["--tier", "ut", "--scope", "web"], ["web"]),
         (
+            ["--tier", "ut"],
+            ["python-prepare", "agentkit-ut", "api", "web", "tui", "deploy", "yaml"],
+        ),
+        (
             ["--tier", "test", "--scope", "agentkit"],
             ["python-prepare", "agentkit-ut", "tui-build", "agentkit-st"],
         ),
@@ -44,6 +48,8 @@ def test_preparation_is_selected_once_and_skip_is_honored(runner, monkeypatch, a
     assert runner.main(args) == 0
     assert [name for name, _ in calls] == expected
     for name, command in calls:
+        if name == "python-prepare":
+            assert command == ("uv", "sync")
         if name.startswith("agentkit"):
             assert "--no-sync" in command
 
@@ -67,10 +73,6 @@ def test_listing_commands_does_not_prepare_dependencies(runner, monkeypatch):
     assert runner.main(["--scope", "agentkit", "--list"]) == 0
 
 
-def test_python_preparation_reports_missing_node(runner, monkeypatch):
-    monkeypatch.setattr(runner.shutil, "which", lambda name: None)
-    monkeypatch.setattr(
-        runner, "_run", lambda *args: pytest.fail("Preparation must not start without node")
-    )
-    with pytest.raises(SystemExit, match="node is not on PATH"):
-        runner.main(["--scope", "agentkit"])
+def test_api_scope_rejects_node_test_options(runner):
+    with pytest.raises(SystemExit, match="Use PYTEST_ARGS for Python tests"):
+        runner.main(["--scope", "api", "--node-test-args=--maxWorkers 2", "--list"])

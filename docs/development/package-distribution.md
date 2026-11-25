@@ -433,7 +433,6 @@ dataagent-ui doctor
 | [TUI 工程](../../ui/tui/package.json) | 保留私有 workspace，由 UI 包提供公开入口 |
 | [TUI 后端启动](../../ui/tui/src/backend.ts) | 移除源码相对路径和发布版 `uv sync` 依赖 |
 | [共享日志](../../ui/shared/logging.mjs) | 纳入包内共享代码，保持脱敏与轮转 |
-| [源码安装钩子](../../scripts/postinstall.mjs) | 与发行 UI 的安装流程隔离，不复制到 UI 包 |
 | [Makefile](../../Makefile) | 明确构建与出包目标，不能继续把仅编译称为完整出包 |
 
 实施时新增独立出包脚本，例如 `scripts/release/build-packages.mjs`，统一生成 `dist/release/`；该脚本名称是目标，不代表已有。源码开发命令可保留，但所有发行路径必须以安装后的文件结构工作。

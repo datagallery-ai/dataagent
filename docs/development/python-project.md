@@ -13,11 +13,12 @@
 源码方式需要 uv 和 Node.js ≥22.12.0，后端使用 Python 3.12，由 uv 发现已有解释器或按配置下载。在仓库根目录：
 
 ```bash
-npm install
+npm install --include=dev
+uv sync
 npm run build
 ```
 
-`npm install` 的安装钩子从锁文件导出带哈希的运行依赖，通过配置的 uv 索引安装，再安装可编辑源码。`npm run prepare:python` 默认包含开发组，与 `uv sync` 一致；仅运行依赖使用 `--no-dev`。基础依赖已包含 MySQL、PostgreSQL 驱动，Spark 和视频能力使用对应 extra 或 `--extra all`。同步会移除未选中的包。一键部署 `./deploy.sh deploy` 默认选择基础数据与视频运行依赖，不包含 Spark 和开发工具；Spark 按需选择。`npm run build` 编译网页和 TUI。
+`npm install --include=dev` 安装前端依赖。`uv sync` 准备 Python 环境并默认包含开发组。仅需要运行依赖时使用 `--no-dev`。基础依赖已包含 MySQL、PostgreSQL 驱动，Spark 和视频能力使用对应 extra 或 `--extra all`。同步会移除未选中的包。一键部署 `./deploy.sh deploy` 默认选择基础数据与视频运行依赖，不包含 Spark 和开发工具；Spark 按需选择。`npm run build` 编译网页和 TUI。
 
 直接启动 TUI，由它拉起后端：
 

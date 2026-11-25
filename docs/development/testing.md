@@ -78,7 +78,7 @@ DATAAGENT_SEMANTIC_LIVE_ENV=/absolute/path/to/.env \
 ## TUI
 
 ```bash
-npm ci --ignore-scripts
+npm install --ignore-scripts
 npm run test:tui
 uv run pytest -q -m 'tui and not live'
 ```

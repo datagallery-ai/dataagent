@@ -39,7 +39,9 @@ from dataagent.config.settings import ServerSettings
 from dataagent.config.strict_yaml import check_yaml_path, read_yaml
 
 
-def prepare_runtime(options: LaunchOptions | None = None) -> PreparedRuntime:
+def prepare_runtime(
+    options: LaunchOptions | None = None, *, preview_home: bool = False
+) -> PreparedRuntime:
     """Prepare effective configuration and declarations without executing plugin Python code."""
     options = options or LaunchOptions()
     # Step1. Resolve launch inputs; Home initialization is the only optional write here.
@@ -55,7 +57,9 @@ def prepare_runtime(options: LaunchOptions | None = None) -> PreparedRuntime:
     env_file = _explicit_file(options.env_file, cwd)
     dotenv = selected_env_path(home, env_file)
     environment = load_env(() if env_file is not None else (dotenv,), env_file)
-    layers = load_layers(home, environment.values, cli_config, dotenv=dotenv)
+    layers = load_layers(
+        home, environment.values, cli_config, dotenv=dotenv, preview_home=preview_home
+    )
     settings = merge(layers)
 
     # Step2. Inputs are a list. CLI and DATAAGENT_WORKSPACE override configured defaults.

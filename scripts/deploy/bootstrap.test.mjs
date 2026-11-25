@@ -107,7 +107,7 @@ echo SHOULD_NOT_REACH
   assert.doesNotMatch(output, /curl-should-not-run/);
 });
 
-for (const command of ["start", "restart"]) {
+for (const command of ["start", "restart", "tui"]) {
   for (const version of ["v20.1.0", "v22.0.0", "v22.11.9"]) {
     test(`${command} rejects ${version} without installing or prompting`, async (t) => {
       const fakePath = await makeFakePath({ node: `#!/bin/bash\necho ${version}\n` });
@@ -204,6 +204,7 @@ async function installerFixture(t, manager, overrides = {}) {
   const log = String.raw`printf '%s\n' "$(basename "$0") $*" >> "$INSTALL_LOG"`;
   const directory = await makeFakePath({
     id: "#!/bin/bash\necho 1000\n",
+    mktemp: '#!/bin/bash\n[[ "$*" != *--* ]] || exit 64\nexec mktemp-system "$@"\n',
     sudo: `#!/bin/bash\n${log}\nif [[ "$1" == "-n" ]]; then shift; fi\n"$@"\n`,
     curl: `#!/bin/bash\n${log}\n[[ "\${FAIL_DOWNLOAD:-0}" == 0 ]] || exit 22\nprintf 'printf "repository setup\\n" >> "$INSTALL_LOG"\\n' > "\${!#}"\n`,
     tee: `#!/bin/bash\n${log}\ncat > "$REPO_LOG"\n`,
@@ -212,10 +213,10 @@ async function installerFixture(t, manager, overrides = {}) {
     ...(manager ? { [manager]: `#!/bin/bash\n${log}\n[[ "\${FAIL_INSTALL:-0}" == 0 ]] || { echo 'package install failed' >&2; exit 42; }\n: > "$INSTALL_DONE"\n` } : {}),
   });
   t.after(() => rm(directory, { recursive: true, force: true }));
-  for (const command of ["bash", "cat", "basename", "dirname", "mktemp", "rm", "chmod"]) {
+  for (const command of ["bash", "cat", "basename", "dirname", "mktemp", "rm", "rmdir", "chmod"]) {
     const real = process.env.PATH.split(path.delimiter).map(dir => path.join(dir, command)).find(existsSync);
     assert(real, `Missing test prerequisite: ${command}`);
-    await symlink(real, path.join(directory, command));
+    await symlink(real, path.join(directory, command === "mktemp" ? "mktemp-system" : command));
   }
   const logPath = path.join(directory, "commands.log");
   await writeFile(logPath, "");

@@ -8,10 +8,10 @@ Tiers:
 
 CI example::
 
-    npm run test:product -- --tier test --no-sync
-    npm run test:product -- --tier ut --scope agentkit
+    make test UV_RUN_OPTS=--no-sync
+    uv run --no-project python scripts/run_product_tests.py --tier ut --scope agentkit
 
-``--no-sync`` skips Python dependency preparation. Node suites expect ``npm ci``.
+``--no-sync`` skips Python dependency preparation. Node suites expect ``npm install``.
 
 ``--pytest-args`` and ``--node-test-args`` are shell strings. They are split with
 ``shlex.split`` and appended to the pytest or Node command. An empty string adds
@@ -42,7 +42,7 @@ ARTIFACTS = ROOT / "artifacts" / "product"
 
 # Component order. agentkit is split into unit files and system files.
 COMPONENTS = ("agentkit", "api", "web", "tui", "deploy")
-DEFAULT_COMPONENTS = ("agentkit", "api", "web", "tui")
+NODE_SUITES = ("web", "tui", "deploy", "yaml")
 TIERS = ("ut", "st", "test")
 ST_FILES = (
     ROOT / "tests" / "test_a2a_e2e.py",
@@ -65,13 +65,16 @@ def main(argv: Sequence[str] | None = None) -> int:
     selected = _selected_suites(args.scope, args.tier)
     pytest_args = _split_extra(args.pytest_args, "PYTEST_ARGS")
     node_args = _split_extra(args.node_test_args, "NODE_TEST_ARGS")
+    if node_args and not any(name in NODE_SUITES for name in selected):
+        raise SystemExit(
+            "NODE_TEST_ARGS requires a Web, TUI or deployment test suite. Use PYTEST_ARGS for Python tests."
+        )
     serial_pytest_args, parallel_args = _partition_xdist(pytest_args)
     if args.tier == "st" and parallel_args:
         raise SystemExit(_st_parallel_message(parallel_args))
     commands = {
         name: _command(
             name,
-            no_sync=True,
             pytest_args=serial_pytest_args if name == "agentkit-st" else pytest_args,
             node_args=node_args,
         )
@@ -87,12 +90,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     results: list[SuiteResult] = []
     if not args.no_sync and any(name.startswith("agentkit") or name == "api" for name in selected):
-        node = shutil.which("node")
-        if node is None:
-            raise SystemExit("node is not on PATH (required to prepare Python dependencies)")
-        prepared = _run(
-            "python-prepare", (node, str(ROOT / "scripts/python-environment.mjs"), "--dev")
-        )
+        prepared = _run("python-prepare", ("uv", "sync"))
         if prepared.exit_code != 0:
             _write_summary([prepared])
             _print_summary([prepared])
@@ -121,7 +119,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
         default="all",
         help=(
             "Comma-separated components: agentkit, api, web, tui, deploy, all. "
-            "Default all is agentkit,api,web,tui."
+            "Default all also runs deployment and YAML checks."
         ),
     )
     parser.add_argument(
@@ -162,17 +160,15 @@ def _selected_suites(scope: str, tier: str) -> tuple[str, ...]:
         names = ", ".join(unknown)
         allowed = ", ".join((*COMPONENTS, "all"))
         raise SystemExit(f"unknown scope: {names}. Choose from: {allowed}")
-    if "all" in requested:
-        chosen = set(DEFAULT_COMPONENTS)
-        chosen.update(item for item in requested if item != "all")
-    else:
-        chosen = set(requested)
+    chosen = set(COMPONENTS if "all" in requested else requested)
 
     names: list[str] = []
     if tier in {"ut", "test"} and "agentkit" in chosen:
         names.append("agentkit-ut")
     if tier in {"ut", "test"}:
         names.extend(name for name in ("api", "web", "tui", "deploy") if name in chosen)
+        if "all" in requested:
+            names.append("yaml")
     if tier in {"st", "test"} and "agentkit" in chosen:
         names.append("agentkit-st")
     if not names:
@@ -281,11 +277,10 @@ def _st_parallel_message(parallel: tuple[str, ...]) -> str:
 def _command(
     name: str,
     *,
-    no_sync: bool,
     pytest_args: tuple[str, ...] = (),
     node_args: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
-    uv = ["uv", "run", *(("--no-sync",) if no_sync else ())]
+    uv = ["uv", "run", "--no-sync"]
     if name == "agentkit-ut":
         tests = ROOT / "tests"
         command = [
@@ -328,30 +323,15 @@ def _command(
         ]
         command.extend(pytest_args)
         return tuple(command)
-    if name == "web":
-        # test:web 再套一层 npm --workspace run test，外层会吃掉一个 --。
-        return _with_node_args(["npm", "run", "test:web"], node_args, separators=2)
-    if name == "tui":
-        # test:tui 和 test:web 一样，里面再套一层 workspace 的 npm run test。
-        return _with_node_args(["npm", "run", "test:tui"], node_args, separators=2)
-    if name == "deploy":
-        return _with_node_args(["npm", "run", "test:deploy"], node_args, separators=1)
+    if name in NODE_SUITES:
+        command = ("npm", "run", f"test:{name}")
+        return (*command, "--", *node_args) if node_args else command
     raise SystemExit(f"unknown suite: {name}")
-
-
-def _with_node_args(
-    command: list[str], node_args: tuple[str, ...], *, separators: int
-) -> tuple[str, ...]:
-    if not node_args:
-        return tuple(command)
-    command.extend(["--"] * separators)
-    command.extend(node_args)
-    return tuple(command)
 
 
 def _require_tools(selected: Sequence[str]) -> None:
     needs_uv = any(name.startswith("agentkit") or name == "api" for name in selected)
-    needs_npm = any(name in {"web", "tui", "deploy", "agentkit-st"} for name in selected)
+    needs_npm = any(name in (*NODE_SUITES, "agentkit-st") for name in selected)
     if needs_uv and shutil.which("uv") is None:
         raise SystemExit("uv is not on PATH")
     if needs_npm and shutil.which("npm") is None:

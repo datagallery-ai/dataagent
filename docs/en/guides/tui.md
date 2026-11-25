@@ -10,7 +10,9 @@ With no extra flags it connects to `/api/v1/runs` from `config.yaml`: it starts 
 npm run start:tui
 ```
 
-The address comes from Home `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. A control plane started with `npm run start -- --config` on another file's port is not discovered; if the Home address is free, this command starts a second backend from Home. Attach to the running one with `--runtime-url`. `./deploy.sh tui` connects to the API address recorded by `./deploy.sh start`. `--runtime-url` only attaches. Its host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
+The address comes from Home `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. A control plane started with `npm run start -- --config` on another file's port is not discovered; if the Home address is free, this command starts a second backend from Home. Attach to the running one with `--runtime-url`. `--runtime-url` only attaches. Its host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
+
+`./deploy.sh tui` attaches to an existing backend. It uses `--runtime-url` first, then the saved API address from the last managed start, then the Home configuration. For example, run `./deploy.sh tui --runtime-url http://127.0.0.1:8791`.
 
 Resume the latest server session:
 

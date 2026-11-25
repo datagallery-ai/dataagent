@@ -101,8 +101,14 @@ test("start accepts web host and port", () => {
     config: path.resolve("team.yaml")
   });
   assert.throws(() => parseDeployArgs(["start", "--config", "   "]), /--config requires a value/);
-  assert.throws(() => parseDeployArgs(["status", "--web-port", "3000"]), /only valid with deploy, start, or restart/);
-  assert.throws(() => parseDeployArgs(["tui", "--config", "team.yaml"]), /--config is only valid with deploy, start, or restart/);
+  assert.throws(() => parseDeployArgs(["status", "--web-port", "3000"]), /only valid with deploy, start, restart, or doctor/);
+  assert.throws(() => parseDeployArgs(["tui", "--config", "team.yaml"]), /--config is only valid with deploy, start, restart, or doctor/);
+  const doctor = parseDeployArgs(["doctor", "--config", "team.yaml", "--web-host", "127.0.0.2", "--web-port", "3310"]);
+  assert.equal(doctor.config, path.resolve("team.yaml"));
+  assert.equal(doctor.webHost, "127.0.0.2");
+  assert.equal(doctor.webPort, "3310");
+  assert.equal(parseDeployArgs(["--help"]).command, "help");
+  assert.equal(parseDeployArgs(["restart", "-h"]).command, "help");
   assert.throws(() => parseDeployArgs(["start", "--config"]), /--config requires a value/);
   assert.throws(() => parseDeployArgs(["start", "--web-port"]), /--web-port requires a value/);
 });

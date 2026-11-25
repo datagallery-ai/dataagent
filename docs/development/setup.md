@@ -2,32 +2,33 @@
 
 Python 要求 `>=3.12,<3.13`。仓库根目录用 hatchling 打包唯一顶层包 `dataagent`，服务端位于 `dataagent.server`。控制台命令是 `dataagent`。网页和 TUI 需要 Node.js ≥22.12.0；源码模式的 Python 准备使用 uv，包部署的前端只连接已启动的后端。
 
-运行依赖位于 `project.dependencies`；pytest 及 ruff 位于 `dependency-groups.dev`，`npm run prepare:python` 与 `uv sync` 一样默认包含开发组；普通 npm 安装钩子显式使用 `--no-dev`，不包含开发测试工具。MySQL、PostgreSQL 驱动属于基础运行依赖；Spark/Hive 和视频功能分别通过 `spark`、`video` extras 按需安装，`all` 组合这些扩展依赖，命令及环境条件见 [包部署](../zh/guides/agentkit-package.md#可选能力依赖)。
+运行依赖位于 `project.dependencies`；pytest 及 ruff 位于 `dependency-groups.dev`，`uv sync` 默认安装开发组，部署时用 `--no-dev` 只准备运行依赖。MySQL、PostgreSQL 驱动属于基础运行依赖；Spark/Hive 和视频功能分别通过 `spark`、`video` extras 按需安装，`all` 组合这些扩展依赖，命令及环境条件见 [包部署](../zh/guides/agentkit-package.md#可选能力依赖)。
 
 在仓库根目录：
 
 ```bash
-npm install
+npm install --include=dev
+uv sync
 npm run build
 ```
 
-`npm install` 的安装钩子会准备基础运行依赖；需要重新准备时执行 `npm run prepare:python -- --no-dev`。`npm run build` 编译网页和 TUI。只编其中一个时用 `npm run build:web` 或 `npm run build:tui`。名字是 `npm run start`，或 `npm run start:<部分>`。
+`npm install --include=dev` 准备前端依赖，`uv sync` 准备 Python 环境。`npm run build` 编译网页和 TUI。只编其中一个时用 `npm run build:web` 或 `npm run build:tui`。名字是 `npm run start`，或 `npm run start:<部分>`。
 
 | 命令 | 作用 |
 | --- | --- |
-| `npm run start` | 一键。没有 Python 环境就先同步，控制面没有就拉起，网页打开，TUI 编译好可连 |
-| `npm run start:api` | 只起控制面 |
-| `npm run start:web` | 网页。控制面没有就拉起，已经在跑就只起网页 |
+| `npm run start` | 启动已有的 Web 构建，控制面未运行时使用已有 Python 环境启动它 |
+| `uv run --no-sync dataagent serve` | 使用已有 Python 环境，只启动控制面 |
+| `npm run start:web` | 仅启动网页，连接现有控制面 |
+| `npm run start:tui` | 启动已构建的 TUI，按配置连接或拉起控制面 |
 
-`npm run start` 和 `npm run start:web` 的网页默认是 `127.0.0.1:3000`。不写配置文件。`./deploy.sh deploy`、`start`、`restart` 使用同样的参数，不传就用默认值。要改地址时：
+`npm run start` 和 `npm run start:web` 的网页默认是 `127.0.0.1:3000`。`./deploy.sh deploy`、`start`、`restart` 和 `doctor` 接受同样的地址参数。重启运行中的部署时，未指定的参数沿用上次启动设置。要改地址时：
 
 ```bash
 npm run start -- --web-host 127.0.0.1 --web-port 3000
 npm run start:web -- --web-host 127.0.0.1 --web-port 3000
 ```
-| `npm run start:tui` | TUI。控制面没有就拉起，已经在跑就连上 |
 
-网页和 TUI 都读 `server.host` 与 `server.port`，默认 `http://127.0.0.1:8790`。`npm run start` 在 `.venv` 不存在时先同步 Python 依赖，网页或 TUI 还没有构建结果时再补构建。只连接、不拉起后端时：
+网页和 TUI 都读 `server.host` 与 `server.port`，默认 `http://127.0.0.1:8790`。启动使用已有的环境和构建产物。只连接、不拉起后端时：
 
 ```bash
 npm run start:tui -- --runtime-url http://127.0.0.1:8790
@@ -63,7 +64,7 @@ SDK 路径不初始化 Home。调试配置层时显式传入 `LaunchOptions(conf
 ## 检查
 
 ```bash
-npm run prepare:python
+uv sync
 uv run --no-sync ruff check .
 uv run --no-sync pytest -q
 ```

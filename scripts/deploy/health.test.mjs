@@ -1,11 +1,9 @@
 import assert from "node:assert/strict";
 import http from "node:http";
-import net from "node:net";
 import test from "node:test";
 import {
   collectDeploymentHealth,
   probeHttp,
-  probeTcp,
   waitForDeployment
 } from "./health.mjs";
 
@@ -15,7 +13,7 @@ function listen(server) {
   });
 }
 
-test("probeHttp and probeTcp succeed against ephemeral servers", async () => {
+test("probeHttp succeeds against an ephemeral server", async () => {
   const server = http.createServer((_req, res) => {
     res.writeHead(200);
     res.end("ok");
@@ -25,8 +23,6 @@ test("probeHttp and probeTcp succeed against ephemeral servers", async () => {
     const result = await probeHttp(`http://127.0.0.1:${port}/`);
     assert.equal(result.ok, true);
     assert.equal(result.status, 200);
-    const tcp = await probeTcp("127.0.0.1", port);
-    assert.equal(tcp.ok, true);
   } finally {
     server.close();
   }
@@ -197,16 +193,6 @@ test("collectDeploymentHealth keeps the stack up when the conversation engine is
     api.close();
     web.close();
   }
-});
-
-test("TCP probe fails for closed ports", async () => {
-  const server = net.createServer();
-  const port = await new Promise((resolve) => {
-    server.listen(0, "127.0.0.1", () => resolve(server.address().port));
-  });
-  await new Promise((resolve) => server.close(resolve));
-  const result = await probeTcp("127.0.0.1", port, { timeoutMs: 100 });
-  assert.equal(result.ok, false);
 });
 
 test("health waiting stops probing as soon as the managed process exits", async t => {

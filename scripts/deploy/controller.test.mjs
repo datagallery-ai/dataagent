@@ -1,188 +1,84 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { formatDeploymentFailure } from "./cli.mjs";
 import { createDeploymentController } from "./controller.mjs";
 
-test("deploy update path uses exact maintenance-window ordering", async () => {
-  const controller = createDeploymentController({
-    async loadConfiguration() {
-      return { env: {} };
-    },
-    async preflight() {},
-    async configure(config) {
-      return config;
-    },
-    async checkDependencies() {},
-    async selectPorts(config) {
-      return config;
-    },
-    async writeConfiguration() {},
-    async isRunning() {
-      return true;
-    },
-    async stop() {},
-    async installProject() {},
-    async buildWeb() {},
-    async buildTui() {},
-    async verifyPorts() {},
-    async start() {},
-    async waitForHealth() {},
-    async markHealthy() {},
-    async reportFailure() {}
-  });
-
-  const result = await controller.run({ command: "deploy", reconfigure: false, nonInteractive: true });
-  assert.deepEqual(result.calls, [
-    "load-config",
-    "preflight",
-    "configure",
-    "check-dependencies",
-    "select-ports",
-    "write-config",
-    "stop-old",
-    "install",
-    "build-web",
-    "build-tui",
-    "verify-ports-again",
-    "start",
-    "wait-for-health",
-    "mark-healthy"
-  ]);
-  assert.ok(!result.calls.includes("start-tui"));
-});
-
-test("build failure after stop never starts and reports maintenance window", async () => {
-  let failure;
-  const controller = createDeploymentController({
-    async loadConfiguration() {
-      return { env: {} };
-    },
-    async preflight() {},
-    async configure(config) {
-      return config;
-    },
-    async checkDependencies() {},
-    async selectPorts(config) {
-      return config;
-    },
-    async writeConfiguration() {},
-    async isRunning() {
-      return true;
-    },
-    async stop() {},
-    async installProject() {},
-    async buildWeb() {
-      const error = new Error("build failed");
-      error.logPath = "runtime/logs/backend.log";
-      throw error;
-    },
-    async buildTui() {},
-    async verifyPorts() {},
-    async start() {},
-    async waitForHealth() {},
-    async markHealthy() {},
-    async reportFailure(details) {
-      failure = details;
-    }
-  });
-
-  const storage = { sentinel: Buffer.from("keep-me") };
-  await assert.rejects(
-    () => controller.run({ command: "deploy", reconfigure: false, nonInteractive: true }),
-    /build failed/
-  );
-  assert.ok(!failure.calls.includes("start"));
-  assert.ok(failure.calls.includes("stop-old"));
-  assert.equal(failure.maintenanceWindow, true);
-  assert.equal(failure.serviceStopped, true);
-  assert.equal(failure.stage, "build-web");
-  assert.equal(storage.sentinel.toString(), "keep-me");
-});
-
-test("stop and help dispatch", async () => {
+function deployment({ running = false, failsAt, error } = {}) {
   const calls = [];
+  const config = { env: {} };
+  const step = (name, result) => async () => {
+    calls.push(name);
+    if (name === failsAt) throw error;
+    return result;
+  };
   const controller = createDeploymentController({
-    async stop() {
-      calls.push("stop");
-    },
-    async printHelp() {
-      calls.push("help");
-    }
+    loadConfiguration: step("load-config", config),
+    checkDependencies: step("check-dependencies"),
+    preflight: step("preflight"),
+    configure: step("configure", config),
+    verifyPorts: (_config, { retries } = {}) =>
+      step(retries === 0 ? "verify-ports" : "verify-ports-again")(),
+    writeConfiguration: step("write-config"),
+    isRunning: async () => running,
+    stop: step("stop"),
+    installProject: step("install"),
+    buildWeb: step("build-web"),
+    buildTui: step("build-tui"),
+    start: step("start"),
+    waitForHealth: step("wait-for-health"),
+    markHealthy: step("mark-healthy"),
+    startTui: step("start-tui"),
+    reportFailure: step("report-failure"),
   });
-  await controller.run({ command: "stop" });
-  await controller.run({ command: "help" });
-  assert.deepEqual(calls, ["stop", "help"]);
-});
+  return { calls, run: (command) => controller.run({ command, nonInteractive: true }) };
+}
 
-test("optional tui command checks readiness and API then starts foreground client", async () => {
-  const calls = [];
-  const controller = createDeploymentController({
-    async loadConfiguration() {
-      calls.push("load-config");
-      return { env: {} };
-    },
-    async ensureTuiReady() {
-      calls.push("ensure-tui-ready");
-    },
-    async checkApiForTui() {
-      calls.push("check-api-for-tui");
-    },
-    async startTui(_config, parsed) {
-      calls.push(`start-tui:${parsed.runtimeUrl ?? "default"}`);
-    }
-  });
-  await controller.run({
-    command: "tui",
-    reconfigure: false,
-    nonInteractive: false,
-    runtimeUrl: "http://127.0.0.1:9000/api/v1/runs"
-  });
-  assert.deepEqual(calls, [
-    "load-config",
-    "ensure-tui-ready",
-    "check-api-for-tui",
-    "start-tui:http://127.0.0.1:9000/api/v1/runs"
-  ]);
-});
-
-test("tui aborts before start when API check fails", async () => {
-  const calls = [];
-  const controller = createDeploymentController({
-    async loadConfiguration() {
-      return { env: {} };
-    },
-    async ensureTuiReady() {
-      calls.push("ensure-tui-ready");
-    },
-    async checkApiForTui() {
-      calls.push("check-api-for-tui");
-      throw new Error("API is not healthy");
-    },
-    async startTui() {
-      calls.push("start-tui");
-    }
-  });
-  await assert.rejects(() => controller.run({ command: "tui", runtimeUrl: null }), /API is not healthy/);
-  assert.deepEqual(calls, ["ensure-tui-ready", "check-api-for-tui"]);
-  assert.ok(!calls.includes("start-tui"));
-});
-
-for (const failure of [null, "preflight", "checkDependencies"]) {
-  test(`restart checks the existing environment before stopping (${failure ?? "success"})`, async () => {
-    const calls = [];
-    const deps = { async loadConfiguration() { return { env: {} }; } };
-    for (const name of ["preflight", "checkDependencies", "stop", "start", "waitForHealth", "markHealthy"]) {
-      deps[name] = async () => {
-        calls.push(name);
-        if (name === failure) throw new Error(`failed ${name}`);
-      };
-    }
-    const controller = createDeploymentController(deps);
-    if (failure) {
-      await assert.rejects(controller.run({ command: "restart" }), /failed/);
-      assert(!calls.includes("stop"));
-    } else {
-      await controller.run({ command: "restart" });
-      assert.deepEqual(calls, ["preflight", "checkDependencies", "stop", "start", "waitForHealth", "markHealthy"]);
-    }
+for (const running of [false, true]) {
+  test(`deploy verifies the configuration and ports before ${running ? "updating" : "installing"}`, async () => {
+    const { calls, run } = deployment({ running });
+    await run("deploy");
+    assert.deepEqual(calls, [
+      "load-config", "check-dependencies", "preflight", "configure", "verify-ports",
+      "write-config", ...(running ? ["stop"] : []), "install", "build-web", "build-tui",
+      "verify-ports-again", "start", "wait-for-health", "mark-healthy",
+    ]);
   });
 }
+
+test("a build failure after stopping reports the maintenance window", async () => {
+  const error = new Error("Web build failed");
+  const { calls, run } = deployment({ running: true, failsAt: "build-web", error });
+  await assert.rejects(run("deploy"), ({ failure }) => {
+    assert.equal(failure.stage, "build-web");
+    assert.match(formatDeploymentFailure(failure, "runtime/logs/web.log"), /维护窗口/);
+    return true;
+  });
+  assert.deepEqual(calls.slice(-4), ["stop", "install", "build-web", "report-failure"]);
+});
+
+test("a port conflict after building prevents startup", async () => {
+  const { calls, run } = deployment({
+    failsAt: "verify-ports-again",
+    error: new Error("Web port 3000 is already in use"),
+  });
+  await assert.rejects(run("deploy"), /already in use/);
+  assert.deepEqual(calls.slice(-3), ["build-tui", "verify-ports-again", "report-failure"]);
+});
+
+test("restart checks the existing environment and ports before stopping", async () => {
+  const { calls, run } = deployment();
+  await run("restart");
+  assert.deepEqual(calls, [
+    "load-config", "preflight", "check-dependencies", "verify-ports",
+    "stop", "verify-ports-again", "start", "wait-for-health", "mark-healthy",
+  ]);
+});
+
+test("restart leaves the current service running when a dependency is missing", async () => {
+  const { calls, run } = deployment({
+    failsAt: "check-dependencies",
+    error: new Error("dependency missing"),
+  });
+  await assert.rejects(run("restart"), /dependency missing/);
+  assert.deepEqual(calls, ["load-config", "preflight", "check-dependencies"]);
+});

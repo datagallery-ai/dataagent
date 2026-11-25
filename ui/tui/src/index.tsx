@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync, realpathSync } from "node:fs";
 import { render } from "ink";
 import { pathToFileURL } from "node:url";
 import React from "react";
@@ -103,20 +104,22 @@ async function renderTuiApp(options: RenderAppOptions): Promise<AppExitReason> {
 }
 
 const LOCAL_START_FLAGS = ["--config", "--env-file", "--workspace", "--user", "--session"] as const;
+const sourceCheckout = existsSync(new URL("../../../dataagent/__main__.py", import.meta.url));
 
 function printHelp(): void {
   console.log(`
 DataGallery TUI - Terminal User Interface for DataGallery
 
 Usage:
-  datagallery-tui [options]
+  dataagent-cli [options]
+  da [options]
 
-Options:
+Options:${sourceCheckout ? `
   --config <path>         Use this file instead of Home config.yaml
   --env-file <path>       Optional environment file, resolved by the backend
   --user <id>             Local profile (default: default)
   --workspace <path>      Read-only input; repeat to mount more than one
-  --session <id>          Resume a session in the selected profile
+  --session <id>          Resume a session in the selected profile` : ""}
   --runtime-url <url>     Attach to this control plane and do not start
                           a backend. Omit it to use Home config.yaml
                           server.host and server.port. The host may be
@@ -126,14 +129,15 @@ Options:
   --help, -h              Show this help message
 
 Examples:
-  datagallery-tui
-  datagallery-tui --workspace /existing/data
-  datagallery-tui --runtime-url http://127.0.0.1:8790
+  dataagent-cli${sourceCheckout ? "\n  dataagent-cli --workspace /existing/data" : ""}
+  da --runtime-url http://127.0.0.1:8790
 
 Notes:
   With no arguments the TUI uses Home config.yaml server.host and
-  server.port (default http://127.0.0.1:8790). It starts dataagent serve
-  when that address is down, and connects when it is already up.
+  server.port (default http://127.0.0.1:8790). It connects when that address
+  is already up. ${sourceCheckout
+    ? "From the source checkout, it starts the local Python backend when that address is down."
+    : "Start the installed Server with dataagent serve before connecting."}
   A server started with another --config is left alone. --runtime-url
   attaches and does not start a backend. Its host may be server.host,
   a loopback address, or another IP. 0.0.0.0 and :: connect through
@@ -216,6 +220,10 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
 
   try {
     parseTuiArgs(args);
+    const localStartup = LOCAL_START_FLAGS.some((flag) => args.includes(flag));
+    if (!sourceCheckout && localStartup) {
+      throw new Error("Pass local startup options to dataagent serve, then connect with --runtime-url.");
+    }
     const sourceEnv = options.env ?? process.env;
     const env = getOptionalArg(args, "--runtime-url") ? sourceEnv : projectEnvironment(sourceEnv);
     const runtimeUrl = (() => {
@@ -227,10 +235,9 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
     if (session && resume?.sessionId && resume.sessionId !== session) {
       throw new Error("--session and --resume name different sessions");
     }
-    if (runtimeUrl && LOCAL_START_FLAGS.some((flag) => args.includes(flag))) {
+    if (runtimeUrl && localStartup) {
       throw new Error("Local startup options cannot be combined with --runtime-url");
     }
-    const localStartup = LOCAL_START_FLAGS.some((flag) => args.includes(flag));
     let attachUrl = runtimeUrl;
     if (!attachUrl && !localStartup) {
       const listen = configuredListen(env);
@@ -244,7 +251,8 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
         streamUrl = undefined;
       }
       const probeUrl = streamUrl ? new URL(streamUrl).origin : configuredUrl;
-      if (await controlPlaneIsRunning(fetchImpl, probeUrl) && streamUrl) attachUrl = streamUrl;
+      if (!sourceCheckout) attachUrl = streamUrl ?? configuredUrl;
+      else if (await controlPlaneIsRunning(fetchImpl, probeUrl) && streamUrl) attachUrl = streamUrl;
     }
     const backend = attachUrl ? undefined : await launchBackend({
       configPath: getOptionalArg(args, "--config"),
@@ -278,11 +286,20 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
   }
 }
 
-const isDirectLaunch = process.argv[1]
-  ? import.meta.url === pathToFileURL(process.argv[1]).href
-  : false;
+function isDirectLaunch(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  if (import.meta.url === pathToFileURL(entry).href) return true;
+  try {
+    // npm may launch the installed CLI through a symlink.
+    return import.meta.url === pathToFileURL(realpathSync(entry)).href;
+  } catch {
+    // Imports from node -e can have a non-file argument in argv[1].
+    return false;
+  }
+}
 
-if (isDirectLaunch) {
+if (isDirectLaunch()) {
   const code = await runTui();
   restoreTerminalForParentShell();
   process.exitCode = code;
