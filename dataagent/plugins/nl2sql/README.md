@@ -157,7 +157,7 @@ plugins:
 | `scenario` | 可选。场景包点名（点分名一段一级目录：`udn.business_twin` → `scenarios/udn/business_twin/`，目录须含 `scenario.py` 入口）；缺省走默认流程，配置后选表与生成后改写由场景包接管，见 `docs/udn-scenario-packs.md` |
 | `database.db_id` | 语义服务中的数据库标识，需与实际查询库对应 |
 | `database.dialect` | 必填。生成与 SQLGlot 校验使用的 SQL 方言，例如 `sqlite`、`mysql`、`postgres`；GaussVector 使用 `postgres` |
-| `database.engine` | 执行引擎：`sqlite`、`mysql`、`gaussvector`、`hive`/`spark`；省略时取 dialect，二者不同时必须显式填写，例如 GaussVector |
+| `database.engine` | 执行引擎：`sqlite`、`mysql`、`gaussvector`、`hive`/`spark`、`mcp`；省略时取 dialect，二者不同时必须显式填写，例如 GaussVector |
 | `database.*`（其余键） | 引擎连接参数，如 sqlite 的 `path`、mysql 的 `host/port/user/password/database` |
 | `perceptor.schema_mode` | 可选 `full_schema`、`schema_linking` 或 `bird`。BIRD 按当前 `database.db_id` 从语义服务检索表 |
 | `perceptor.user_schema` | schema .md 文件路径，注入 schema 绕过语义服务（测试后门） |
@@ -167,10 +167,10 @@ plugins:
 | `generator.parse_retries` | 每个生成任务遇到回复截断或 SQL 解析失败后的额外重试次数，默认 3；设为 0 时只请求一次 |
 | `generator.num_workers` | 每策略并行度，**非常昂贵** |
 | `validator.sql_security_enabled` | SQLGlot 确定性安全检查，默认关；开启需启用 reflector |
-| `validator.db_explain` | 用 `EXPLAIN` 校验 SQL 模式与语法 |
+| `validator.db_explain` | 用 `EXPLAIN` 校验 SQL 模式与语法。MCP 默认前缀为 `EXPLAIN PLAN FOR`，可通过 `database.explain_prefix` 修改 |
 | `validator.semantic_check` | 原 Validator 的 LLM 语义检查，默认 `true`。设为 `false` 时跳过此项，其他已启用的检查照常执行。BIRD 链使用独立的 `bird-validator.checkers` 配置 |
 | `reflector.threshold` / `ref_retries` | 反思置信度阈值 / 生成-校验-反思重试次数 |
-| `executor.limit` / `preview_limit` | 取行上限，也是结果文件的行数上限（-1 全量；引擎最多取 limit+1 行以判定截断）/ 预览行数（Selector 评分、日志与回复的 `rows_preview` 共用） |
+| `executor.limit` / `preview_limit` | 取行上限，也是结果文件的行数上限（-1 全量；直连引擎最多取 limit+1 行以判定截断；MCP 在接收完整工具结果后截取）/ 预览行数（Selector 评分、日志与回复的 `rows_preview` 共用） |
 | `selector.shortcut` / `threshold` / `sel_retries` | 多数票捷径（-1 关）/ 置信度阈值 / 重试次数 |
 
 ### 选择工作流
@@ -237,6 +237,37 @@ BIRD 节点把每条最终 SQL 的完整执行结果交给原 Selector，同一�
 `dialect` 传给生成提示和 SQLGlot，`engine` 决定连接实现。不能把 dialect 写成 `gaussvector`，SQLGlot 不识别这个方言；也不能省略 engine 后让其变成不支持的 `postgres` 执行引擎。当前 GV 适配通过 `psycopg2` 执行 `EXPLAIN` 和查询，SQLite、MySQL、GV 所需驱动属于基础运行依赖，无需选择 extra；Spark/Hive 另需 `spark` extra 和 Java 环境。
 
 这说明已有连接与执行适配，不代表特定 GV 版本、专有语法或真实业务库已经通过验收；这些仍需在目标环境验证。
+
+
+### 通过 MCP 执行 SQL
+
+在 `plugins.config.nl2sql.database` 中设置 `engine: "mcp"`，连接参数直接放在
+`database` 下，无需配置宿主 `.mcp.json`。例如：
+
+```json
+{
+  "db_id": "mydb",
+  "dialect": "mysql",
+  "engine": "mcp",
+  "path": "http://localhost:18080/mcp",
+  "read_tool": "dme_read_query",
+  "timeout": 180,
+  "explain_prefix": "EXPLAIN PLAN FOR"
+}
+```
+
+- `path` 必填，使用 HTTP(S) Streamable HTTP 地址。`read_tool`、`timeout`、
+  `explain_prefix` 可省略，默认值如上；`timeout` 为每次完整 MCP 调用的秒数。
+- 只调用指定的读取工具，参数为 `{"query": "SQL"}`，不调用写入工具。
+  `dialect` 仍填写后端数据库的 SQL 方言；schema 仍来自已有语义层或用户 schema。
+- 工具结果优先读取 `structuredContent`，否则读取唯一的文本 JSON。结果须包含
+  `columns`（字符串数组）和 `rows`（对象数组），例如
+  `{"columns": ["name"], "rows": [{"name": "Alice"}]}`；行按 `columns` 顺序整理。
+- EXPLAIN 也通过同一读取工具执行。后端支持普通 `EXPLAIN` 时可修改前缀；
+  不支持 EXPLAIN 时设置 `validator.db_explain: false`。EXPLAIN 失败不会改为执行原 SQL。
+- SQL 错误进入现有校验、反思流程；连接、初始化、超时或结果格式错误会终止任务，
+  不作为 SQL 错误反复修复。`executor.limit` 限制保留的行数和结果文件大小，
+  不限制 MCP 服务端执行或响应的数据量。
 
 ## 与旧版的差异
 

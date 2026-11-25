@@ -10,11 +10,20 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
+import asyncio
 import contextlib
 import importlib
+import json
+import sys
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
+from urllib.parse import urlsplit
+
+import httpx
+import mcp
+from mcp.client import streamable_http
+from mcp.shared.exceptions import McpError
 
 from nl2sql.constants import DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL, DEFAULT_NL2SQL_SQLITE_TIMEOUT
 from nl2sql.errors import DataAgentError
@@ -84,6 +93,43 @@ class SQLiteConfig:
     def to_conn_kwargs(self) -> dict[str, Any]:
         """Return connection kwargs for the SQL driver."""
         return self.__dict__.copy()
+
+
+@dataclass
+class MCPConfig:
+    """Streamable HTTP endpoint exposing a SQL read tool."""
+
+    path: str
+    read_tool: str = "dme_read_query"
+    timeout: float = 180.0
+    explain_prefix: str = "EXPLAIN PLAN FOR"
+
+    def __post_init__(self):
+        if not isinstance(self.path, str):
+            raise ValueError("database.path must be an HTTP or HTTPS endpoint URL")
+        endpoint = urlsplit(self.path)
+        if endpoint.scheme not in {"http", "https"} or not endpoint.netloc:
+            raise ValueError("database.path must be an HTTP or HTTPS endpoint URL")
+        if not isinstance(self.read_tool, str) or not self.read_tool.strip():
+            raise ValueError("database.read_tool must be a non-empty string")
+        if (
+            not isinstance(self.timeout, (int, float))
+            or isinstance(self.timeout, bool)
+            or not 0 < self.timeout <= sys.float_info.max
+        ):
+            raise ValueError("database.timeout must be a positive finite number of seconds")
+        if not isinstance(self.explain_prefix, str) or not self.explain_prefix.strip():
+            raise ValueError("database.explain_prefix must be a non-empty string")
+        self.explain_prefix = self.explain_prefix.strip()
+
+
+class MCPInfrastructureError(DataAgentError):
+    """An MCP connection or result-contract failure that SQL reflection cannot fix."""
+
+    def __init__(self, exc: BaseException | str):
+        while isinstance(exc, BaseExceptionGroup) and len(exc.exceptions) == 1:
+            exc = exc.exceptions[0]
+        super().__init__(source="tool", fact=str(exc), component="nl2sql")
 
 
 @dataclass
@@ -247,6 +293,111 @@ class SQLiteService(BaseService):
         raise e
 
 
+class MCPSqlService(SqlService):
+    """SQL service called in worker threads, with one MCP session per query."""
+
+    def __init__(self, config: MCPConfig):
+        self.config = config
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *_):
+        return False
+
+    async def _call_query_async(self, sql: str):
+        try:
+            async with asyncio.timeout(self.config.timeout):
+                async with httpx.AsyncClient(timeout=self.config.timeout) as http_client:
+                    async with streamable_http.streamable_http_client(
+                        self.config.path, http_client=http_client
+                    ) as (read, write, _):
+                        async with mcp.ClientSession(read, write) as session:
+                            await session.initialize()
+                            tools = await session.list_tools()
+                            while not any(
+                                tool.name == self.config.read_tool for tool in tools.tools
+                            ):
+                                if not tools.nextCursor:
+                                    raise MCPInfrastructureError(
+                                        f"MCP SQL read tool not found: {self.config.read_tool}"
+                                    )
+                                tools = await session.list_tools(
+                                    params=mcp.types.PaginatedRequestParams(cursor=tools.nextCursor)
+                                )
+                            try:
+                                return await session.call_tool(
+                                    self.config.read_tool, {"query": sql}
+                                )
+                            except McpError as exc:
+                                if exc.error.code in {
+                                    httpx.codes.REQUEST_TIMEOUT,
+                                    mcp.types.CONNECTION_CLOSED,
+                                } or (
+                                    exc.error.code == 32600
+                                    and exc.error.message == "Session terminated"
+                                ):
+                                    raise
+                                return exc
+        except TimeoutError as exc:
+            raise MCPInfrastructureError(
+                f"MCP SQL request timed out after {self.config.timeout} seconds"
+            ) from exc
+        except Exception as exc:
+            raise MCPInfrastructureError(exc) from exc
+
+    def execute(
+        self, sql: str, *, limit: int = -1
+    ) -> tuple[list[str] | None, list[tuple[Any, ...]] | None, str | None]:
+        try:
+            response = asyncio.run(self._call_query_async(sql))
+            if isinstance(response, McpError):
+                return None, None, response.error.message or str(response)
+            texts = [
+                item.text for item in response.content if getattr(item, "type", None) == "text"
+            ]
+            if response.isError:
+                return None, None, "\n".join(texts) or "MCP SQL tool failed"
+            payload = getattr(response, "structuredContent", None)
+            if payload is None:
+                if len(texts) != 1:
+                    raise ValueError(
+                        "MCP SQL tool must return one JSON result or structuredContent"
+                    )
+                payload = json.loads(texts[0])
+            if not isinstance(payload, dict):
+                raise ValueError("MCP SQL result must be an object")
+            if payload.get("success") is False or payload.get("error"):
+                return (
+                    None,
+                    None,
+                    str(payload.get("error") or payload.get("message") or "MCP SQL query failed"),
+                )
+            columns, rows = payload.get("columns"), payload.get("rows")
+            if not isinstance(columns, list) or not all(
+                isinstance(column, str) for column in columns
+            ):
+                raise ValueError("MCP SQL result must contain a columns list of strings")
+            if not isinstance(rows, list) or not all(isinstance(row, dict) for row in rows):
+                raise ValueError("MCP SQL result must contain a rows list of objects")
+            # The remote tool has no fetch-limit argument; retain one extra row for truncation.
+            rows = rows[: limit + 1] if limit >= 0 else rows
+            try:
+                values = [tuple(row[column] for column in columns) for row in rows]
+            except KeyError as exc:
+                raise ValueError(f"MCP SQL row missing column: {exc.args[0]!r}") from exc
+            return columns, values, None
+        except MCPInfrastructureError:
+            raise
+        except Exception as exc:
+            raise MCPInfrastructureError(exc) from exc
+
+    def explain(self, sql: str) -> str | None:
+        """Submit EXPLAIN through the same read tool, without executing a fallback query."""
+        _, _, error = self.execute(f"{self.config.explain_prefix} {sql}")
+        return error
+
+
 class SparkService(SqlService):
     def __init__(self, config: SparkConfig):
         self.config = config
@@ -302,6 +453,11 @@ class SparkService(SqlService):
 
 def build_sql_service(engine: str, config: dict[str, Any]) -> SqlService:
     """Construct a SQL service implementation for the configured engine."""
+    if engine == "mcp":
+        try:
+            return MCPSqlService(MCPConfig(**config))
+        except Exception as exc:
+            raise MCPInfrastructureError(exc) from exc
     try:
         if engine == "mysql":
             return MySQLService(MySQLConfig(**config))
