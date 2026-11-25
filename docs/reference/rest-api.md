@@ -77,6 +77,8 @@
 
 客户端断开时，服务取消上游流，并在后台把未完成的会话标成中断。
 
+当前会话有待人工答复的 A2A Task 时，`/api/v1/runs` 返回 HTTP 409。调用方通过 [A2A HITL 恢复](a2a.md#a2a-hitl) 向原 Task 提交答复。
+
 ## `POST /api/v1/runs/{runId}/cancel`
 
 停止正在执行的一轮。`runId` 是这一轮 `POST /api/v1/runs` 请求体里的 `runId`。
@@ -122,7 +124,7 @@
 }
 ```
 
-`status` 为 `running`、`waiting_for_input`、`completed`、`error` 或 `interrupted`。进程启动时，索引里仍为 `running` 的行会改成 `interrupted`，旧版本写入的 `complete` 会改成 `completed`。
+`status` 为 `running`、`waiting_for_input`、`completed`、`error` 或 `interrupted`。REST 发起的待答复会话为 `waiting_for_input`，A2A 发起的待答复会话在查询接口显示为 `interrupted`。进程启动时，索引里仍为 `running` 的行会改成 `interrupted`，旧版本写入的 `complete` 会改成 `completed`。
 
 ## `GET /api/v1/sessions/{threadId}`
 
@@ -131,7 +133,7 @@
 | 字段 | 含义 |
 | --- | --- |
 | `messages` | 下一轮 `POST /api/v1/runs` 接着用的消息。行上有 `last_checkpoint_id` 时读该 Checkpoint，否则读这个线程的最新图状态 |
-| `pendingInteractions` | 待回答项数组；每项仅含 `type: "human_feedback"`、`interruptId`、`message`，以及可选 `options`、`validationError`。无待回答项时为 `[]` |
+| `pendingInteractions` | 可通过 REST 答复的交互数组；每项仅含 `type: "human_feedback"`、`interruptId`、`message`，以及可选 `options`、`validationError`。无待回答项时为 `[]` |
 | `notice` | 中断或失败且有 Checkpoint 时说明已恢复到保存点；中断或失败但没有 Checkpoint 时说明继续当前对话；完成或仍在运行时为 null |
 
 运行中也可以读。绑定缺失或打不开时返回 409。当前用户没有该会话时返回 404。网页和 TUI 都读这份文档。

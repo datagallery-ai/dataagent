@@ -20,7 +20,9 @@ SDK 与服务端共用 `session_bindings` 的产物绑定规则，但不读写�
 
 `start` 把状态设为 `running`。正常结束写成 `completed` 并保存 Checkpoint id。错误写成 `error`，取消或连接断开写成 `interrupted`；收尾时若本轮已有消息 Checkpoint，也保存它的位置，没有新消息时保留原位置。服务再次启动时，残留的 `running` 改成 `interrupted`。
 
-A2A TaskStore 是进程内的协议任务记录。重启后旧 Task ID 不可查询，同一 `contextId` 对应的会话、Checkpoint 和产物仍可继续使用；它不构成另一套持久业务记录。
+A2A 原生 HITL 暂停时会话记为 `waiting`，保存待决 Checkpoint；提交结构化响应后继续同一 Task。适配范围和取消/重启限制见 [HITL](../reference/a2a.md#a2a-hitl)。
+
+A2A TaskStore 是进程内的协议任务记录。重启后旧 Task ID 不可查询，普通会话的 Checkpoint 和产物仍可继续使用；待人工 Task 的 A2A 恢复暂不支持跨重启。TaskStore 不构成另一套持久业务记录。
 
 标题是用户文本压缩空白后的前 100 个字符。
 

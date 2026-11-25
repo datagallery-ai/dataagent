@@ -27,11 +27,14 @@ class RequestInfo:
     context_id: str | None = None
     task_id: str | None = None
     root_run_id: str | None = None
+    task_root_run_id: str | None = None
     rpc_error_code: int | None = None
     task_state: str | None = None
     stage: str | None = None
     checkpoint_before: str | None = None
     error: dict | None = None
+    # A resumed Task retains creation IDs; this request still has its own audit/trace IDs.
+    task_metadata: dict | None = field(default=None, repr=False)
 
     def fields(self):
         return {
@@ -46,18 +49,23 @@ class RequestInfo:
                 "context_id",
                 "task_id",
                 "root_run_id",
+                "task_root_run_id",
                 "stage",
             )
             if getattr(self, key) is not None
         }
 
     def metadata(self):
-        result = {
-            "schemaVersion": 1,
-            "requestId": self.request_id,
-            "messageId": self.message_id,
-        }
-        if self.root_run_id:
+        result = (
+            dict(self.task_metadata)
+            if self.task_metadata is not None
+            else {
+                "schemaVersion": 1,
+                "requestId": self.request_id,
+                "messageId": self.message_id,
+            }
+        )
+        if self.root_run_id and self.task_metadata is None:
             result["rootRunId"] = self.root_run_id
         if self.error:
             result["error"] = self.error
@@ -161,8 +169,12 @@ def instrument_rpc(endpoint):
                 info.task_state = task["status"].get("state")
                 metadata = task.get("metadata")
                 details = metadata.get("dataagent") if isinstance(metadata, dict) else None
-                root_run_id = details.get("rootRunId") if isinstance(details, dict) else None
-                info.root_run_id = root_run_id if isinstance(root_run_id, str) else None
+                task_root_run_id = details.get("rootRunId") if isinstance(details, dict) else None
+                if isinstance(task_root_run_id, str):
+                    if info.root_run_id is None and info.method != "SendMessage":
+                        info.root_run_id = task_root_run_id
+                    if task_root_run_id != info.root_run_id:
+                        info.task_root_run_id = task_root_run_id
         return response
 
     return call

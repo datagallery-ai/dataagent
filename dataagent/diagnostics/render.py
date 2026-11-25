@@ -132,6 +132,18 @@ def safe_log_fields(value, secrets: tuple[str, ...] = ()):
     return value
 
 
+def safe_interrupt_fields(value, secrets: tuple[str, ...] = ()):
+    """Copy an outward interrupt payload with credentials redacted and text intact."""
+    if isinstance(value, dict):
+        return {
+            key: "[REDACTED]" if is_secret_name(key) else safe_interrupt_fields(item, secrets)
+            for key, item in value.items()
+        }
+    if isinstance(value, (tuple, list)):
+        return [safe_interrupt_fields(item, secrets) for item in value]
+    return redact_log_text(value, secrets) if isinstance(value, str) else value
+
+
 def log_event(logger, event: str, *, secrets, level=logging.INFO, **fields) -> None:
     """Keep correlation fields readable by both logging handlers and test/host consumers."""
     payload = safe_log_fields({"event": event, **fields}, secrets)

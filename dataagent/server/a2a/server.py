@@ -15,6 +15,7 @@ from a2a.server.tasks import TaskStore
 from a2a.types.a2a_pb2 import AgentCard
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from langchain_core.messages import HumanMessage
+from langgraph.types import Command
 from starlette.applications import Starlette
 from starlette.middleware import Middleware
 from starlette.requests import Request
@@ -24,7 +25,7 @@ from starlette.routing import Route
 from dataagent import PreparedRuntime
 from dataagent.host import ServerSettings
 from dataagent.server.a2a.agent_card import JSONRPC_PATH, build_agent_card
-from dataagent.server.a2a.agent_executor import AgentKitExecutor
+from dataagent.server.a2a.agent_executor import AgentKitExecutor, HITLContextBuilder
 from dataagent.server.a2a.request_context import (
     A2AAuditMiddleware,
     A2ARejection,
@@ -58,8 +59,7 @@ async def _stop(turn, graph, *, error: bool = False, secrets=()) -> None:
     """Record a cancelled or failed turn, then release it."""
     if turn is None:
         return
-    if error:
-        turn.status = "error"
+    turn.status = "error" if error else "interrupted"
     try:
         if graph is not None:
             latest = await turn.settle(graph)
@@ -96,7 +96,7 @@ class AgentHost:
         self.runtime = runtime
         self.app = app
 
-    async def reply(self, thread_id: str, text: str):
+    async def reply(self, thread_id: str, inputs: str | Command):
         """Run one turn on the shared session index and checkpoint."""
         invocation = current_request.get()
         if invocation:
@@ -107,28 +107,58 @@ class AgentHost:
         busy, key = _reserve(getattr(self.app.state, "conversation_busy", None), user_id, thread_id)
         turn = graph = None
         try:
-            turn, config = await self._prepare(thread_id, text, user_id)
+            prepared_turn, config = await self._prepare(thread_id, user_id)
             opened = await self.app.state.agents.get(thread_id, create=True)
             if opened is None:
                 raise RuntimeError("Session could not be opened")
             _session, handle, _runtime = opened
             graph = handle.graph
+            if isinstance(inputs, Command):
+                thread_config = {"configurable": {"thread_id": thread_id}}
+                snapshot = await graph.aget_state(thread_config)
+                pending = {item.id for item in snapshot.interrupts}
+                checkpoint_id = config["configurable"].get("checkpoint_id")
+                if (
+                    not checkpoint_id
+                    or checkpoint_id != snapshot.config["configurable"].get("checkpoint_id")
+                    or not pending
+                    or not set(inputs.resume).issubset(pending)
+                ):
+                    raise A2ARejection("The interrupt is no longer pending", "BAD_REQUEST")
+                # Addressing a checkpoint explicitly starts a replay and ignores successful
+                # sibling writes from the interrupted step. Continue from the thread head.
+                config["configurable"] = thread_config["configurable"]
+                graph_input = inputs
+            else:
+                snapshot = await graph.aget_state(config)
+                if snapshot.interrupts:
+                    raise A2ARejection("This session is waiting for a HITL response", "CONFLICT")
+                graph_input = {"messages": [HumanMessage(content=inputs)]}
+            turn = prepared_turn
+            if turn is not None:
+                await turn.start(
+                    config["metadata"]["dataagent_root_run_id"],
+                    inputs if isinstance(inputs, str) else "HITL response",
+                )
             if graph.config and "recursion_limit" in graph.config:
                 config["recursion_limit"] = graph.config["recursion_limit"]
             if invocation:
                 invocation.stage = "agent_invoke"
             async with asyncio.timeout(self.runtime.timeout_seconds):
-                result = await handle.ainvoke({"messages": [HumanMessage(content=text)]}, config)
+                result = await handle.ainvoke(graph_input, config)
             if turn is not None:
                 if invocation:
                     invocation.stage = "checkpoint_settle"
-                latest = await turn.settle(graph, complete=True)
+                waiting = bool(result.get("__interrupt__"))
+                if waiting:
+                    turn.status = "waiting"
+                latest = await turn.settle(graph, complete=not waiting)
                 audit(
                     "a2a.checkpoint.saved",
                     secrets=self.runtime.redaction_secrets,
                     checkpoint_id_before=invocation.checkpoint_before if invocation else None,
                     checkpoint_id=latest.config["configurable"].get("checkpoint_id"),
-                    complete=True,
+                    complete=not waiting,
                 )
             return result
         except asyncio.CancelledError:
@@ -141,7 +171,22 @@ class AgentHost:
             if busy is not None:
                 busy.discard(key)
 
-    async def _prepare(self, thread_id: str, text: str, user_id: str):
+    async def cancel_waiting(self, thread_id: str, task_id: str) -> None:
+        """Close the waiting session entry and leave its checkpoint intact."""
+        sessions = self.app.state.sessions
+        user_id = self.runtime.paths.user_id
+        row = await sessions.get(user_id, thread_id)
+        if row is None or row["status"] != "waiting" or not row["last_checkpoint_id"]:
+            return
+        checkpoint = await self.app.state.checkpointer.aget_tuple(
+            {
+                "configurable": continuation_configurable(thread_id, row),
+            }
+        )
+        if checkpoint is not None and checkpoint.metadata.get("dataagent_a2a_task_id") == task_id:
+            await sessions.interrupt_waiting(user_id, thread_id, row["last_run_id"])
+
+    async def _prepare(self, thread_id: str, user_id: str):
         invocation = current_request.get()
         run_id = invocation.root_run_id if invocation and invocation.root_run_id else str(uuid4())
         if invocation:
@@ -168,7 +213,6 @@ class AgentHost:
             invocation.checkpoint_before = row.get("last_checkpoint_id") if row else None
         config["configurable"] = continuation_configurable(thread_id, row)
         turn = SessionTurn(sessions, user_id, thread_id)
-        await turn.start(run_id, text)
         return turn, config
 
 
@@ -247,13 +291,23 @@ def build_a2a_routes(
     routes = _agent_card_routes(card)
     if runtime is None:
         return routes
-    agent_host = AgentHost(runtime, app=app)
     if executor is None:
-        executor = AgentKitExecutor(agent_host.reply, secrets=tuple(runtime.redaction_secrets))
+        agent_host = AgentHost(runtime, app=app)
+        executor = AgentKitExecutor(
+            agent_host.reply,
+            secrets=tuple(runtime.redaction_secrets),
+            cancel_waiting=agent_host.cancel_waiting,
+        )
+    store = task_store or create_task_store()
     handler = DefaultRequestHandler(
         agent_executor=executor,
-        task_store=task_store or create_task_store(),
+        task_store=store,
         agent_card=card,
+        request_context_builder=(
+            HITLContextBuilder(store, runtime.redaction_secrets)
+            if type(executor).execute is AgentKitExecutor.execute
+            else None
+        ),
     )
     rpc_routes = create_jsonrpc_routes(handler, rpc_url=JSONRPC_PATH)
     return [
