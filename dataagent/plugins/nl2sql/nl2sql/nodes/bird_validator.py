@@ -52,7 +52,6 @@ class BirdValidatorNode(BaseNL2SQLNode):
         self.repair_attempts = kwargs.get("repair_attempts", DEFAULT_REPAIR_ATTEMPTS)
         self.preview_limit = kwargs.get("preview_limit", DEFAULT_NL2SQL_PREVIEW_LIMIT)
         self.sql_security_enabled = kwargs.get("sql_security_enabled", False)
-        self.temperature = kwargs.get("temperature", 0.3)
 
     def _emit_reasoning_tag(self):
         explicit = self._config.get("emit_reasoning_tag")
@@ -74,9 +73,7 @@ class BirdValidatorNode(BaseNL2SQLNode):
 
     async def _ask(self, prompt: str, *, count: int, stop: list[str]):
         return await _collect(
-            collect_model_stream(
-                self.model, [HumanMessage(content=prompt)], stop=stop, temperature=self.temperature
-            )
+            collect_model_stream(self.model, [HumanMessage(content=prompt)], stop=stop)
             for _ in range(count)
         )
 

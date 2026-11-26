@@ -66,7 +66,7 @@ async def test_real_syntax_repair_shares_final_execution_and_preserves_order(tmp
     [(messages, kwargs)] = validator.model.requests
     assert len(messages) == 1 and "<reasoning>" in messages[0].content
     assert "missing_column" in messages[0].content
-    assert kwargs["stop"] == ["</result>"] and kwargs["temperature"] == 0.3
+    assert kwargs["stop"] == ["</result>"] and "temperature" not in kwargs
 
 
 @pytest.mark.parametrize(
