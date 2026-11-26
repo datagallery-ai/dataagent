@@ -118,6 +118,34 @@ async def test_a2a_stream_emits_text_before_model_finishes(runtime):
     assert artifacts[-1]["artifact"]["parts"] == [{"text": "first second"}]
 
 
+async def test_a2a_stream_hides_internal_summary(runtime, monkeypatch):
+    from test_api import StreamingScriptedModel
+
+    from dataagent.core.middleware.summarization import SummarizationMiddleware
+
+    model = StreamingScriptedModel(
+        responses=[
+            AIMessage(content="First answer"),
+            AIMessage(content="Internal history summary"),
+            AIMessage(content="Final answer"),
+        ]
+    )
+    async with client_for(runtime, model) as client:
+        task_of(await rpc(client, message("Start", "summary")))
+        monkeypatch.setattr(SummarizationMiddleware, "_should_summarize", lambda *args: True)
+        monkeypatch.setattr(SummarizationMiddleware, "_determine_cutoff_index", lambda *args: 2)
+        request = message("Continue", "summary")
+        request["method"] = "SendStreamingMessage"
+        response = await rpc(client, request)
+        events = a2a_events(response)
+    assert model.cursor == 3
+    assert "Internal history summary" not in response.text
+    previews = [e["artifactUpdate"] for e in events if "artifactUpdate" in e]
+    assert previews[0]["artifact"]["parts"] == [{"text": "Final answer"}]
+    assert not previews[0].get("lastChunk")
+    assert events[-1]["statusUpdate"]["status"]["state"] == "TASK_STATE_COMPLETED"
+
+
 async def test_burst_preview_preserves_order_and_bounds_store_updates():
     from dataagent.server.a2a.agent_executor import _artifact_preview
 

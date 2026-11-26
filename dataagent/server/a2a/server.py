@@ -13,9 +13,10 @@ from a2a.server.request_handlers import DefaultRequestHandler
 from a2a.server.request_handlers.response_helpers import agent_card_to_dict
 from a2a.server.routes import create_jsonrpc_routes
 from a2a.server.tasks import TaskStore
-from a2a.types.a2a_pb2 import AgentCard, GetTaskRequest, Task
+from a2a.types.a2a_pb2 import AgentCard, GetTaskRequest, Task, TaskState, TaskStatusUpdateEvent
 from a2a.utils.constants import AGENT_CARD_WELL_KNOWN_PATH
 from a2a.utils.task import apply_history_length
+from langchain.agents.middleware.internal_call_transformer import INTERNAL_CALL_METADATA_KEY
 from langchain_core.messages import AIMessageChunk, HumanMessage
 from langgraph.types import Command
 from starlette.applications import Starlette
@@ -95,19 +96,25 @@ class _RequestHandler(DefaultRequestHandler):
     async def on_message_send_stream(self, params, context):
         # The SDK emits the Task on creation, but only updates on continuation.
         async with aclosing(super().on_message_send_stream(params, context)) as events:
-            first = await anext(events, None)
+            event = await anext(events, None)
             initial = context.state.pop("dataagent_initial_task", None)
-            if first is None:
+            if event is None:
                 # A validated retry can become stale while it waits in the SDK queue.
-                if initial is not None:
-                    current = await self.on_get_task(GetTaskRequest(id=initial.id), context)
-                    yield apply_history_length(current, params.configuration)
-                return
-            if initial is not None and not isinstance(first, Task):
+                if initial is None:
+                    return
+                current = await self.on_get_task(GetTaskRequest(id=initial.id), context)
+                event = apply_history_length(current, params.configuration)
+            elif initial is not None and not isinstance(event, Task):
                 yield apply_history_length(initial, params.configuration)
-            yield first
-            async for event in events:
+
+            info = current_request.get()
+            while event is not None:
+                if info is not None and isinstance(event, (Task, TaskStatusUpdateEvent)):
+                    info.task_id = event.id if isinstance(event, Task) else event.task_id
+                    info.context_id = event.context_id
+                    info.task_state = TaskState.Name(event.status.state)
                 yield event
+                event = await anext(events, None)
 
 
 class AgentHost:
@@ -196,6 +203,8 @@ class AgentHost:
                                     )
                                 continue
                             message, metadata = event["data"]
+                            if metadata.get(INTERNAL_CALL_METADATA_KEY):
+                                continue
                             node = metadata.get("langgraph_node")
                             if entry:
                                 in_entry = (not ns and node == entry) or (
