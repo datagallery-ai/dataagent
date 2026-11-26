@@ -41,7 +41,7 @@
     "start:tui": "node -- ui/tui/dist/index.js",
     "test:deploy": "node scripts/run-node-tests.mjs ui/shared/logging.test.mjs scripts/deploy/*.test.mjs scripts/makefile.test.mjs scripts/stack-runtime-config.test.mjs scripts/password-only-cutover.test.mjs --",
     "smoke:native-deploy": "node scripts/deploy/smoke-native-deploy.mjs",
-    "smoke:agentkit-package": "node scripts/smoke-agentkit-package.mjs",
+    "smoke:dataagent-package": "node scripts/smoke-dataagent-package.mjs",
     "test:web": "npm --workspace @datagallery/web run test --",
     "test:tui": "npm --workspace @datagallery/tui run test --",
     "docs:dev": "python -m mkdocs serve -a 127.0.0.1:8000",

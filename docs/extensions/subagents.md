@@ -69,7 +69,7 @@ dataagent:
 限制：
 
 - 只接受带 `runnable` 的编译型子代理。
-- `dataagent.hooks`、`limits.model_calls_per_agent` / `limits.tool_calls_per_agent`、`workspaces`，以及插件里的 Skill、工具（含 MCP）、`system_prompt`、其他子代理和根中间件，仍按原路径编译或留在配置里，不装进入口图，也不因此报错。`limits.timeout_seconds` 仍约束宿主执行阶段；A2A 排队等时限边界见 [配置参考](../reference/configuration.md#dataagent)。
+- `dataagent.hooks`、`limits.model_calls_per_agent` / `limits.tool_calls_per_agent`、`input_workspaces`，以及插件里的 Skill、工具（含 MCP）、`system_prompt`、其他子代理和根中间件，仍按原路径编译或留在配置里，不装进入口图，也不因此报错。`limits.timeout_seconds` 仍约束宿主执行阶段；A2A 排队等时限边界见 [配置参考](../reference/configuration.md#dataagent)。
 - 不要用同一个 `thread_id` 在 Deep Agents 根和入口图之间恢复。两边的 Checkpoint 状态形状不同，根图还有 `messages` 以外的通道。
 - 只保证异步调用（`ainvoke`、`astream`）。nl2sql 这类只实现了 async 的 Runnable，同步 `invoke` / `stream` 可能失败。
 - Trace 的根名称是入口名。

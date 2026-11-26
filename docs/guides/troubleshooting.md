@@ -43,7 +43,7 @@
 | 现象 | 处理 |
 | --- | --- |
 | TUI 连不上 | 无参数时连 `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。先确认 `/healthz` 里 `conversation.ready` 为 true。只连接、不拉起时用 `--runtime-url`。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。部署栈用 `./deploy.sh tui` |
-| 带 `--workspace` 等参数时端口已被占用 | 这些参数会再拉起一个后端。要连已有控制面就去掉它们，只运行 `npm run start:tui` |
+| 带 `--config` 等参数时端口已被占用 | 这些参数会再拉起一个后端。要连已有控制面就去掉它们，只运行 `npm run start:tui` |
 | MCP 发现失败 | 修正 `<home>/.mcp.yaml` 或插件 `.mcp.yaml` 后重启。发现失败时进程仍在，对话路径返回 503 |
 | 语义服务 TLS 失败 | `verify_server` 为 false 时不校验服务端证书。要校验时同时提供可达的 `ca_file`。客户端证书和私钥必须成对出现 |
 

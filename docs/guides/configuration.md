@@ -115,7 +115,7 @@ models:
 
 **限制执行时长和循环次数。** 改 `dataagent.limits`。`timeout_seconds` 用于 REST 的 Agent 事件迭代、A2A 的 Agent 调用，以及模型、shell、MCP 和远端 A2A 的相关超时；入站 A2A 排队、会话准备和 Checkpoint 保存不计入 Agent 调用时限。它不是客户端请求总耗时上限，完整列表见 [配置字段](../reference/configuration.md)。SDK 调用方自己控制整轮时限。
 
-**加入只读输入。** 在 `dataagent.workspaces` 写 `name`、已存在的 `path` 和 `"read_only": true`。命令行 `--workspace` 和环境变量 `DATAAGENT_WORKSPACE` 会盖过配置里的列表。
+**加入只读输入。** 在 `dataagent.input_workspaces` 写 `name`、已存在的 `path` 和 `"read_only": true`。
 
 **指定产物根目录。** 在配置中增加：
 

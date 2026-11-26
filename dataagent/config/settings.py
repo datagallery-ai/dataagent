@@ -54,7 +54,7 @@ class AgentSettings(StrictModel):
     limits: Limits = Field(default_factory=Limits)
     loop_detection: LoopDetectionSettings = Field(default_factory=LoopDetectionSettings)
     hooks: tuple[HookSpec, ...] = ()  # Independent registrations accumulate across config layers.
-    workspaces: tuple[WorkspaceSettings, ...] = ()
+    input_workspaces: tuple[WorkspaceSettings, ...] = ()
     # New sessions use <output_root>/<user>/<session>; None means <home>/outputs.
     output_root: Path | None = None
     # Compiled subagent used as the whole graph. None keeps the Deep Agents root.
@@ -67,12 +67,12 @@ class AgentSettings(StrictModel):
 
     @model_validator(mode="after")
     def unique_workspaces(self):
-        names = [item.name for item in self.workspaces]
-        paths = [item.path.resolve() for item in self.workspaces]
+        names = [item.name for item in self.input_workspaces]
+        paths = [item.path.resolve() for item in self.input_workspaces]
         if len(set(names)) != len(names):
-            raise ValueError("dataagent.workspaces contains duplicate names")
+            raise ValueError("dataagent.input_workspaces contains duplicate names")
         if len(set(paths)) != len(paths):
-            raise ValueError("dataagent.workspaces contains duplicate paths")
+            raise ValueError("dataagent.input_workspaces contains duplicate paths")
         return self
 
 

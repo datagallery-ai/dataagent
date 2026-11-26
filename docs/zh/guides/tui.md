@@ -4,7 +4,9 @@
 
 ## 启动方式
 
-直接启动时，TUI 按 `config.yaml` 连接 `/api/v1/runs`：没有控制面就拉起 `dataagent serve`，已经在跑就连上。旧的登录和 CopilotKit 客户端已经删除。
+已安装 TUI npm 包时，用 `dataagent-cli --runtime-url <Server 地址>` 或 `da --runtime-url <Server 地址>` 连接已启动的 Server。安装步骤见 [DataAgent 包部署](dataagent-package.md#connect-tui)。
+
+从源码启动时，TUI 按 `config.yaml` 连接 `/api/v1/runs`。该地址上没有控制面时会拉起 `dataagent serve`。
 
 ```bash
 npm run start:tui
@@ -26,7 +28,7 @@ npm run start:tui -- --resume
 npm run start:tui -- --resume thread-001
 ```
 
-`--config` 用那份文件代替 Home `config.yaml`，并拉起后端，不附着已经在跑的控制面。`--env-file`、`--workspace`、`--user`、`--session` 同样传给这次拉起的后端。
+`--config` 用那份文件代替 Home `config.yaml`，并拉起后端，不附着已经在跑的控制面。`--env-file`、`--user`、`--session` 同样传给这次拉起的后端。
 
 查看 CLI 参数：
 

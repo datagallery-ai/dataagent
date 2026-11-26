@@ -8,7 +8,7 @@ dataagent:
   loop_detection:
     enabled: true
     ignored_tools: []
-  workspaces: []
+  input_workspaces: []
   entry: null
   hooks:
     before_agent:

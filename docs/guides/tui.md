@@ -13,11 +13,11 @@ npm run start:tui
 ```bash
 npm run start:tui -- --resume
 npm run start:tui -- --resume <threadId>
-npm run start:tui -- --workspace /existing/data
+npm run start:tui -- --config /path/to/config.yaml
 npm run start:tui -- --runtime-url http://127.0.0.1:8790
 ```
 
-`--runtime-url` 不能和 `--config`、`--env-file`、`--workspace`、`--user`、`--session` 一起用。后面这几项会拉起后端。部署栈已经在跑时也可以 `./deploy.sh tui`，它连接这次 `./deploy.sh start` 记下的 API 地址。
+`--runtime-url` 不能和 `--config`、`--env-file`、`--user`、`--session` 一起用。后面这几项会拉起后端。部署栈已经在跑时也可以 `./deploy.sh tui`，它连接这次 `./deploy.sh start` 记下的 API 地址。
 
 `/exit` 会停掉这次 TUI 拉起的后端。用 `--runtime-url` 连上的控制面不会被停掉。Ctrl+C 需要按两次才退出。
 

@@ -29,11 +29,13 @@
 | `loop_detection.enabled` | 布尔 | `true` | 检测模型输出复读和无进展工具循环。复读命中后终止本轮；工具循环第一次命中先提示模型换方法，第二次命中再终止 |
 | `loop_detection.ignored_tools` | 字符串数组 | `[]` | 不参与工具循环检测的完整工具名，适合有意轮询的工具 |
 | `hooks` | 分组对象或列表 | `[]` | 见 [扩展声明](extension-schema.md)。跨配置层追加 |
-| `workspaces` | 数组 | `[]` | 只读输入。空数组不创建目录 |
+| `input_workspaces` | 数组 | `[]` | 只读输入。空数组不创建目录 |
 | `output_root` | 路径或 `null` | `null` | 新会话的产物根目录，只接受绝对路径或 `~/` 开头的路径。会话产物写入 `<output_root>/<user>/<thread>/`；`null` 时根目录为 `<home>/outputs`。已有会话保留创建时的位置。见 [会话与产物](../guides/sessions-and-outputs.md#产物目录的位置) |
 | `entry` | 字符串或省略 | 省略 | `[a-z][a-z0-9_-]{0,63}`。已启用插件里某个编译型子代理的 `name`。省略则装配 Deep Agents 根。见 [入口模式](../extensions/subagents.md#入口模式) |
 
-`workspaces[]`：
+已有 YAML 使用 `dataagent.workspaces` 时，将字段名改为 `dataagent.input_workspaces`。
+
+`input_workspaces[]`：
 
 | 字段 | 类型 | 约束 |
 | --- | --- | --- |
@@ -41,7 +43,7 @@
 | `path` | 字符串 | 必须是已存在且可读的目录，解析后唯一 |
 | `read_only` | `true` | 只能是 `true` |
 
-`entry` 由高层替换；省略则继承低层。改它要重启进程，扩展刷新不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /api/v1/runs` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent`、`loop_detection.ignored_tools` 和 `workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍约束宿主执行阶段，边界见上表。
+`entry` 由高层替换；省略则继承低层。改它要重启进程，扩展刷新不更新这个字段。`/healthz` 返回这个配置值，未设置时为 `null`；错误的名字不会让它失败。`POST /api/v1/runs` 第一次装配图时返回 HTTP 409。设了 `entry` 之后，`dataagent.hooks`、`model_calls_per_agent`、`tool_calls_per_agent`、`loop_detection.ignored_tools` 和 `input_workspaces` 不装进入口图，装配不因此失败。`limits.timeout_seconds` 仍约束宿主执行阶段，边界见上表。
 
 ### 复读与循环检测
 

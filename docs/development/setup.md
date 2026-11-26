@@ -2,7 +2,7 @@
 
 Python 要求 `>=3.11,<3.13`。仓库根目录用 hatchling 打包唯一顶层包 `dataagent`，服务端位于 `dataagent.server`。控制台命令是 `dataagent`。网页和 TUI 需要 Node.js ≥22.12.0；源码模式的 Python 准备使用 uv，包部署的前端只连接已启动的后端。
 
-运行依赖位于 `project.dependencies`；pytest 及 ruff 位于 `dependency-groups.dev`，`uv sync` 默认安装开发组，部署时用 `--no-dev` 只准备运行依赖。MySQL、PostgreSQL 驱动属于基础运行依赖；Spark/Hive 和视频功能分别通过 `spark`、`video` extras 按需安装，`all` 组合这些扩展依赖，命令及环境条件见 [包部署](../zh/guides/agentkit-package.md#可选能力依赖)。
+运行依赖位于 `project.dependencies`；pytest 及 ruff 位于 `dependency-groups.dev`，`uv sync` 默认安装开发组，部署时用 `--no-dev` 只准备运行依赖。MySQL、PostgreSQL 驱动属于基础运行依赖；Spark/Hive 和视频功能分别通过 `spark`、`video` extras 按需安装，`all` 组合这些扩展依赖，命令及环境条件见 [包部署](../zh/guides/dataagent-package.md#可选能力依赖)。
 
 在仓库根目录：
 
@@ -36,7 +36,7 @@ npm run start:tui -- --runtime-url http://127.0.0.1:8790
 
 主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
 
-`--config`、`--env-file`、`--workspace`、`--user`、`--session` 会传给这次拉起的后端，不能和 `--runtime-url` 一起用。
+`--config`、`--env-file`、`--user`、`--session` 会传给这次拉起的后端，不能和 `--runtime-url` 一起用。
 
 ## 调试后端
 
@@ -45,7 +45,7 @@ npm run start:tui -- --runtime-url http://127.0.0.1:8790
 ```bash
 uv run --no-sync dataagent serve \
   --env-file .env \
-  --workspace "$PWD"
+  --config /path/to/config.yaml
 ```
 
 然后看 `http://127.0.0.1:8790/healthz`。端口来自 `config.yaml` 的 `server.port`。

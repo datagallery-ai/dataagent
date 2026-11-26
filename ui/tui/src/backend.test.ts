@@ -29,7 +29,7 @@ it("startup only forwards explicit paths, user and session without an interactiv
   let captured: string[] = [];
   const cwd = process.cwd();
   const backend = await startBackend({
-    envFile: "provider.env", workspaces: [".", "data"], user: "alice", session: "saved",
+    envFile: "provider.env", user: "alice", session: "saved",
     spawnBackend: (args, options) => {
       captured = args;
       assert.equal(options.cwd, cwd);
@@ -42,7 +42,6 @@ it("startup only forwards explicit paths, user and session without an interactiv
     assert(!captured.includes("--config"));
     assert(captured.indexOf("--env-file") > captured.indexOf("serve"));
     assert.equal(captured[captured.indexOf("--env-file") + 1], resolve(cwd, "provider.env"));
-    assert.equal(captured.filter(arg => arg === "--workspace").length, 2);
     assert.equal(captured[captured.indexOf("--user") + 1], "alice");
     assert.equal(captured[captured.indexOf("--session") + 1], "saved");
     assert.equal(backend.runtimeUrl, "http://127.0.0.1:8790/api/v1/runs");

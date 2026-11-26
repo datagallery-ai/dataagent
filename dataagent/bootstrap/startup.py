@@ -33,7 +33,6 @@ from dataagent.bootstrap.paths import (
     initialize_home,
     opaque_id,
     session_root,
-    validate_workspace_binding,
 )
 from dataagent.bootstrap.runtime import PreparedRuntime, StartupReport
 from dataagent.config.plugins import contained_path, resolve_plugins
@@ -64,37 +63,17 @@ def prepare_runtime(
     )
     settings = merge(layers)
 
-    # Step2. Inputs are a list. CLI and DATAAGENT_WORKSPACE override configured defaults.
-    # No configured inputs means an empty list; Home already owns the working state.
-    # A resumed session keeps the binding recorded when it was created.
-    explicit = list(options.workspaces)
-    explicit_inputs = bool(explicit) or bool(
-        environment.values.get("DATAAGENT_WORKSPACE", "").strip()
+    # Step2. Defaults come from YAML; opening an existing session reads its saved binding.
+    workspaces = tuple(
+        WorkspaceInput(item.name, item.path) for item in settings.dataagent.input_workspaces
     )
-    if explicit:
-        workspaces = tuple(
-            WorkspaceInput(f"workspace-{index}", absolute(value, cwd, expand_home=True))
-            for index, value in enumerate(explicit)
-        )
-    elif environment.values.get("DATAAGENT_WORKSPACE", "").strip():
-        workspaces = (
-            WorkspaceInput(
-                "workspace-0",
-                absolute(environment.values["DATAAGENT_WORKSPACE"], cwd, expand_home=True),
-            ),
-        )
-    else:
-        workspaces = tuple(
-            WorkspaceInput(item.name, item.path) for item in settings.dataagent.workspaces
-        )
     if options.session_id is not None:
-        workspaces = _resume_workspaces(
-            home,
-            user_id,
-            options.session_id,
-            workspaces,
-            explicit=explicit_inputs,
-        )
+        binding = find_session_binding(session_root(home, user_id, options.session_id))
+        if binding is None or binding.user_id != user_id or binding.thread_id != options.session_id:
+            raise ValueError(
+                f"Session {options.session_id} does not belong to user {user_id}. "
+                "Choose one of this user's sessions or start a new one."
+            )
     paths = RuntimePaths.resolve(
         home,
         workspaces,
@@ -201,30 +180,6 @@ def refresh_extensions(runtime: PreparedRuntime) -> PreparedRuntime:
         ),
     )
     return replace(runtime, settings=settings, extensions=extensions, report=report)
-
-
-def _resume_workspaces(
-    home: Path,
-    user_id: str,
-    thread_id: str,
-    launched: tuple[WorkspaceInput, ...],
-    *,
-    explicit: bool,
-) -> tuple[WorkspaceInput, ...]:
-    """Use the saved input list. An explicit different list is a startup error, not a rebind."""
-    binding = find_session_binding(session_root(home, user_id, thread_id))
-    if binding is None:
-        raise ValueError(
-            f"Session {thread_id} does not belong to user {user_id}. "
-            "Choose one of this user's sessions or start a new one."
-        )
-    if binding.user_id != user_id or binding.thread_id != thread_id:
-        raise ValueError(
-            f"Session {thread_id} does not belong to user {user_id}. "
-            "Choose one of this user's sessions or start a new one."
-        )
-    validate_workspace_binding(binding, launched if explicit else None)
-    return binding.workspaces
 
 
 def server_listen(options: LaunchOptions | None = None) -> tuple[str, int]:

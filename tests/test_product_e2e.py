@@ -131,6 +131,11 @@ class Terminal:
 def product(config, environment, resume=None, env_file=None):
     workspace = config.parent / "inputs"
     workspace.mkdir(exist_ok=True)
+    config_data = yaml.safe_load(config.read_text())
+    config_data.setdefault("dataagent", {})["input_workspaces"] = [
+        {"name": "workspace-0", "path": "inputs"}
+    ]
+    config.write_text(json.dumps(config_data))
     master, slave = pty.openpty()
     fcntl.ioctl(slave, termios.TIOCSWINSZ, struct.pack("HHHH", 32, 100, 0, 0))
     arguments = [
@@ -140,8 +145,6 @@ def product(config, environment, resume=None, env_file=None):
         "--",
         "--config",
         os.path.relpath(config, REPOSITORY),
-        "--workspace",
-        str(workspace),
     ]
     if env_file:
         arguments += ["--env-file", os.path.relpath(env_file, REPOSITORY)]
@@ -232,13 +235,13 @@ def test_tui_resolves_explicit_env_file_from_npm_launch_directory(tmp_path):
     config.write_text(json.dumps(config_data))
     env_file = tmp_path / "provider.env"
     env_file.write_text(
-        f"LLM_MODEL=env-file-model\nLLM_BASE_URL=https://example.invalid/v1\n"
-        f"LLM_API_KEY=fake-test-key\nDATAAGENT_WORKSPACE={tmp_path}\n"
+        "LLM_MODEL=env-file-model\nLLM_BASE_URL=https://example.invalid/v1\n"
+        "LLM_API_KEY=fake-test-key\n"
     )
     environment = {
         key: value
         for key, value in os.environ.items()
-        if key not in {"LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY", "DATAAGENT_WORKSPACE"}
+        if key not in {"LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"}
     }
     with product(config, environment, env_file=env_file) as terminal:
         terminal.read_until("env-file-model", timeout=5)
@@ -261,8 +264,6 @@ def test_tui_reports_occupied_port_without_reusing_or_stopping_service(tmp_path)
                 str(REPOSITORY / "ui/tui/dist/index.js"),
                 "--config",
                 str(config),
-                "--workspace",
-                str(tmp_path),
             ],
             capture_output=True,
             text=True,
@@ -419,7 +420,6 @@ def exercise_query_and_resume(tmp_path, values):
     environment = {
         **os.environ,
         **{key: values[key] for key in required},
-        "DATAAGENT_WORKSPACE": str(tmp_path),
     }
     config = tmp_path / "config.yaml"
     config_data = yaml.safe_load((PROJECT / "config.example.yaml").read_text())

@@ -6,6 +6,7 @@ from pathlib import Path
 import pytest
 import yaml
 
+from dataagent import ConfigurationLoadError
 from dataagent.bootstrap import (
     LaunchOptions,
     RuntimePaths,
@@ -33,8 +34,11 @@ def config(path, value):
 
 
 def options(tmp_path, **kwargs):
-    cli = config(tmp_path / "explicit.yaml", MODEL)
-    return LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,), config=cli, **kwargs)
+    cli = config(
+        tmp_path / "explicit.yaml",
+        {**MODEL, "dataagent": {"input_workspaces": [{"name": "input", "path": "."}]}},
+    )
+    return LaunchOptions(cwd=tmp_path, config=cli, **kwargs)
 
 
 def test_home_preview_uses_startup_template_without_creating_home(tmp_path, monkeypatch):
@@ -122,13 +126,13 @@ def test_explicit_config_can_clear_inputs_without_synthesizing_default(tmp_path)
         {
             **MODEL,
             "dataagent": {
-                "workspaces": [{"name": "data", "path": str(tmp_path)}],
+                "input_workspaces": [{"name": "data", "path": str(tmp_path)}],
             },
         },
     )
-    cli = config(tmp_path / "empty.yaml", {**MODEL, "dataagent": {"workspaces": []}})
+    cli = config(tmp_path / "empty.yaml", {**MODEL, "dataagent": {"input_workspaces": []}})
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
-    assert runtime.paths.workspaces == runtime.settings.dataagent.workspaces == ()
+    assert runtime.paths.workspaces == runtime.settings.dataagent.input_workspaces == ()
     assert not (runtime.paths.home / "workspaces").exists()
 
 
@@ -248,7 +252,7 @@ def test_explicit_config_replaces_home_config(tmp_path):
             },
         },
     )
-    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,), config=cli))
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
     assert runtime.model_name == "explicit-model"
     assert runtime.settings.server.host == "127.0.0.1"
     assert runtime.settings.server.port == 8801
@@ -343,7 +347,7 @@ def test_config_keeps_home_env_until_env_file_replaces_it(tmp_path, monkeypatch,
     assert prepare_runtime(replace(opts, env_file=env_file)).model_name == "explicit"
 
     config(home / "config.yaml", selected)
-    home_runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, workspaces=(tmp_path,)))
+    home_runtime = prepare_runtime(LaunchOptions(cwd=tmp_path))
     assert home_runtime.model_name == "home"
     assert home_runtime.redaction_secrets == ("home-key",)
 
@@ -417,19 +421,31 @@ def test_extension_revision_tracks_only_the_selected_env_file(tmp_path):
     assert extension_revision(explicit) != marked
 
 
-def test_workspace_precedence_and_missing_directory(tmp_path, monkeypatch):
-    opts = options(tmp_path)
-    first, second = tmp_path / "first", tmp_path / "second"
-    first.mkdir()
-    second.mkdir()
-    monkeypatch.setenv("DATAAGENT_WORKSPACE", "first")
-    assert prepare_runtime(replace(opts, workspaces=())).paths.workspaces[0].path == first
-    assert prepare_runtime(replace(opts, workspaces=("second",))).paths.workspaces[0].path == second
+def test_yaml_is_the_only_default_input_source(tmp_path, monkeypatch):
+    configured = tmp_path / "configuration"
+    source = configured / "input"
+    source.mkdir(parents=True)
+    old_env = tmp_path / "ignored"
+    old_env.mkdir()
+    monkeypatch.setenv("DATAAGENT_WORKSPACE", str(old_env))
+
+    def prepare(field, path):
+        cli = config(
+            configured / "config.yaml",
+            {**MODEL, "dataagent": {field: [{"name": "input", "path": path}]}},
+        )
+        return prepare_runtime(LaunchOptions(cwd=tmp_path, config=cli))
+
+    assert prepare("input_workspaces", "input").paths.workspaces == (
+        WorkspaceInput("input", source),
+    )
     with pytest.raises(ValueError, match="does not exist"):
-        prepare_runtime(replace(opts, workspaces=("missing",)))
-    assert not (tmp_path / "missing").exists()
-    with pytest.raises(ValueError, match="directory"):
-        prepare_runtime(replace(opts, workspaces=(opts.config,)))
+        prepare("input_workspaces", "missing")
+    assert not (configured / "missing").exists()
+    with pytest.raises(ValueError, match="Expected a directory"):
+        prepare("input_workspaces", "config.yaml")
+    with pytest.raises(ConfigurationLoadError, match="workspaces: Extra inputs"):
+        prepare("workspaces", "input")
 
 
 def test_path_helpers_distinguish_lexical_and_real_paths_without_creating_directories(tmp_path):
@@ -445,34 +461,6 @@ def test_path_helpers_distinguish_lexical_and_real_paths_without_creating_direct
     with pytest.raises(ValueError, match="does not exist"):
         resolve_directory(lexical, required=True)
     assert not (real / "missing").exists()
-
-
-@pytest.mark.parametrize("source", ["home", "config", "explicit"])
-def test_relative_workspace_from_env_uses_launch_cwd_not_env_directory(tmp_path, source):
-    cwd = tmp_path / "launch"
-    workspace = cwd / "work"
-    workspace.mkdir(parents=True)
-    cli = config(tmp_path / "configuration/config.yaml", MODEL)
-    env_file = {
-        "home": tmp_path / "home/.env",
-        "config": cli.with_name(".env"),
-        "explicit": tmp_path / "environment/settings.env",
-    }[source]
-    env_file.parent.mkdir(parents=True, exist_ok=True)
-    env_file.write_text("DATAAGENT_WORKSPACE=work\n")
-    if source == "home":
-        config(tmp_path / "home/config.yaml", MODEL)
-        options = LaunchOptions(cwd=cwd)
-    elif source == "config":
-        config(tmp_path / "home/config.yaml", MODEL)
-        (tmp_path / "home/.env").write_text("DATAAGENT_WORKSPACE=work\n")
-        env_file.write_text("DATAAGENT_WORKSPACE=ignored-sibling\n")
-        options = LaunchOptions(cwd=cwd, config=cli)
-    else:
-        options = LaunchOptions(cwd=cwd, config=cli, env_file=env_file)
-    runtime = prepare_runtime(options)
-    assert runtime.paths.workspaces[0].path == workspace
-    assert not (env_file.parent / "work").exists()
 
 
 def test_hidden_empty_project_and_legacy_paths_are_ignored(tmp_path):
@@ -689,7 +677,6 @@ def test_selected_config_keeps_its_own_hook_directory(tmp_path, scope):
     runtime = prepare_runtime(
         LaunchOptions(
             cwd=tmp_path,
-            workspaces=(tmp_path,),
             config=roots["cli"] / "hooks.yaml" if scope == "cli" else None,
         )
     )
@@ -743,13 +730,10 @@ def test_explicit_config_without_hooks_does_not_keep_home_hooks(tmp_path):
     assert runtime.timeout_seconds == 60
 
 
-@pytest.mark.parametrize("explicit_workspace", [False, True])
-def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch, explicit_workspace):
+def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch):
     from dataagent import cli as entry
 
     opts = options(tmp_path, init_home=True)
-    if not explicit_workspace:
-        opts = replace(opts, workspaces=())
     expected = prepare_runtime(opts)
     captured = []
     monkeypatch.chdir(tmp_path)
@@ -759,8 +743,6 @@ def test_rest_cli_and_sdk_prepare_same_launch_options(tmp_path, monkeypatch, exp
         lambda runtime, *args, **kwargs: captured.append(runtime) or 0,
     )
     args = ["serve", "--config", str(opts.config)]
-    if explicit_workspace:
-        args.extend(["--workspace", str(opts.workspaces[0])])
     assert entry.main(args) == 0
     assert captured[0].settings == expected.settings
     assert captured[0].paths == expected.paths

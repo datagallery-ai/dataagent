@@ -3,6 +3,7 @@
 发布前在仓库根目录执行：
 
 ```bash
+npm install --include=dev
 uv sync
 uv run --no-sync ruff check .
 uv run --no-sync pytest -q
@@ -16,7 +17,7 @@ uv run --no-sync pytest -q -m 'tui and not live'
 
 在仓库根目录执行 `make prepare` 和 `make build PYTHON_VERSION=3.12`，归档 `dist/server/` 下的 Python wheel 和 `dist/tui/` 下的 TUI npm 包。Web 构建文件留在 `ui/web/.next/`。
 
-源码部署继续使用 `npm run build`。独立交付后的安装与连接见[包部署](../zh/guides/agentkit-package.md)。
+源码部署继续使用 `npm run build`。独立交付后的安装与连接见[包部署](../zh/guides/dataagent-package.md)。
 
 ## 单独生成 Python 安装包
 
@@ -29,8 +30,9 @@ uv build --wheel --clear --out-dir dist/server
 ## 验证安装包与前端
 
 ```bash
+make prepare
 make build
-npm run smoke:agentkit-package
+npm run smoke:dataagent-package
 ```
 
 验收脚本在仓库外安装本次构建的 wheel 和 TUI npm 包。它验证 CLI、插件资源、SDK、HTTP 和 A2A，并通过本地测试模型验证 Web 代理、TUI 安装后的启动入口、流式对话及错误处理。

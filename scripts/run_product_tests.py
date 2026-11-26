@@ -2,14 +2,14 @@
 """Run the refactor product tests from the repository root.
 
 Tiers:
-- ``ut``: unit tests (agentkit except the product TUI flows, plus API, web, and TUI).
+- ``ut``: unit tests (dataagent except the product TUI flows, plus API, web, and TUI).
 - ``st``: system tests that start a Python control plane, then attach the real TUI.
 - ``test``: ut + st.
 
 CI example::
 
     make test UV_RUN_OPTS=--no-sync
-    uv run --no-project python scripts/run_product_tests.py --tier ut --scope agentkit
+    uv run --no-project python scripts/run_product_tests.py --tier ut --scope dataagent
 
 ``--no-sync`` skips Python dependency preparation. Node suites expect ``npm install``.
 
@@ -18,7 +18,7 @@ CI example::
 no argument. Make passes them as ``PYTEST_ARGS`` and ``NODE_TEST_ARGS``.
 
 ``-n`` / ``--numprocesses`` (including ``-n4`` and ``--numprocesses=4``) may reach
-agentkit unit tests. System tests never receive them. ``--tier st`` exits before
+dataagent unit tests. System tests never receive them. ``--tier st`` exits before
 starting a TUI when those flags are present. Other filters, such as ``-k``, stay
 on both tiers. ``-n`` is never added unless the caller passed it.
 """
@@ -40,8 +40,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parent.parent
 ARTIFACTS = ROOT / "artifacts" / "product"
 
-# Component order. agentkit is split into unit files and system files.
-COMPONENTS = ("agentkit", "api", "web", "tui", "deploy")
+# Component order. dataagent is split into unit files and system files.
+COMPONENTS = ("dataagent", "api", "web", "tui", "deploy")
 NODE_SUITES = ("web", "tui", "deploy", "yaml")
 TIERS = ("ut", "st", "test")
 ST_FILES = (
@@ -75,7 +75,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     commands = {
         name: _command(
             name,
-            pytest_args=serial_pytest_args if name == "agentkit-st" else pytest_args,
+            pytest_args=serial_pytest_args if name == "dataagent-st" else pytest_args,
             node_args=node_args,
         )
         for name in selected
@@ -89,14 +89,14 @@ def main(argv: Sequence[str] | None = None) -> int:
     _require_tools(selected)
     ARTIFACTS.mkdir(parents=True, exist_ok=True)
     results: list[SuiteResult] = []
-    if not args.no_sync and any(name.startswith("agentkit") or name == "api" for name in selected):
+    if not args.no_sync and any(name.startswith("dataagent") or name == "api" for name in selected):
         prepared = _run("python-prepare", ("uv", "sync"))
         if prepared.exit_code != 0:
             _write_summary([prepared])
             _print_summary([prepared])
             return prepared.exit_code
     for name in selected:
-        if name == "agentkit-st":
+        if name == "dataagent-st":
             built = _run("tui-build", ("npm", "run", "build:tui"))
             results.append(built)
             if built.exit_code != 0:
@@ -113,12 +113,12 @@ def main(argv: Sequence[str] | None = None) -> int:
 
 
 def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Run agentkit, API, web, and TUI tests.")
+    parser = argparse.ArgumentParser(description="Run dataagent, API, web, and TUI tests.")
     parser.add_argument(
         "--scope",
         default="all",
         help=(
-            "Comma-separated components: agentkit, api, web, tui, deploy, all. "
+            "Comma-separated components: dataagent, api, web, tui, deploy, all. "
             "Default all also runs deployment and YAML checks."
         ),
     )
@@ -141,7 +141,7 @@ def _parse_args(argv: Sequence[str]) -> argparse.Namespace:
     parser.add_argument(
         "--pytest-args",
         default="",
-        help="Extra pytest arguments for agentkit ut and st, split with shlex. Empty adds nothing.",
+        help="Extra pytest arguments for dataagent ut and st, split with shlex. Empty adds nothing.",
     )
     parser.add_argument(
         "--node-test-args",
@@ -163,14 +163,14 @@ def _selected_suites(scope: str, tier: str) -> tuple[str, ...]:
     chosen = set(COMPONENTS if "all" in requested else requested)
 
     names: list[str] = []
-    if tier in {"ut", "test"} and "agentkit" in chosen:
-        names.append("agentkit-ut")
+    if tier in {"ut", "test"} and "dataagent" in chosen:
+        names.append("dataagent-ut")
     if tier in {"ut", "test"}:
         names.extend(name for name in ("api", "web", "tui", "deploy") if name in chosen)
         if "all" in requested:
             names.append("yaml")
-    if tier in {"st", "test"} and "agentkit" in chosen:
-        names.append("agentkit-st")
+    if tier in {"st", "test"} and "dataagent" in chosen:
+        names.append("dataagent-st")
     if not names:
         raise SystemExit(f"scope {scope} has no {tier} tests")
     return tuple(names)
@@ -281,7 +281,7 @@ def _command(
     node_args: tuple[str, ...] = (),
 ) -> tuple[str, ...]:
     uv = ["uv", "run", "--no-sync"]
-    if name == "agentkit-ut":
+    if name == "dataagent-ut":
         tests = ROOT / "tests"
         command = [
             *uv,
@@ -292,13 +292,13 @@ def _command(
             "-q",
             "-m",
             "not live",
-            f"--junitxml={ARTIFACTS / 'agentkit-ut-junit.xml'}",
+            f"--junitxml={ARTIFACTS / 'dataagent-ut-junit.xml'}",
         ]
         for path in (*ST_FILES, ROOT / "tests" / "test_product_api.py"):
             command.extend(["--ignore", str(path)])
         command.extend(pytest_args)
         return tuple(command)
-    if name == "agentkit-st":
+    if name == "dataagent-st":
         command = [
             *uv,
             "--project",
@@ -308,7 +308,7 @@ def _command(
             "-q",
             "-m",
             "not live",
-            f"--junitxml={ARTIFACTS / 'agentkit-st-junit.xml'}",
+            f"--junitxml={ARTIFACTS / 'dataagent-st-junit.xml'}",
         ]
         command.extend(pytest_args)
         return tuple(command)
@@ -330,8 +330,8 @@ def _command(
 
 
 def _require_tools(selected: Sequence[str]) -> None:
-    needs_uv = any(name.startswith("agentkit") or name == "api" for name in selected)
-    needs_npm = any(name in (*NODE_SUITES, "agentkit-st") for name in selected)
+    needs_uv = any(name.startswith("dataagent") or name == "api" for name in selected)
+    needs_npm = any(name in (*NODE_SUITES, "dataagent-st") for name in selected)
     if needs_uv and shutil.which("uv") is None:
         raise SystemExit("uv is not on PATH")
     if needs_npm and shutil.which("npm") is None:
@@ -342,10 +342,10 @@ def _run(name: str, command: tuple[str, ...]) -> SuiteResult:
     print(f"\n==> {name}\n$ {_format_command(command)}", flush=True)
     started = time.monotonic()
     env = dict(os.environ)
-    # ps -o command= truncates to the terminal width. Agentkit checks the full command line.
+    # ps -o command= truncates to the terminal width. DataAgent checks the full command line.
     env.setdefault("COLUMNS", "1000")
     # Ink skips the real terminal when CI is set, so TUI system tests never see Enter.
-    if name == "agentkit-st":
+    if name == "dataagent-st":
         env.pop("CI", None)
     completed = subprocess.run(command, cwd=ROOT, env=env)
     return SuiteResult(name, command, completed.returncode, time.monotonic() - started)

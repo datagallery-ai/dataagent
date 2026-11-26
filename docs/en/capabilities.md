@@ -11,7 +11,7 @@ The Web UI may still show older resource panels. Those requests return 404 and a
 | Outputs | Through the session routes | `/outputs` | `GET /api/v1/sessions/{threadId}/outputs` |
 | Cancel one turn | Call the cancel route | Disconnecting interrupts the turn | `POST /api/v1/runs/{runId}/cancel` |
 | Model | Uses the configuration already loaded | Same | `models` in `config.yaml`, plus `.env` |
-| Read-only input | Uses directories bound at startup | Same | `dataagent.workspaces` or `--workspace` |
+| Read-only input | Uses directories bound at startup | Same | `dataagent.input_workspaces` |
 | Skills / plugins / MCP | Uses declarations enabled under Home | Same | `<home>/skills`, `plugins`, `.mcp.yaml` |
 | Health | Proxied on the same origin | May read `/healthz` before connecting | `GET /healthz`, `GET /ready` |
 | Identity | `GET /api/v1/me` returns `--user` | No login | No registration, cookie, or CSRF |

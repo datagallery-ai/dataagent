@@ -99,9 +99,9 @@ test("CI prepare, build, ut and st use the configured Python version", async t =
 test("Make preserves suite scope, tier and pytest filters", async t => {
   if (process.platform === "win32") return t.skip("POSIX make fixture");
   const { root, env } = await fixture(t);
-  const [call] = invoke(root, env, "ut", "TIER=st", "SCOPE=agentkit", "PYTEST_ARGS=-k 'session and not live'", "UV_RUN_OPTS=--no-sync");
+  const [call] = invoke(root, env, "ut", "TIER=st", "SCOPE=dataagent", "PYTEST_ARGS=-k 'session and not live'", "UV_RUN_OPTS=--no-sync");
   assert.equal(call.tool, "uv");
-  assert(call.args.includes("agentkit"));
+  assert(call.args.includes("dataagent"));
   assert(call.args.includes("--pytest-args=-k 'session and not live'"));
   assert.equal(call.args[call.args.indexOf("--tier") + 1], "ut");
   assert.equal(call.args.at(-1), "--no-sync");
@@ -110,7 +110,7 @@ test("Make preserves suite scope, tier and pytest filters", async t => {
 test("UV_RUN_OPTS cannot replace a Make target's test selection", async t => {
   if (process.platform === "win32") return t.skip("POSIX make fixture");
   const { root, env } = await fixture(t);
-  for (const target of ["st", "agentkit"]) {
+  for (const target of ["st", "dataagent"]) {
     const result = spawnSync("make", ["--silent", target, "UV_RUN_OPTS=--no-sync --list --tier=ut"], {
       cwd: root, env, encoding: "utf8", timeout: 5000
     });

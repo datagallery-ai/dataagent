@@ -6,7 +6,7 @@
 
 ## 出包与独立安装
 
-支持标准 wheel 和源码包。仅运行安装后的后端需要 Python 3.11 或 3.12；Web/TUI 通过 HTTP 连接，前端运行环境单独准备。构建、安装、前端连接及错误检查见 [发布](release.md) 和 [包部署](../zh/guides/agentkit-package.md)。
+支持标准 wheel 和源码包。仅运行安装后的后端需要 Python 3.11 或 3.12；Web/TUI 通过 HTTP 连接，前端运行环境单独准备。构建、安装、前端连接及错误检查见 [发布](release.md) 和 [包部署](../zh/guides/dataagent-package.md)。
 
 ## 快速启动
 
@@ -33,7 +33,7 @@ npm run start:tui
 手动启动后端：
 
 ```bash
-uv run --no-sync dataagent serve --workspace /existing/data
+uv run --no-sync dataagent serve --config /path/to/config.yaml
 ```
 
 默认地址是 `http://127.0.0.1:8790`，来自 `config.yaml` 的 `server.host` 和 `server.port`。端口被占用时启动失败，不会改动其他进程。
@@ -41,7 +41,7 @@ uv run --no-sync dataagent serve --workspace /existing/data
 让其他 agent 通过 A2A 1.0 调用本机 Agent：
 
 ```bash
-uv run --no-sync dataagent serve-a2a --workspace /existing/data
+uv run --no-sync dataagent serve-a2a --config /path/to/config.yaml
 ```
 
 默认监听 `http://127.0.0.1:9999`。发现地址是 `/.well-known/agent-card.json`，JSON-RPC 在 `/a2a/jsonrpc`。`dataagent serve` 也会挂上这两条路由。这些进程共用同一份状态目录锁，不能同时开。

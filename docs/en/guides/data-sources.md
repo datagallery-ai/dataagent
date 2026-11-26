@@ -10,13 +10,13 @@ To let the model read local files, list the directories as workspaces. Each dire
 
 ```yaml
 dataagent:
-  workspaces:
+  input_workspaces:
   - name: input
     path: /data/reports
     read_only: true
 ```
 
-You can also repeat `--workspace` when starting the control plane, or set `DATAAGENT_WORKSPACE`. The command line wins over the other two.
+Use `--config` to select another YAML file when starting Server. Relative paths are resolved from the YAML file’s directory.
 
 `read_only` can only be `true`. A new session writes the list into the `session_bindings` table in `sessions.sqlite` once. Files the agent creates go to that session's output directory, `<home>/outputs/<user>/<thread>/` by default, not into the workspace.
 

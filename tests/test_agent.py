@@ -722,7 +722,7 @@ async def test_entry_leaves_root_settings_unmounted(runtime, tmp_path):
             "dataagent": {
                 "entry": "direct",
                 "limits": {"model_calls_per_agent": 3, "tool_calls_per_agent": 4},
-                "workspaces": [{"name": "input", "path": str(workspace), "read_only": True}],
+                "input_workspaces": [{"name": "input", "path": str(workspace), "read_only": True}],
                 "hooks": {
                     "before_agent": [
                         {
@@ -735,7 +735,7 @@ async def test_entry_leaves_root_settings_unmounted(runtime, tmp_path):
         },
     )
     assert prepared.settings.dataagent.limits.model_calls_per_agent == 3
-    assert prepared.settings.dataagent.workspaces[0].name == "input"
+    assert prepared.settings.dataagent.input_workspaces[0].name == "input"
     assert prepared.settings.dataagent.hooks
     graph = build_graph(prepared, model=ScriptedModel(responses=[]))
     assert set(graph.nodes) == {"__start__", "direct"}

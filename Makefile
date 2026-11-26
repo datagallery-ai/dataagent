@@ -19,7 +19,7 @@ ifeq ($(OS),Windows_NT)
     SHELL := bash.exe
 endif
 
-.PHONY: ut st test prepare build start agentkit api web tui deploy
+.PHONY: ut st test prepare build start dataagent api web tui deploy
 
 # 测试入口准备开发依赖，套件不再隐式同步；UV_RUN_OPTS=--no-sync 跳过准备。
 TEST_RUNNER := uv run --no-project python scripts/run_product_tests.py
@@ -52,5 +52,5 @@ start:
 	cd "$(PROJECT_DIR)" && ./deploy.sh start
 
 # 以下目标按组件运行测试；真正部署使用 ./deploy.sh deploy。该范围没有所选层级时返回非零。
-agentkit api web tui deploy:
+dataagent api web tui deploy:
 	cd "$(PROJECT_DIR)" && $(TEST_RUNNER) --tier $(TIER) --scope $@ --pytest-args=$(call quote,$(PYTEST_ARGS)) --node-test-args=$(call quote,$(NODE_TEST_ARGS)) $(TEST_SYNC_OPTION)

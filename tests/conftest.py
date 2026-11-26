@@ -104,8 +104,7 @@ def call(name, args, id=None):
 @pytest.fixture(autouse=True)
 def isolated_home(tmp_path, monkeypatch):
     monkeypatch.setenv("DATAAGENT_HOME", str(tmp_path / "home"))
-    monkeypatch.setenv("DATAAGENT_WORKSPACE", str(tmp_path))
-    for name in ("DATAAGENT_WORKSPACE", "LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"):
+    for name in ("LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"):
         monkeypatch.delenv(name, raising=False)
 
 

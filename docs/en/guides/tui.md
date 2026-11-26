@@ -4,7 +4,9 @@ This guide is for terminal users, remote server users, and developers. After rea
 
 ## How to start
 
-With no extra flags it connects to `/api/v1/runs` from `config.yaml`: it starts `dataagent serve` when nothing is listening, and attaches when a control plane is already up. The old login and CopilotKit client are gone.
+After installing the TUI npm package, use `dataagent-cli --runtime-url <Server URL>` or `da --runtime-url <Server URL>` to connect to a running Server. See [DataAgent package deployment](dataagent-package.md#connect-tui).
+
+When started from source, the TUI connects to `/api/v1/runs` at the address from `config.yaml` and starts `dataagent serve` if nothing is listening there.
 
 ```bash
 npm run start:tui

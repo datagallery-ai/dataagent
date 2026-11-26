@@ -4,7 +4,7 @@
 
 产品对外发布两个包：Python 主包提供 Agent、API 和插件；npm UI 包同时提供 Web 和 TUI。用户安装成品后运行命令，不需要克隆仓库、编译前端或准备源码目录。两个包通过 HTTP API 和 AG-UI 事件通信，可以装在同一台机器，也可以分开部署。
 
-本文约定包边界、安装启动、构建、兼容和验收要求。下文新增的包名、命令和接口都是目标契约，不能当作当前版本的使用说明。当前使用方式仍以[命令与环境变量](../reference/cli-and-environment.md)和[发布检查](release.md)为准。
+本文约定包边界、安装启动、构建、兼容和验收要求。下文新增的包名、命令和接口都是目标契约，不能当作当前版本的使用说明。当前交付流程是 Server wheel 和独立 TUI npm 包，Web 从源码构建。安装命令见 [DataAgent 包部署](../zh/guides/dataagent-package.md)，构建和验收见[发布检查](release.md)。
 
 ## 仓库布局与迁移顺序
 
@@ -195,7 +195,7 @@ npm install -g ./datagallery-dataagent-ui-0.3.0.tgz
 | `dataagent --version` | 新增，从发行元数据读取实际版本 |
 | `dataagent doctor` | 新增，只读检查配置、版本、插件资源和目录权限，不调用模型或写用户配置 |
 
-保留 `serve` 的 `--config`、`--env-file`、`--workspace`、`--user` 和 `--session`。API 监听地址继续来自主包配置中的 `server.host`、`server.port`，不新增另一套端口配置来源。
+保留 `serve` 的 `--config`、`--env-file`、`--user` 和 `--session`。API 监听地址继续来自主包配置中的 `server.host`、`server.port`，不新增另一套端口配置来源。
 
 ### 4.2 UI 包
 
@@ -209,7 +209,7 @@ npm install -g ./datagallery-dataagent-ui-0.3.0.tgz
 | `--start-backend` | 显式启动一个由本次 UI 管理的后端 |
 | `--backend-python <path>` | 仅与 `--start-backend` 一起使用 |
 | `--web-host`、`--web-port` | 仅用于 `web`；默认 `127.0.0.1`、`3000` |
-| `--config`、`--env-file`、`--workspace`、`--user`、`--session` | 仅与 `--start-backend` 一起使用，原义转交给主包 |
+| `--config`、`--env-file`、`--user`、`--session` | 仅与 `--start-backend` 一起使用，原义转交给主包 |
 | `--resume [threadId]` | 仅用于 `tui`；沿用客户端恢复会话的含义 |
 
 `--start-backend` 与显式 `--api-url` 或非空 `DATAAGENT_API_URL` 冲突，直接报错。启动后端模式不使用 UI 保存的连接地址，而以启动握手返回的地址为准。连接已有后端时禁止传入后端启动参数，避免让用户误以为这些参数已经作用到已有进程。

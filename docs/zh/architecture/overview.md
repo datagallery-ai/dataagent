@@ -28,7 +28,7 @@ Python SDK 可以不经 HTTP，直接准备同一份运行时。Web/TUI 的对�
 | `dataagent/` | 提供 Python SDK。包内的 `bootstrap/` 准备运行环境，`assembly/graph.py` 装配执行图。 |
 | `dataagent/assembly/prompts/` | 渲染主 Agent、子 Agent 和文件系统说明的宿主模板。插件自己的提示词放在各自的插件目录中。 |
 | Home `~/.dataagent` | 配置、Skill、插件和全部会话状态。 |
-| `dataagent.workspaces` | 进程启动时绑定的只读输入目录，不在 Home 里面。 |
+| `dataagent.input_workspaces` | 进程启动时绑定的只读输入目录，不在 Home 里面。 |
 
 控制面没有数据源注册、知识库、Cookie 登录或独立的配置 REST。这些能力不在当前 HTTP 接口里。
 

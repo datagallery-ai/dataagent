@@ -11,7 +11,7 @@
 | 产物 | 经会话接口查看 | `/outputs` | `GET /api/v1/sessions/{threadId}/outputs` |
 | 取消一轮 | 调用取消接口 | 断开连接会使该轮中断 | `POST /api/v1/runs/{runId}/cancel` |
 | 模型 | 使用进程已加载的配置 | 同左 | `config.yaml` 的 `models` 与 `.env` |
-| 只读输入 | 使用进程已绑定的目录 | 同左 | `dataagent.workspaces` 或 `--workspace` |
+| 只读输入 | 使用进程已绑定的目录 | 同左 | `dataagent.input_workspaces` |
 | Skill / 插件 / MCP | 使用 Home 里已启用的声明 | 同左 | `<home>/skills`、`plugins`、`.mcp.yaml` |
 | 健康检查 | 同源转发 | 连接前可读 `/healthz` | `GET /healthz`、`GET /ready` |
 | 身份 | `GET /api/v1/me` 返回 `--user` | 不登录 | 没有注册、Cookie 或 CSRF |
