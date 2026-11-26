@@ -1,5 +1,6 @@
 schema_version: 3
 id: data-qa
+system_prompt_file: prompts/routing.md
 tools:
   get_ontology_description_tool:
     entrypoint: tools/ontology.py:get_ontology_description_tool
