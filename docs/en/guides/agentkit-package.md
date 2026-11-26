@@ -1,6 +1,6 @@
 # Python package deployment
 
-DataAgent ships as the Python distribution `datagallery-dataagent`. Its import and CLI name are both `dataagent`. The wheel supports Python 3.12 and includes the API, A2A, SDK, Home templates, and built-in plugins. Web and TUI connect over HTTP and require Node.js ≥22.12.0. TUI is available as a separate npm package, and Web builds from source.
+DataAgent ships as the Python distribution `datagallery-dataagent`. Its import and CLI name are both `dataagent`. The wheel supports Python 3.11 and 3.12 and includes the API, A2A, SDK, Home templates, and built-in plugins. Web and TUI connect over HTTP and require Node.js ≥22.12.0. TUI is available as a separate npm package, and Web builds from source.
 
 ## Build
 
@@ -17,13 +17,13 @@ The wheel version comes from `pyproject.toml`. Installation resolves the depende
 Copy the wheel into a deployment directory. Project sources are not required:
 
 ```bash
-uv venv --python 3.12 .venv
-uv pip install --python .venv/bin/python datagallery_dataagent-0.1.0-py3-none-any.whl
+uv venv --python 3.11 .venv
+uv pip install --python .venv/bin/python datagallery_dataagent-0.2.0-py3-none-any.whl
 ```
 
-An environment with pip installed can also use `python -m pip install datagallery_dataagent-0.1.0-py3-none-any.whl`. The `uv pip` command above does not require pip in the target environment. On Windows, the interpreter and CLI are in `.venv\Scripts\`.
+An environment with pip installed can also use `python -m pip install datagallery_dataagent-0.2.0-py3-none-any.whl`. The `uv pip` command above does not require pip in the target environment. On Windows, the interpreter and CLI are in `.venv\Scripts\`.
 
-Variables such as `UV_PYTHON` select an interpreter for environment preparation tools. The installed `dataagent` command runs with its environment's Python and does not switch interpreters based on these variables. The package still requires Python 3.12.x.
+Variables such as `UV_PYTHON` select an interpreter for environment preparation tools. The installed `dataagent` command runs with its environment's Python and does not switch interpreters based on these variables. The package requires Python 3.11 or 3.12.
 
 Configure a compatible model service reachable from the backend machine, then start the installed CLI:
 
@@ -54,10 +54,10 @@ For example, install the local wheel with optional video support:
 
 ```bash
 uv pip install --python .venv/bin/python \
-  "./datagallery_dataagent-0.1.0-py3-none-any.whl[video]"
+  "./datagallery_dataagent-0.2.0-py3-none-any.whl[video]"
 ```
 
-To install everything, use `"./datagallery_dataagent-0.1.0-py3-none-any.whl[all]"`. For source execution, prepare with `uv sync --no-dev --extra video`, then use `uv run --no-sync dataagent serve`. Omit `--no-dev` to include the development group, and use `--extra all` for every capability. Select the required extras on every synchronization, since `uv sync` removes unselected packages.
+To install everything, use `"./datagallery_dataagent-0.2.0-py3-none-any.whl[all]"`. For source execution, prepare with `uv sync --no-dev --extra video`, then use `uv run --no-sync dataagent serve`. Omit `--no-dev` to include the development group, and use `--extra all` for every capability. Select the required extras on every synchronization, since `uv sync` removes unselected packages.
 
 Video errors in core retain the upstream wording. If a message suggests `deepagents[video]`, install `datagallery-dataagent[video]` for this product; a separate Deep Agents installation is unnecessary.
 

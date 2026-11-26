@@ -23,7 +23,7 @@ Python SDK → 同一套配置准备与 Agent 装配（可跳过 HTTP）
 
 ## 🚀 正式态跑通
 
-需要 Node.js ≥22.12.0 和 uv，后端使用 Python 3.12。安装与运行应处于同一环境；Windows 与 WSL 不要共用 `node_modules`。本版本不提供 Docker / Compose 部署。
+需要 Node.js ≥22.12.0 和 uv，后端支持 Python 3.11 和 3.12。安装与运行应处于同一环境；Windows 与 WSL 不要共用 `node_modules`。本版本不提供 Docker / Compose 部署。
 
 ### Linux 一键部署
 
@@ -51,7 +51,7 @@ cd datafoundry
 
 原生 Windows、macOS、其他 Linux，或需要手动配置时：
 
-安装前确认 Node.js ≥22.12.0 和 uv 已加入 `PATH`。受限网络还需先指定可用的 Python 3.12 和下载源，按 [手动部署准备步骤](docs/zh/quick-start.md#manual-prerequisites) 设置进程环境变量，再执行下面的安装命令。
+安装前确认 Node.js ≥22.12.0 和 uv 已加入 `PATH`。受限网络还需先指定可用的 Python 3.11 或 3.12 解释器及下载源，按 [手动部署准备步骤](docs/zh/quick-start.md#manual-prerequisites) 设置进程环境变量，再执行下面的安装命令。
 
 ```bash
 npm install --include=dev

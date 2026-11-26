@@ -4,10 +4,10 @@ build-backend = "hatchling.build"
 
 [project]
 name = "datagallery-dataagent"
-version = "0.1.0"
+version = "0.2.0"
 description = "Local DataAgent product built on native Deep Agents and AG-UI"
 readme = "README.md"
-requires-python = ">=3.12,<3.13"
+requires-python = ">=3.11,<3.13"
 dependencies = [
   "langchain==1.3.18",
   "langchain-anthropic==1.7.1",
@@ -65,7 +65,7 @@ markers = [
 ]
 
 [tool.ruff]
-target-version = "py312"
+target-version = "py311"
 line-length = 100
 
 [tool.ruff.lint]

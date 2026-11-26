@@ -1,6 +1,6 @@
 # 开发环境
 
-Python 要求 `>=3.12,<3.13`。仓库根目录用 hatchling 打包唯一顶层包 `dataagent`，服务端位于 `dataagent.server`。控制台命令是 `dataagent`。网页和 TUI 需要 Node.js ≥22.12.0；源码模式的 Python 准备使用 uv，包部署的前端只连接已启动的后端。
+Python 要求 `>=3.11,<3.13`。仓库根目录用 hatchling 打包唯一顶层包 `dataagent`，服务端位于 `dataagent.server`。控制台命令是 `dataagent`。网页和 TUI 需要 Node.js ≥22.12.0；源码模式的 Python 准备使用 uv，包部署的前端只连接已启动的后端。
 
 运行依赖位于 `project.dependencies`；pytest 及 ruff 位于 `dependency-groups.dev`，`uv sync` 默认安装开发组，部署时用 `--no-dev` 只准备运行依赖。MySQL、PostgreSQL 驱动属于基础运行依赖；Spark/Hive 和视频功能分别通过 `spark`、`video` extras 按需安装，`all` 组合这些扩展依赖，命令及环境条件见 [包部署](../zh/guides/agentkit-package.md#可选能力依赖)。
 
@@ -69,6 +69,6 @@ uv run --no-sync ruff check .
 uv run --no-sync pytest -q
 ```
 
-Ruff 选择 `E4`、`E7`、`E9`、`F`、`I`，行宽 100，目标 `py312`。
+Ruff 选择 `E4`、`E7`、`E9`、`F`、`I`，行宽 100，目标 `py311`。
 
 改 TUI 时再跑 `npm run test:tui`。输入法候选窗仍要手工看。

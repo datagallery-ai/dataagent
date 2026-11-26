@@ -11,7 +11,9 @@
 
 PROJECT_DIR := $(patsubst %/,%,$(dir $(abspath $(lastword $(MAKEFILE_LIST)))))
 
-export UV_PYTHON ?= $(or $(PYTHON_VERSION),3.12)
+ifdef PYTHON_VERSION
+export UV_PYTHON ?= $(PYTHON_VERSION)
+endif
 
 ifeq ($(OS),Windows_NT)
     SHELL := bash.exe

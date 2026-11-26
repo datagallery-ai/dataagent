@@ -14,7 +14,7 @@
 - **一键部署**：Linux；Node.js ≥22.12.0、npm 和 uv。Node.js 缺失或版本过低时，脚本可在确认后通过 `apt-get`、`dnf` 或 `yum` 安装
 - **手动 npm**：Linux、macOS 或 Windows；Node.js >= 22.12.0、npm 和 uv
 
-后端使用 Python 3.12。受限网络环境先准备可用解释器和下载源，再执行安装命令；具体步骤见下文手动部署和 [自定义镜像部署](guides/mirror-deployment.md)。
+后端支持 Python 3.11 和 3.12。受限网络环境先准备可用解释器和下载源，再执行安装命令；具体步骤见下文手动部署和 [自定义镜像部署](guides/mirror-deployment.md)。
 
 最低版本由当前锁定的 TUI 与构建/测试依赖共同决定。
 
@@ -112,10 +112,10 @@ npm --version
 uv --version
 ```
 
-受限网络环境先预装 Python 3.12，指定解释器，并关闭自动下载以便缺失时直接报错。以下路径需替换为本机实际路径，命令在执行 `uv sync` 的同一终端运行：
+受限网络环境先预装 Python 3.11 或 3.12，指定解释器，并关闭自动下载以便缺失时直接报错。以下路径需替换为本机实际路径，命令在执行 `uv sync` 的同一终端运行：
 
 ```bash
-export UV_PYTHON=/opt/python3.12/bin/python3.12
+export UV_PYTHON=/opt/python3.11/bin/python3.11
 export UV_PYTHON_DOWNLOADS=never
 uv python find "$UV_PYTHON" --no-python-downloads --show-version
 ```
@@ -128,7 +128,7 @@ export UV_DEFAULT_INDEX="https://mirror.example/pypi/simple/"
 npm config get registry
 ```
 
-PowerShell 使用 `$env:NAME="value"` 设置对应变量，解释器路径例如 `C:\Python312\python.exe`；检查命令中的 `$UV_PYTHON` 对应 `$env:UV_PYTHON`。如果需要下载 Python，可按 [镜像指南](guides/mirror-deployment.md) 配置 `UV_PYTHON_INSTALL_MIRROR` 并允许下载。
+PowerShell 使用 `$env:NAME="value"` 设置对应变量，解释器路径例如 `C:\Python311\python.exe`；检查命令中的 `$UV_PYTHON` 对应 `$env:UV_PYTHON`。如果需要下载 Python，可按 [镜像指南](guides/mirror-deployment.md) 配置 `UV_PYTHON_INSTALL_MIRROR` 并允许下载。
 
 `npm_config_registry` 控制前端依赖来源；`UV_DEFAULT_INDEX` 控制 Python 运行依赖和构建依赖的索引。设置这些进程变量即可，不要求修改全局源配置。手动安装时请通过进程环境或 npm、uv 的原生配置指定下载源。
 

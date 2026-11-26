@@ -24,8 +24,9 @@ import {
   webListenFromState
 } from "./cli.mjs";
 
-// Never read or write the developer's real Home from these tests.
+// Use the test fixture's Home and Python environment.
 process.env.DATAAGENT_HOME = mkdtempSync(path.join(os.tmpdir(), "dataagent-deploy-test-home-"));
+delete process.env.UV_PROJECT_ENVIRONMENT;
 
 function createAsk(answers) {
   const queue = [...answers];

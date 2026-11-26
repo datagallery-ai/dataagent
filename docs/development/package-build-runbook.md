@@ -19,7 +19,7 @@ ui/ 启动器 ──────┘        ↑
 
 | 操作 | 当前可用性 | 输出 |
 | --- | --- | --- |
-| `uv build --wheel` | 已有工具和配置支持 | 当前名为 `datagallery_dataagent-0.1.0-py3-none-any.whl` |
+| `uv build --wheel` | 已有工具和配置支持 | 当前名为 `datagallery_dataagent-0.2.0-py3-none-any.whl` |
 | `npm run build:web` | 已有 | `ui/web/.next/` |
 | `npm run build:tui` | 已有 | `ui/tui/dist/` |
 | 整理一个完整 UI 发行目录 | 待实现 | 含 Web、TUI、命令入口和运行依赖声明的目录 |
@@ -41,7 +41,7 @@ uv build --wheel --out-dir dist/release/current
 按当前元数据，输出为：
 
 ```text
-dist/release/current/datagallery_dataagent-0.1.0-py3-none-any.whl
+dist/release/current/datagallery_dataagent-0.2.0-py3-none-any.whl
 ```
 
 wheel 只安装一个顶层包 `dataagent`。服务在 `dataagent/server/`，内置插件在 `dataagent/plugins/`，宿主提示词模板在 `dataagent/assembly/prompts/`。命令入口为 `dataagent = dataagent.cli:main`。
@@ -61,7 +61,7 @@ datagallery_dataagent-0.3.0-py3-none-any.whl
 目标是在干净的发布 checkout 中执行：
 
 ```bash
-# 构建机准备 Node 22+、Python 3.12 和 uv
+# 构建机准备 Node 22+、Python 3.11 或 3.12，以及 uv
 # 安装 JS 构建依赖；Python 环境在下一步单独准备
 npm install --include=dev
 uv sync --locked
@@ -263,7 +263,7 @@ dist/release/0.3.0/
       "version": "0.3.0",
       "file": "datagallery_dataagent-0.3.0-py3-none-any.whl",
       "sha256": "<wheel 文件的 64 位十六进制 SHA-256>",
-      "requires_python": ">=3.12,<3.13"
+      "requires_python": ">=3.11,<3.13"
     },
     {
       "role": "ui",
@@ -423,7 +423,7 @@ npm 的 `shasum` 为 SHA-1，`integrity` 使用带算法前缀的完整性格式
 
 ```bash
 verify_dir="$(mktemp -d)"
-python3.12 -m venv "$verify_dir/python"
+python3.11 -m venv "$verify_dir/python"
 "$verify_dir/python/bin/python" -m pip install \
   "$release_dir/datagallery_dataagent-0.3.0-py3-none-any.whl"
 npm install -g --prefix "$verify_dir/node" \

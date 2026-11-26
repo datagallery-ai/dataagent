@@ -10,7 +10,7 @@ Thanks for helping improve this project.
 
 ## Local Setup
 
-Use Node.js ≥22.12.0, uv, and Python 3.12. Install frontend dependencies with `npm install --include=dev` and prepare the Python development environment with `uv sync`. `npm run build` compiles the web app and TUI.
+Use Node.js ≥22.12.0, uv, and Python 3.11 or 3.12. Install frontend dependencies with `npm install --include=dev` and prepare the Python development environment with `uv sync`. `npm run build` compiles the web app and TUI.
 
 ```bash
 npm install --include=dev

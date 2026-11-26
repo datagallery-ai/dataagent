@@ -4,16 +4,16 @@
 
 ## Prepare tools
 
-Provide Node.js ≥22.12.0, npm, uv, and Python 3.12. Existing tools on `PATH` are reused. Ensure configured apt / dnf / yum repositories are reachable when installing OS dependencies.
+Provide Node.js ≥22.12.0, npm, uv, and Python 3.11 or 3.12. Existing tools on `PATH` are reused. Ensure configured apt / dnf / yum repositories are reachable when installing OS dependencies.
 
 - **Node**: preferably preinstall it. Alternatively, export `DATAAGENT_NODE_PACKAGE_URL` pointing to a `.deb` or `.rpm` containing Node and npm for the target system and architecture. The existing package manager installs this file without configuring NodeSource; OS dependencies still use system repositories. Without this variable, automatic installation uses public NodeSource. Extract official tar archives and add their executables to `PATH` before deployment.
 - **uv**: preinstall it from a mirror of the official archive, then place `uv` (and optionally `uvx`) on `PATH`, for example in `$HOME/.local/bin`. Export `PATH="$HOME/.local/bin:$PATH"`. Alternatively use a PyPI mirror following the [uv installation guide](https://docs.astral.sh/uv/getting-started/installation/). Both the installer and any artifacts it downloads must be reachable from the deployment environment; deployment does not add another uv installer.
-- **Python**: set `UV_PYTHON=/opt/python3.12/bin/python3.12` for an existing interpreter. `UV_PYTHON=3.12` delegates local discovery to uv.
+- **Python**: set `UV_PYTHON=/opt/python3.11/bin/python3.11` for an existing interpreter. `UV_PYTHON=3.11` delegates local discovery to uv.
 
 To require an existing interpreter without downloads:
 
 ```bash
-export UV_PYTHON=/opt/python3.12/bin/python3.12
+export UV_PYTHON=/opt/python3.11/bin/python3.11
 export UV_PYTHON_DOWNLOADS=never
 ```
 

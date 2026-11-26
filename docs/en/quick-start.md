@@ -14,7 +14,7 @@ After deploy, put `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in the reposito
 - **One-click deploy**: Linux; Node.js ≥22.12.0, npm, and uv. If Node.js is missing or too old, the script can install it through `apt-get`, `dnf`, or `yum` after consent
 - **Manual npm**: Linux, macOS, or Windows; Node.js >= 22.12.0, npm, and uv
 
-The backend uses Python 3.12. On restricted networks, prepare an interpreter and reachable download sources before installation. See the manual steps below and [deployment with custom mirrors](guides/mirror-deployment.md).
+The backend supports Python 3.11 and 3.12. On restricted networks, prepare an interpreter and reachable download sources before installation. See the manual steps below and [deployment with custom mirrors](guides/mirror-deployment.md).
 
 The minimum version reflects the locked TUI and build/test dependencies.
 
@@ -110,10 +110,10 @@ npm --version
 uv --version
 ```
 
-On restricted networks, preinstall Python 3.12, select its executable, and disable automatic downloads so a missing interpreter fails immediately. Replace this path and run in the same shell as `uv sync`:
+On restricted networks, preinstall Python 3.11 or 3.12, select its executable, and disable automatic downloads so a missing interpreter fails immediately. Replace this path and run in the same shell as `uv sync`:
 
 ```bash
-export UV_PYTHON=/opt/python3.12/bin/python3.12
+export UV_PYTHON=/opt/python3.11/bin/python3.11
 export UV_PYTHON_DOWNLOADS=never
 uv python find "$UV_PYTHON" --no-python-downloads --show-version
 ```
@@ -126,7 +126,7 @@ export UV_DEFAULT_INDEX="https://mirror.example/pypi/simple/"
 npm config get registry
 ```
 
-In PowerShell, set variables with `$env:NAME="value"` and use an interpreter path such as `C:\Python312\python.exe`; replace `$UV_PYTHON` with `$env:UV_PYTHON` in the check command. If Python must be downloaded, configure `UV_PYTHON_INSTALL_MIRROR` and allow downloads as described in the [mirror guide](guides/mirror-deployment.md).
+In PowerShell, set variables with `$env:NAME="value"` and use an interpreter path such as `C:\Python311\python.exe`; replace `$UV_PYTHON` with `$env:UV_PYTHON` in the check command. If Python must be downloaded, configure `UV_PYTHON_INSTALL_MIRROR` and allow downloads as described in the [mirror guide](guides/mirror-deployment.md).
 
 `npm_config_registry` selects the frontend registry; `UV_DEFAULT_INDEX` selects the Python runtime/build dependency index. These process variables do not require global registry changes. For manual installation, configure download sources in the shell or through npm and uv configuration.
 
