@@ -19,6 +19,8 @@ from pathlib import Path
 import sqlglot
 from sqlglot import exp
 
+from utils.sql_identifiers import parse_target_table
+
 logger = logging.getLogger(__name__)
 
 
@@ -315,23 +317,21 @@ def _validate_ddl_naming(ddl_content: str, columns_block: str) -> list:
     """
     errors = []
 
-    full_table_match = re.search(
-        r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?(?:(\w+)\.)?(\w+)",
-        ddl_content,
-        re.IGNORECASE,
-    )
-    if full_table_match:
-        table_name = full_table_match.group(2)
-        if table_name and not re.match(r"^[a-z0-9_]+$", table_name):
+    try:
+        table_name = parse_target_table(ddl_content, dialect="hive", normalize_case=False)[-1]
+    except (ValueError, sqlglot.errors.SqlglotError):
+        errors.append("DDL校验失败：无法解析目标表名")
+    else:
+        line = _line_no(ddl_content, max(0, ddl_content.find(table_name)))
+        if not re.fullmatch(r"[a-z0-9_]+", table_name):
             invalid_chars = set(re.findall(r"[^a-z0-9_]", table_name))
             errors.append(
-                f"DDL校验失败：第{_line_no(ddl_content, full_table_match.start(2))}行 - 表名 '{table_name}' "
+                f"DDL校验失败：第{line}行 - 表名 '{table_name}' "
                 f"只能包含小写字母、数字、下划线，不应包含: {invalid_chars}"
             )
-        if table_name and not re.match(r"^(ods|dwd|dws|dim|ads)", table_name):
+        if not re.match(r"^(ods|dwd|dws|dim|ads)", table_name):
             errors.append(
-                f"DDL校验失败：第{_line_no(ddl_content, full_table_match.start(2))}行 - 表名 '{table_name}' "
-                f"前缀必须是ods、dwd、dws、dim、ads"
+                f"DDL校验失败：第{line}行 - 表名 '{table_name}' 前缀必须是ods、dwd、dws、dim、ads"
             )
 
     forbidden_comment_chars = re.compile(r"[*x✖✖️×@]")

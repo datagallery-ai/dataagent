@@ -29,11 +29,12 @@ from typing import Any
 import sqlglot
 from sqlglot import exp
 
-from utils.sql_checker_static import parse_artifact, table_name
+from utils.sql_checker_static import parse_artifact
 from utils.sql_deliverable_checks import (
     DELIVERABLE_RULES,
     DeliverableChecks,
 )
+from utils.sql_identifiers import target_table_parts
 from utils.sql_query_checks import QueryChecks
 
 SCOPES = ("engineering", "grain_join", "time", "null_filter", "metrics", "sequence")
@@ -162,8 +163,8 @@ class RuleDetector:
                 updated = updated[:start] + replacement + updated[end:]
                 boundary = start
             try:
-                before_target = table_name(parse_artifact(source, kind))
-                after_target = table_name(parse_artifact(updated, kind))
+                before_target = target_table_parts(parse_artifact(source, kind))
+                after_target = target_table_parts(parse_artifact(updated, kind))
             except (ValueError, sqlglot.errors.SqlglotError) as exc:
                 raise ValueError("Cannot verify a single statement and its target table") from exc
             if after_target != before_target:
@@ -396,7 +397,7 @@ class RuleDetector:
                 self._finding(rule, "engineering", kind, sql, start, end, replacement, detail)
             )
 
-        if table_name(ddl) != table_name(dml):
+        if target_table_parts(ddl) != target_table_parts(dml):
             add("TARGET_MISMATCH", "dml")
         columns = [
             item.name.lower() for item in ddl.this.expressions if isinstance(item, exp.ColumnDef)
