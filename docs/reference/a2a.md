@@ -7,7 +7,7 @@
 | Agent Card | `GET /.well-known/agent-card.json` |
 | JSON-RPC | `POST /a2a/jsonrpc` |
 
-Card 只声明 JSON-RPC，并且 `streaming` 为 false：最终文本在图结束后提供；可等待最终结果，也可先返回 Task 再查询，见下文。接口 URL 按请求的 `Host` 填写。绑定 `0.0.0.0`、`::` 或 `::0` 时，未带 Host 的默认值是 `127.0.0.1`。其他 IPv6 地址写成带方括号的 URL。
+Card 声明 JSON-RPC，内置执行器通过 Agent Card 的 `capabilities.streaming: true` 声明支持流式。调用方每次请求通过 JSON-RPC 的 `method` 选择响应方式。接口 URL 按请求的 `Host` 填写。绑定 `0.0.0.0`、`::` 或 `::0` 时，未带 Host 的默认值是 `127.0.0.1`。其他 IPv6 地址写成带方括号的 URL。
 
 `dataagent serve` 在已有会话和检查点的进程上挂这组路由，默认 `127.0.0.1:8790`。`dataagent serve-a2a` 是只跑这组路由的独立进程，默认也读 `server.host` 和 `server.port`，可用 `--host`、`--port` 覆盖。这些进程都占用 `backend.lock`，不要对同一个 Home 同时启动。
 
@@ -44,7 +44,7 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
 | `jsonrpc` | 必填 | 固定 `"2.0"` |
 | `id` | 请求响应调用必填 | 字符串或数值，用于配对；不是任务号或幂等键 |
 | `method` | 必填 | 区分大小写，如 `SendMessage` |
-| `params.message` | `SendMessage` 必填 | A2A Message 对象 |
+| `params.message` | `SendMessage` 和 `SendStreamingMessage` 必填 | A2A Message 对象 |
 | `params.message.messageId` | 必填 | 非空，新消息用新编号；不承诺执行去重 |
 | `params.message.role` | 必填 | 用户输入使用 `"ROLE_USER"` |
 | `params.message.parts` | 必填 | 普通消息需要非空 `text`；HITL 恢复使用下文约定的单个 `data` part |
@@ -141,7 +141,7 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 
 `stage` 区分 `validation`、`queue`、`session_prepare`、`agent_invoke`、`checkpoint_settle` 和 `response`。模型成功但 checkpoint 保存失败时，任务仍失败，阶段为 `checkpoint_settle`。
 
-`dataagent.limits.timeout_seconds` 在入站 A2A 中只限制 Agent 的 `ainvoke`；同 context 排队、会话准备和 Checkpoint 保存发生在这层时限之外。客户端不能用总耗时是否超过该值判断超时机制是否有效。超时后先查询已经取得的 Task ID，不要把客户端断开或停止轮询当作 `CancelTask`。
+`dataagent.limits.timeout_seconds` 在入站 A2A 中限制一次 Agent 执行（流式和非流式）；同 context 排队、会话准备和 Checkpoint 保存发生在这层时限之外。客户端不能用总耗时是否超过该值判断超时机制是否有效。超时后先查询已经取得的 Task ID，不要把客户端断开或停止轮询当作 `CancelTask`。
 
 ## 查询和取消任务
 
@@ -153,6 +153,33 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 
 `GetTask` 和 `CancelTask` 直接在 `result` 返回 Task；`SendMessage` 在 `result.task` 返回。`ListTasks` 在 `result.tasks` 返回共享任务列表，可使用 `params.contextId` 过滤。
 
+### 流式调用
+
+在 `POST /a2a/jsonrpc` 使用 `SendStreamingMessage`。请求头与 `SendMessage` 相同，`params.message` 沿用相同结构。
+
+```json
+{
+  "jsonrpc": "2.0",
+  "id": "stream-1",
+  "method": "SendStreamingMessage",
+  "params": {
+    "message": {
+      "role": "ROLE_USER",
+      "messageId": "stream-message-1",
+      "parts": [{"text": "统计本月销售额"}]
+    }
+  }
+}
+```
+
+响应为 `text/event-stream`。每个 SSE `data` 帧包含一个 JSON-RPC 响应。首个 `result.task` 提供 Task ID 和 Context ID。后续 `result.statusUpdate` 报告任务状态。模型提供文本时，`result.artifactUpdate` 发布执行中的预览。首个文本分片立即发送，后续分片按约 100 毫秒的窗口合并，暂停或完成前会送出待发送的文本。客户端按 `artifactId` 更新展示，`append: true` 时追加，否则替换。成功后，同一产物的最后一帧通过 `lastChunk: true` 和完整答案替换预览，随后是 `TASK_STATE_COMPLETED`。
+
+使用编译型插件作为 `dataagent.entry` 时，在生成公开答案的模型调用上设置 LangChain 标签，例如 `model.ainvoke(messages, config={"tags": ["dataagent:a2a-public-text"]})`。只在这次模型调用上标记，图或节点上的标签会传给其子调用。未标记的插件仍在本轮完成时返回最终答案。
+
+从旧版迁移的客户端，应从 `artifactUpdate` 读取答案文本。旧版在 `WORKING` 状态消息中返回累计文本。
+
+触发人工确认时，本轮以 `TASK_STATE_INPUT_REQUIRED` 状态更新结束。调用方从该事件取待办，按 [HITL 恢复格式](#a2a-hitl) 将 `dataagent.hitl.response` 提交给同一 Task。用 `SendStreamingMessage` 提交可接收恢复后的 SSE，用 `SendMessage` 提交可接收单次 JSON 响应。
+
 ### 等待结果与异步任务
 
 两种方式都通过非流式 `SendMessage`，由 `configuration.returnImmediately` 选择：
@@ -161,7 +188,6 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 | --- | --- | --- |
 | 同步等待结果 | 省略或 `false` | HTTP 请求等到本轮结束或需要人工输入，Task 在 `result.task`；检查其实际状态 |
 | 异步任务 | `true` | 先取得 `result.task.id`，后台继续执行；用 `GetTask` 轮询到终态，必要时 `CancelTask` |
-| 流式结果 | 不支持 | Card `streaming=false`，不提供 A2A token/event 流 |
 | 完成回调 | 未配置 | 当前未接入 Push 通知发送链路，使用任务查询 |
 
 异步提交的完整请求示例：

@@ -11,7 +11,7 @@ import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage
 from test_a2a_hitl import pending, response_for
-from test_a2a_server import _GatedModel, client_for, message, rpc, stream_turn, task_of
+from test_a2a_server import _GatedModel, a2a_events, client_for, message, rpc, stream_turn, task_of
 
 from dataagent.diagnostics.errors import DataAgentError
 from dataagent.server.a2a.agent_executor import AgentKitExecutor
@@ -78,6 +78,41 @@ async def test_a2a_ids_connect_response_session_trace_and_logs(runtime, caplog):
     (saved,) = audit_records(caplog, "a2a.trace.saved")
     assert saved["request_id"] == details["requestId"]
     assert saved["trace_file"] == str(trace_file)
+
+
+async def test_stream_logs_task_and_context_across_hitl(runtime, caplog):
+    caplog.set_level(logging.INFO)
+    plugins = runtime.settings.plugins.model_copy(update={"enabled": ("data-qa",)})
+    runtime = replace(runtime, settings=runtime.settings.model_copy(update={"plugins": plugins}))
+    model = ScriptedModel(
+        responses=[
+            call("data-qa__request_human_feedback", {"question": "Continue?"}),
+            AIMessage(content="Done"),
+        ]
+    )
+    async with client_for(runtime, model) as client:
+        request = message("Ask", "unused")
+        del request["params"]["message"]["contextId"]
+        for expected in ("TASK_STATE_INPUT_REQUIRED", "TASK_STATE_COMPLETED"):
+            request["method"] = "SendStreamingMessage"
+            response = await rpc(client, request)
+            events = a2a_events(response)
+            task = events[0]["task"]
+            update = events[-1]["statusUpdate"]
+            assert update["status"]["state"] == expected
+            (record,) = [
+                row
+                for row in audit_records(caplog, "a2a.request.finished")
+                if row["request_id"] == response.headers["X-Request-ID"]
+            ]
+            assert record["task_id"] == task["id"]
+            assert record["context_id"] == task["contextId"]
+            assert record["task_state"] == expected
+            if expected == "TASK_STATE_INPUT_REQUIRED":
+                paused = {**task, "status": update["status"]}
+                (interrupt,) = pending(paused)
+                request = response_for(paused, {interrupt["id"]: "yes"})
+                del request["params"]["message"]["contextId"]
 
 
 async def test_a2a_resume_completion_log_uses_the_resumed_run_id(runtime, caplog):

@@ -84,7 +84,7 @@ REST 的 JSON 响应都用信封，成功和失败都一样。`POST /api/v1/runs
 
 | 方法 | 路径 | 作用 |
 | --- | --- | --- |
-| GET | `/.well-known/agent-card.json` | Agent Card。只声明 JSON-RPC，不支持流式。 |
+| GET | `/.well-known/agent-card.json` | Agent Card。内置执行器支持通过 JSON-RPC 的 `SendStreamingMessage` 接收 SSE。 |
 | POST | `/a2a/jsonrpc` | JSON-RPC 入口，例如 `SendMessage`。请求必须带 `A2A-Version: 1.0` 头。 |
 
 - `contextId` 就是会话的 `threadId`，和 `/api/v1/runs` 共用会话与 Checkpoint。它必须是最长 128 的安全 ID，省略时自动生成。

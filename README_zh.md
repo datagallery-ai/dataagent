@@ -108,7 +108,7 @@ uv run --no-sync dataagent serve-a2a
 
 ## A2A 调用
 
-服务提供 `GET /.well-known/agent-card.json` 与 `POST /a2a/jsonrpc`。请求必须带 `A2A-Version: 1.0`；支持默认等待结果和 `returnImmediately: true` 的异步任务查询，不支持 A2A 流式响应；[参数与调用方式](docs/reference/a2a.md#等待结果与异步任务) 见详细示例。
+服务提供 `GET /.well-known/agent-card.json` 与 `POST /a2a/jsonrpc`。请求必须带 `A2A-Version: 1.0`；支持默认等待结果和 `returnImmediately: true` 的异步任务查询，使用 `SendStreamingMessage` 可接收 SSE，见[流式调用示例](docs/reference/a2a.md#流式调用)。
 
 ```bash
 curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
