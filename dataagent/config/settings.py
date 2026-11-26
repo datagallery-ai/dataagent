@@ -124,9 +124,27 @@ class A2AAgentSettings(StrictModel):
         return self
 
 
-class A2ASettings(StrictModel):
-    """Remote agents compiled into the graph. An empty list adds no tools."""
+class A2ACardSettings(StrictModel):
+    """Optional overrides for the local agent's discovery metadata."""
 
+    name: str | None = None
+    description: str | None = None
+
+    @field_validator("name", "description")
+    @classmethod
+    def nonblank_text(cls, value: str | None) -> str | None:
+        if value is None:
+            return None
+        value = value.strip()
+        if not value:
+            raise ValueError("must not be blank")
+        return value
+
+
+class A2ASettings(StrictModel):
+    """Local discovery metadata and remote agents available as tools."""
+
+    card: A2ACardSettings = Field(default_factory=A2ACardSettings)
     remote_agents: tuple[A2AAgentSettings, ...] = ()
 
     @model_validator(mode="after")
@@ -228,6 +246,7 @@ SECTION_MODELS = frozenset(
         SemanticSettings,
         SemanticTLSSettings,
         A2ASettings,
+        A2ACardSettings,
     }
 )
 """Nested sections that configuration layers may declare partially."""

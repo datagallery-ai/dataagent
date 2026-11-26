@@ -42,4 +42,7 @@ plugins:
   config: {}
 semantic: null
 a2a:
+  card:
+    name: DataAgent
+    description: 与 DataAgent 对话并获取回答
   remote_agents: []

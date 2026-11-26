@@ -12,6 +12,7 @@ from test_api import client_for, query, sse, terminal
 from dataagent import LaunchOptions, prepare_runtime
 from dataagent.config.declarations import HookSpec, normalize_hooks
 from dataagent.config.settings import (
+    A2ACardSettings,
     A2ASettings,
     AgentSettings,
     Limits,
@@ -36,6 +37,7 @@ def test_full_config_example_explicitly_covers_all_settings_fields():
         (raw["dataagent"]["loop_detection"], LoopDetectionSettings),
         (raw["plugins"], PluginSettings),
         (raw["a2a"], A2ASettings),
+        (raw["a2a"]["card"], A2ACardSettings),
         *((model, ModelSettings) for model in raw["models"].values()),
     )
     for values, schema in sections:

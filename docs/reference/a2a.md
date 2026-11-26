@@ -11,6 +11,19 @@ Card 只声明 JSON-RPC，并且 `streaming` 为 false：最终文本在图结�
 
 `dataagent serve` 在已有会话和检查点的进程上挂这组路由，默认 `127.0.0.1:8790`。`dataagent serve-a2a` 是只跑这组路由的独立进程，默认也读 `server.host` 和 `server.port`，可用 `--host`、`--port` 覆盖。这些进程都占用 `backend.lock`，不要对同一个 Home 同时启动。
 
+## 配置本服务的 Agent Card
+
+在提供 A2A 服务的实例的 `config.yaml` 中添加以下可选配置，启动后通过发现接口读取：
+
+```yaml
+a2a:
+  card:
+    name: 销售数据助手
+    description: 查询销售指标并生成分析摘要
+```
+
+`serve` 和 `serve-a2a` 都读取这段配置。名称和描述可独立设置，省略的字段默认是 `DataAgent`，技能由服务填入默认的 `chat`。改动在服务重启后生效。
+
 ## 发一条消息
 
 ```bash
@@ -286,20 +299,16 @@ A2A 请求默认进入主代理。主代理可通过 `task` 委派已启用的�
 
 ## 调用别的 agent
 
-在 `config.yaml` 里声明远端 agent。装配时它们成为工具，工具名是 `a2a__<id>`。
+在调用方的 `config.yaml` 里声明远端 agent。装配时每个远端成为名为 `a2a__<id>` 的工具，`description` 会作为工具描述提供给调用方 Agent。可以写明什么时候调用，以及需要在消息里带哪些条件。
 
-```json
-{
-  "a2a": {
-    "remote_agents": [
-      {
-        "id": "researcher",
-        "url": "http://127.0.0.1:9999",
-        "description": "Ask the research agent."
-      }
-    ]
-  }
-}
+```yaml
+a2a:
+  remote_agents:
+    - id: sales
+      url: http://127.0.0.1:9999
+      description: >
+        用户需要按时间、区域或产品查询销售指标时调用。
+        在 message 中写明指标、时间范围和筛选条件。
 ```
 
 `url` 是服务根地址，不是 `/a2a/jsonrpc`。省略 `timeout_seconds` 时用 `dataagent.limits.timeout_seconds`（默认 180）。`auth_token` 放在声明里，并进入错误信息的脱敏列表。
