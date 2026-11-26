@@ -120,14 +120,12 @@ def test_host_marks_bird_graph_as_executing(tmp_path):
 @pytest.mark.parametrize(
     "override",
     [
-        {"bird-validator": {"temperature": float("nan")}},
-        {"bird-validator": {"temperature": True}},
+        {"bird-validator": {"temperature": 0.3}},
         {"bird-validator": {"checkers": None}},
         {"bird-validator": {"checkers": "syntax"}},
         {"bird-validator": {"checkers": [True]}},
         {"bird-validator": {"checkers": ["missing"]}},
         {"bird-validator": {"checkers": ["result", "result"]}},
-        {"bird-validator": {"temperature": -1}},
         {"bird-validator": {"repair_attempts": False}},
         {"bird-validator": {"preview_limit": -2}},
         {"bird-validator": {"sql_security_enabled": "false"}},

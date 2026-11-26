@@ -1,15 +1,23 @@
 schema_version: 4
 dataagent:
-  model: primary
   limits:
-    timeout_seconds: 180
+    timeout_seconds: 3600
   entry: nl2sql
+  model: primary
 models:
   primary:
     provider: openai
-    name: $env{LLM_MODEL}
-    base_url: $env{LLM_BASE_URL}
-    api_key: $env{LLM_API_KEY}
+    name: GLM-5.3
+    base_url: $env{BIRD_EVAL_BASE_URL}
+    api_key: $env{BIRD_EVAL_API_KEY}
+    temperature: 0.3
+    max_tokens: 18000
+    max_retries: 2
+    extra_body:
+      reasoning_effort: low
+semantic:
+  base_url: $env{BIRD_SEMANTIC_BASE_URL}
+  timeout_seconds: 1200
 plugins:
   enabled:
   - nl2sql
@@ -17,9 +25,16 @@ plugins:
     nl2sql:
       model: primary
       model_call_budget: 256
+      result_files: false
       nodes: [perceptor, generator, bird-validator, selector]
+      database:
+        db_id: $env{BIRD_SEMANTIC_DATABASE_NAME}
+        dialect: sqlite
+        engine: sqlite
+        path: $env{BIRD_SQLITE_PATH}
       perceptor:
         schema_mode: bird
+        user_sql_rules: sql_rules_bird
       generator:
         strategies: [dc, skeleton, icl]
         num_workers: 3
@@ -27,12 +42,9 @@ plugins:
         parse_retries: 3
       bird-validator:
         checkers: [syntax, join, order_by_limit, time, select, max_min, order_by_null, result]
+        repair_attempts: 10
+        preview_limit: 5
+        sql_security_enabled: false
       selector:
         shortcut: 1
-      database:
-        db_id: mydb
-        dialect: sqlite
-        engine: sqlite
-        path: $env{NL2SQL_DATABASE_PATH}
-semantic:
-  base_url: $env{SEMANTIC_BASE_URL}
+        sel_retries: 0

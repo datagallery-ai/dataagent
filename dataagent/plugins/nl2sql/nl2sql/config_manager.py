@@ -56,7 +56,6 @@ def _validate_bird_options(options: Mapping[str, Any]) -> None:
         "repair_attempts",
         "preview_limit",
         "sql_security_enabled",
-        "temperature",
     }
     if unknown:
         raise ValueError(f"unknown bird-validator options: {sorted(unknown)}")
@@ -75,9 +74,6 @@ def _validate_bird_options(options: Mapping[str, Any]) -> None:
             raise ValueError(f"bird-validator.{key} must be an integer >= {minimum}")
     if not isinstance(options.get("sql_security_enabled", False), bool):
         raise ValueError("bird-validator.sql_security_enabled must be true or false")
-    temperature = options.get("temperature", 0.3)
-    if type(temperature) not in (int, float) or not 0 <= temperature <= 2:
-        raise ValueError("bird-validator.temperature must be a number between 0 and 2")
 
 
 class NL2SQLConfig:
