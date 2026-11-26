@@ -108,7 +108,7 @@ uv run --no-sync dataagent serve-a2a
 
 ## A2A calls
 
-The service exposes `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc`. Requests must include `A2A-Version: 1.0`. Calls can wait for the final result or use `returnImmediately: true` to obtain a Task for polling. Use `SendStreamingMessage` to receive SSE updates. See the [streaming example](docs/reference/a2a.md#流式调用).
+The service exposes `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc`. Requests must include `A2A-Version: 1.0`. Calls can wait for the final result or use `returnImmediately: true` to obtain a Task for polling. A2A streaming is not supported; see [call modes and examples](docs/reference/a2a.md#等待结果与异步任务).
 
 ```bash
 curl -sS http://127.0.0.1:8790/a2a/jsonrpc \

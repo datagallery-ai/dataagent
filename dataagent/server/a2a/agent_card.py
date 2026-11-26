@@ -33,11 +33,13 @@ def build_agent_card(
     host: str,
     port: int,
     requires_bearer: bool = False,
-    streaming: bool = False,
     name: str = "DataAgent",
     description: str = "DataAgent",
 ) -> AgentCard:
-    """Describe this process as one A2A agent with a single JSON-RPC binding."""
+    """Describe this process as one A2A agent with a single JSON-RPC binding.
+
+    The executor waits for the whole graph, so the card does not advertise streaming.
+    """
     base_url = f"http://{_card_host(host)}:{port}"
     card = AgentCard(
         name=name,
@@ -45,7 +47,7 @@ def build_agent_card(
         version=__version__,
         default_input_modes=["text/plain", "application/json"],
         default_output_modes=["text/plain", "application/json"],
-        capabilities=AgentCapabilities(streaming=streaming),
+        capabilities=AgentCapabilities(streaming=False),
         skills=[
             AgentSkill(
                 id="chat",

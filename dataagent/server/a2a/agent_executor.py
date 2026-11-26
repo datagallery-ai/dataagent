@@ -5,7 +5,6 @@ import json
 import logging
 import time
 from collections.abc import Awaitable, Callable
-from contextlib import asynccontextmanager
 from dataclasses import replace
 from uuid import uuid4
 
@@ -33,61 +32,6 @@ from dataagent.server.a2a.request_context import (
 )
 
 Reply = Callable[[str, str | Command], Awaitable[object]]
-
-
-@asynccontextmanager
-async def _artifact_preview(event_queue, task_id, context_id, artifact_id):
-    """Send the first text immediately and combine subsequent bursts into timed updates."""
-    pending: list[str] = []
-    flush_now = asyncio.Event()
-    worker: asyncio.Task | None = None
-    started = False
-
-    async def send(text, *, append):
-        await event_queue.enqueue_event(
-            new_text_artifact_update_event(
-                task_id,
-                context_id,
-                "dataagent_result",
-                text,
-                artifact_id=artifact_id,
-                append=append,
-            )
-        )
-
-    async def flush_batches():
-        while pending:
-            try:
-                await asyncio.wait_for(flush_now.wait(), timeout=0.1)
-            except TimeoutError:
-                pass
-            flush_now.clear()
-            text = "".join(pending)
-            pending.clear()
-            await send(text, append=True)
-
-    async def on_text(text):
-        nonlocal started, worker
-        if not started:
-            await send(text, append=False)
-            started = True
-            return
-        pending.append(text)
-        if worker is None or worker.done():
-            if worker is not None:
-                worker.result()
-            worker = asyncio.create_task(flush_batches())
-        # Backpressure when a slow event queue falls behind the producer.
-        if len(pending) >= 1024:
-            flush_now.set()
-            await worker
-
-    try:
-        yield on_text
-    finally:
-        flush_now.set()
-        if worker is not None:
-            await worker
 
 
 def _needs_json_text(value) -> bool:
@@ -261,8 +205,6 @@ class HITLContextBuilder(SimpleRequestContextBuilder):
                             safe_interrupt_fields(args, self.secrets), ensure_ascii=False
                         )
             part.data.CopyFrom(new_data_part(public).data)
-        if task is not None and context.state.get("method") == "SendStreamingMessage":
-            context.state["dataagent_initial_task"] = task
         return request
 
 
@@ -310,13 +252,8 @@ class AgentKitExecutor(AgentExecutor):
         *,
         secrets: tuple[str, ...] = (),
         cancel_waiting: Callable[[str, str], Awaitable[None]] | None = None,
-        stream_reply: Callable[
-            [str, str | Command, Callable[[str], Awaitable[None]]], Awaitable[object]
-        ]
-        | None = None,
     ):
         self._reply = reply
-        self._stream_reply = stream_reply
         self._secrets = secrets
         self._cancel_waiting = cancel_waiting
         self._runs: dict[str, tuple[asyncio.Task, RequestInfo]] = {}
@@ -394,21 +331,11 @@ class AgentKitExecutor(AgentExecutor):
             await self._status(
                 event_queue, invocation, TaskState.TASK_STATE_WORKING, "Processing request..."
             )
-            artifact_id = f"{task_id}-result"
             lock = await self._lock_for(thread_id)
             async with lock:
                 invocation.stage = "agent_invoke"
                 audit("a2a.assembly.started", secrets=self._secrets)
-                if (
-                    context.call_context.state.get("method") == "SendStreamingMessage"
-                    and self._stream_reply is not None
-                ):
-                    async with _artifact_preview(
-                        event_queue, task_id, context_id, artifact_id
-                    ) as on_text:
-                        result = await self._stream_reply(thread_id, inputs, on_text)
-                else:
-                    result = await self._reply(thread_id, inputs)
+                result = await self._reply(thread_id, inputs)
             invocation.stage = "response"
             interrupts = result.get("__interrupt__", ()) if isinstance(result, dict) else ()
             if interrupts:
@@ -432,7 +359,6 @@ class AgentKitExecutor(AgentExecutor):
                     context_id=context_id,
                     name="dataagent_result",
                     text=answer,
-                    artifact_id=artifact_id,
                     last_chunk=True,
                 )
             )

@@ -812,7 +812,7 @@ class StreamingScriptedModel(ScriptedModel):
         yield ChatGenerationChunk(message=AIMessageChunk(content=text, id=message.id))
 
 
-def _write_entry_stream_plugin(root, *, model_source="services", public_answer=False):
+def _write_entry_stream_plugin(root, *, model_source="services"):
     root.mkdir(parents=True)
     (root / "subagents").mkdir()
     (root / ".plugin.yaml").write_text(
@@ -835,13 +835,6 @@ def _write_entry_stream_plugin(root, *, model_source="services", public_answer=F
     )
     lookup = "runtime.context.get_model()" if model_source == "runtime" else "services.get_model()"
     signature = "state, runtime" if model_source == "runtime" else "state"
-    answer = (
-        "        answer = await model.ainvoke([HumanMessage(content='respond')], "
-        "config={'tags': ['dataagent:a2a-public-text']})\n"
-        "        return {'messages': [answer]}\n"
-        if public_answer
-        else "        return {'messages': [AIMessage(content='visible-reply')]}\n"
-    )
     (root / "subagents" / "direct.py").write_text(
         "from langchain_core.messages import AIMessage, HumanMessage\n"
         "from langgraph.graph import END, START, MessagesState, StateGraph\n"
@@ -850,7 +843,8 @@ def _write_entry_stream_plugin(root, *, model_source="services", public_answer=F
         f"    async def work({signature}):\n"
         f"        model = {lookup}\n"
         "        await model.ainvoke([HumanMessage(content='internal')])\n"
-        f"{answer}\n"
+        "        return {'messages': [AIMessage(content='visible-reply')]}\n"
+        "\n"
         "    graph = StateGraph(MessagesState)\n"
         "    graph.add_node('work', work)\n"
         "    graph.add_edge(START, 'work')\n"

@@ -87,7 +87,7 @@ The same process also serves two A2A 1.0 routes for other agents.
 
 | Method | Path | Purpose |
 | --- | --- | --- |
-| GET | `/.well-known/agent-card.json` | Agent Card. The built-in executor advertises JSON-RPC streaming via `SendStreamingMessage`. |
+| GET | `/.well-known/agent-card.json` | Agent Card. Declares JSON-RPC only; streaming is not supported. |
 | POST | `/a2a/jsonrpc` | JSON-RPC entry, for example `SendMessage`. Requests must send the `A2A-Version: 1.0` header. |
 
 - `contextId` is the session `threadId`. It shares sessions and checkpoints with `/api/v1/runs`. It must be a safe ID of at most 128 characters; the protocol generates one when it is omitted.

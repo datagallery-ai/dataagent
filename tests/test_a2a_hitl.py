@@ -10,7 +10,7 @@ import httpx
 import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage
-from test_a2a_server import a2a_events, client_for, message, rpc, stream_turn, task_of
+from test_a2a_server import client_for, message, rpc, stream_turn, task_of
 from test_api import client_for as rest_client_for
 
 from dataagent.server.a2a.agent_executor import HITLContextBuilder
@@ -94,8 +94,8 @@ def response_for(task, responses):
 
 
 @pytest.mark.parametrize("host", ["standalone", "control-plane"])
-@pytest.mark.parametrize("mode", ["blocking", "nonblocking", "streaming"])
-async def test_feedback_interrupt_query_and_resume(feedback_runtime, host, mode):
+@pytest.mark.parametrize("nonblocking", [False, True])
+async def test_feedback_interrupt_query_and_resume(feedback_runtime, host, nonblocking):
     model = ScriptedModel(
         responses=[
             call("data-qa__request_human_feedback", {"question": "按含税口径统计吗？"}),
@@ -104,15 +104,8 @@ async def test_feedback_interrupt_query_and_resume(feedback_runtime, host, mode)
     )
     async with serving(feedback_runtime, model, host) as client:
         payload = message("请先确认统计口径。", "hitl-feedback")
-        if mode == "streaming":
-            payload["method"] = "SendStreamingMessage"
-            events = a2a_events(await rpc(client, payload))
-            paused = events[-1]["statusUpdate"]
-            waiting = await get_task(client, paused["taskId"])
-            assert pending_request(paused) == pending_request(waiting)
-        else:
-            payload["params"]["configuration"] = {"returnImmediately": mode == "nonblocking"}
-            waiting = task_of(await rpc(client, payload))
+        payload["params"]["configuration"] = {"returnImmediately": nonblocking}
+        waiting = task_of(await rpc(client, payload))
         async with asyncio.timeout(5):
             while waiting["status"]["state"] in ("TASK_STATE_SUBMITTED", "TASK_STATE_WORKING"):
                 await asyncio.sleep(0.01)
@@ -128,16 +121,9 @@ async def test_feedback_interrupt_query_and_resume(feedback_runtime, host, mode)
         async with Sessions(feedback_runtime.paths.sessions_db) as sessions:
             row = await sessions.get(feedback_runtime.paths.user_id, waiting["contextId"])
         assert row["status"] == "waiting" and row["last_checkpoint_id"]
-        resume = response_for(waiting, {interrupt["id"]: "按含税口径。"})
-        if mode == "streaming":
-            resume["method"] = "SendStreamingMessage"
-            events = a2a_events(await rpc(client, resume))
-            assert events[0]["task"]["id"] == waiting["id"]
-            assert events[-1]["statusUpdate"]["status"]["state"] == "TASK_STATE_COMPLETED"
-            assert events[-1]["statusUpdate"]["taskId"] == waiting["id"]
-            finished = await get_task(client, waiting["id"])
-        else:
-            finished = task_of(await rpc(client, resume))
+        finished = task_of(
+            await rpc(client, response_for(waiting, {interrupt["id"]: "按含税口径。"}))
+        )
         assert finished["id"] == waiting["id"]
         assert finished["contextId"] == waiting["contextId"]
         assert finished["status"]["state"] == "TASK_STATE_COMPLETED"
@@ -432,36 +418,6 @@ async def test_concurrent_hitl_retry_keeps_the_next_interrupt_resumable(
     assert finished["status"]["state"] == "TASK_STATE_COMPLETED"
     assert finished["id"] == waiting["id"]
     assert len(model.requests) == 3
-
-
-@pytest.mark.parametrize("partial", [False, True])
-async def test_stream_returns_all_parallel_interrupts(feedback_runtime, partial):
-    calls = [
-        call("data-qa__request_human_feedback", {"question": question}).tool_calls[0]
-        for question in ("First?", "Second?")
-    ]
-    model = ScriptedModel(
-        responses=[AIMessage(content="", tool_calls=calls), AIMessage(content="done")]
-    )
-    async with serving(feedback_runtime, model, "standalone") as client:
-        req = message("ask both", "parallel-questions")
-        req["method"] = "SendStreamingMessage"
-        events = a2a_events(await rpc(client, req))
-        waiting = await get_task(client, events[0]["task"]["id"])
-        items = pending(events[-1]["statusUpdate"])
-        assert {item["value"]["question"] for item in items} == {"First?", "Second?"}
-        if partial:
-            first, second = items
-            resume = response_for(waiting, {first["id"]: "yes"})
-            resume["method"] = "SendStreamingMessage"
-            events = a2a_events(await rpc(client, resume))
-            items = pending(events[-1]["statusUpdate"])
-            assert items == [second]
-            waiting = await get_task(client, waiting["id"])
-        resume = response_for(waiting, {item["id"]: "yes" for item in items})
-        resume["method"] = "SendStreamingMessage"
-        events = a2a_events(await rpc(client, resume))
-        assert events[-1]["statusUpdate"]["status"]["state"] == "TASK_STATE_COMPLETED"
 
 
 async def test_hitl_resume_does_not_replay_a_completed_parallel_tool(feedback_runtime):
