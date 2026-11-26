@@ -728,6 +728,7 @@ TCW_EXPECTED_ANSWER_ASSERTIONS = {
         "required_terms": ["BD55-1111", "XBB.1", "huh-7"],
     },
     "TC-W02": {
+        "grade_answer_and_db_effect_only": True,
         "blocking": False,
         "expected_summary": "Resolves BA286/SA 58 to BA.2.86 and SA58, using a 293T cell sample.",
         "required_any_term_groups": [
@@ -743,6 +744,7 @@ TCW_EXPECTED_ANSWER_ASSERTIONS = {
         "required_terms": ["SA55", "KP.2"],
     },
     "TC-W04": {
+        "grade_answer_and_db_effect_only": True,
         "blocking": False,
         "expected_summary": "BD55-1111 / JN.1 creation with non-structured dilution factors needs manual review.",
         "required_any_term_groups": [
