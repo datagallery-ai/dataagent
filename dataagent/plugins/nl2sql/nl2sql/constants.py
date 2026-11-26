@@ -61,11 +61,5 @@ DEFAULT_NL2SQL_SEMANTIC_TABLE_COLUMNS_LIMIT: int = 1000
 DEFAULT_NL2SQL_SEMANTIC_JOINABLE_TABLES_LIMIT: int = 1000
 """NL2SQL 使用 semantic-service joinable-tables 接口时的默认召回上限。"""
 
-DEFAULT_NL2SQL_SQLITE_TIMEOUT: int = 30
-"""NL2SQL SQLite 查询超时（秒）。"""
-
-DEFAULT_NL2SQL_SQLITE_PROGRESS_INTERVAL: int = 10000
-"""NL2SQL SQLite 进度回调间隔（虚拟机指令数）。"""
-
 DEFAULT_WORKFLOW_RECURSION_LIMIT: int = 200
 """LangGraph 递归上限（与 legacy ``dataagent`` 默认一致）。"""

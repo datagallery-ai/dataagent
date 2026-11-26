@@ -1,4 +1,4 @@
-"""Prompt-driven SQL agent tools over the existing NL2SQL SqlService, without MCP."""
+"""Prompt-driven SQL agent tools over the shared DataAgent SQL service."""
 
 import asyncio
 from pathlib import Path
@@ -19,8 +19,8 @@ from dataagent import (
     recall_database,
     safe_error,
 )
-from nl2sql_local.models import StrictModel
-from nl2sql_local.query_control.state import ControlPolicy, ledger
+from nl2sql_react.models import StrictModel
+from nl2sql_react.query_control.state import ControlPolicy, ledger
 
 
 class DBExploreOptions(RecallOptions):

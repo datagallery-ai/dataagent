@@ -4,7 +4,7 @@ from pathlib import Path
 
 from langchain_core.messages import SystemMessage
 
-from nl2sql_local.tools.database import configuration
+from nl2sql_react.tools.database import configuration
 
 _RULES_DIR = Path(__file__).resolve().parents[2] / "prompts"
 

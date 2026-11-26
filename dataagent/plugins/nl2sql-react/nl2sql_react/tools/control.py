@@ -6,8 +6,8 @@ from langchain.tools import ToolRuntime, tool
 from langgraph.types import Command
 
 from dataagent import AgentContext
-from nl2sql_local.query_control.flow import blocked, finish, message, update
-from nl2sql_local.query_control.state import (
+from nl2sql_react.query_control.flow import blocked, finish, message, update
+from nl2sql_react.query_control.state import (
     Issue,
     MissingBusinessChoice,
     MissingDraftSQL,
@@ -20,8 +20,8 @@ from nl2sql_local.query_control.state import (
     policy,
     summary,
 )
-from nl2sql_local.tools.database import configuration
-from nl2sql_local.tools.review import review_draft
+from nl2sql_react.tools.database import configuration
+from nl2sql_react.tools.review import review_draft
 
 _RETRYABLE_UPDATE_CODES = {
     MissingEvidenceReference: "missing_evidence_reference",

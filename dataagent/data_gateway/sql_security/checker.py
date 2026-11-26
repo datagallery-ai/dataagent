@@ -12,7 +12,8 @@
 # ============================================================================
 """SQLGlot-based security checker with no model or database calls."""
 
-from typing import Any, cast
+from functools import cache
+from typing import Any, Literal, cast
 
 import sqlglot
 from sqlglot import exp
@@ -25,32 +26,69 @@ from dataagent.data_gateway.sql_security.rules import (
     check_allowed_query_syntax,
     check_resource_usage,
     check_semantic_schema,
+    resolve_grouping_aliases,
 )
 from dataagent.data_gateway.sql_security.semantic_resolver import (
     normalize_semantic_column_references,
 )
 
 
-def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityCheckResult:
-    """Check one SQL candidate using deterministic SQLGlot rules."""
+def check_sql(
+    sql: str,
+    *,
+    dialect: str,
+    schema: dict[str, Any],
+    policy: Literal["gateway", "nl2sql"] = "gateway",
+) -> SecurityCheckResult:
+    """Check one query using the Gateway or NL2SQL workflow policy.
+
+    The NL2SQL policy retains the workflow's grouping and join rules and
+    skips source-column checks against semantic metadata.
+    """
 
     if len((sql or "").encode("utf-8")) > 1024 * 1024:
         return SecurityCheckResult([SecurityViolation("RESOURCE-001", "SQL text exceeds 1 MiB.")])
     try:
-        statements = sqlglot.parse(sql, read=dialect, error_level=ErrorLevel.RAISE)
+        statement = _parse_sql(sql, dialect)
     except Exception as exc:
         return SecurityCheckResult([SecurityViolation("SQL-001", f"SQL parse failed: {exc}")])
+    if isinstance(statement, SecurityViolation):
+        return SecurityCheckResult([statement])
+    try:
+        return _check_statement(statement, sql, dialect, schema, nl2sql_policy=policy == "nl2sql")
+    except RecursionError:
+        return SecurityCheckResult(
+            [SecurityViolation("RESOURCE-002", "SQL boolean expression exceeds evaluation depth.")]
+        )
+
+
+def check_read_only_sql(sql: str, *, dialect: str) -> SecurityCheckResult:
+    """Require a single read-only query without applying the additional policy rules."""
+    try:
+        statement = _parse_sql(sql, dialect)
+    except (sqlglot.errors.SqlglotError, RecursionError) as exc:
+        return SecurityCheckResult([SecurityViolation("SQL-001", str(exc))])
+    if isinstance(statement, SecurityViolation):
+        return SecurityCheckResult(
+            [SecurityViolation(statement.rule_id, "Only one read-only SELECT is allowed.")]
+        )
+    return SecurityCheckResult(_check_read_only_structure(statement))
+
+
+def _parse_sql(sql: str, dialect: str) -> Expression | SecurityViolation:
+    statements = sqlglot.parse(sql, read=dialect, error_level=ErrorLevel.RAISE)
     executable = [statement for statement in statements if statement is not None]
     if len(executable) != 1:
-        return SecurityCheckResult(
-            [SecurityViolation("SQL-001", "Exactly one SQL statement is allowed.")]
-        )
+        return SecurityViolation("SQL-001", "Exactly one SQL statement is allowed.")
     allowed = (exp.Select, exp.Union, exp.Except, exp.Intersect)
     if not isinstance(executable[0], allowed):
-        return SecurityCheckResult(
-            [SecurityViolation("SQL-001", "Only read-only SELECT queries are allowed.")]
-        )
-    statement = executable[0]
+        return SecurityViolation("SQL-001", "Only read-only SELECT queries are allowed.")
+    return executable[0]
+
+
+def _check_statement(
+    statement: Expression, sql: str, dialect: str, schema: dict[str, Any], *, nl2sql_policy: bool
+) -> SecurityCheckResult:
     if any(not select.expressions for select in statement.find_all(exp.Select)):
         return SecurityCheckResult(
             [SecurityViolation("SQL-001", "Every SELECT must contain a projection.")]
@@ -71,16 +109,32 @@ def check_sql(sql: str, *, dialect: str, schema: dict[str, Any]) -> SecurityChec
     violations = _check_read_only_structure(statement)
     if violations:
         return SecurityCheckResult(violations)
-    violations.extend(check_resource_usage(statement))
+
+    @cache
+    def grouping_statement() -> Expression:
+        return resolve_grouping_aliases(statement, dialect=dialect, schema=schema)
+
+    grouping = grouping_statement if nl2sql_policy else None
+    violations.extend(
+        check_resource_usage(statement, nl2sql_policy=nl2sql_policy, grouping_statement=grouping)
+    )
     if violations:
         return SecurityCheckResult(violations)
-    violations.extend(check_allowed_query_syntax(statement))
+    violations.extend(
+        check_allowed_query_syntax(
+            statement, nl2sql_policy=nl2sql_policy, grouping_statement=grouping
+        )
+    )
     if violations:
         return SecurityCheckResult(violations)
     violations.extend(check_allowed_functions(statement, sql=sql, dialect=dialect))
     if violations:
         return SecurityCheckResult(violations)
-    violations.extend(check_semantic_schema(statement, dialect=dialect, schema=schema))
+    violations.extend(
+        check_semantic_schema(
+            statement, dialect=dialect, schema=schema, validate_columns=not nl2sql_policy
+        )
+    )
     return SecurityCheckResult(
         violations, normalized_sql=normalized_sql if not violations else None
     )

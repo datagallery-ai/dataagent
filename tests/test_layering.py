@@ -353,6 +353,8 @@ def test_public_sdk_exports_only_the_high_level_path():
         "HITLHandler",
         "HITLState",
         "InteractionRequest",
+        "MCPConfig",
+        "MCPInfrastructureError",
         "ResumeDecision",
         "TriggerDecision",
         "PreparedRuntime",
@@ -361,6 +363,9 @@ def test_public_sdk_exports_only_the_high_level_path():
         "SemanticServiceClient",
         "SubagentServices",
         "build_sql_service",
+        "check_engine_driver",
+        "check_read_only_sql",
+        "check_sql",
         "collect_model_stream",
         "create_agent",
         "load_mcp_tools",
@@ -399,3 +404,15 @@ def test_builtin_plugins_and_examples_use_only_public_modules():
                     assert module == "dataagent" or (
                         path == command and module == "dataagent.host"
                     ), (path, module)
+
+
+def test_data_gateway_depends_only_on_itself_and_error_types():
+    for path in (CORE / "data_gateway").rglob("*.py"):
+        for module in imports(path):
+            if path.name == "_mcp_sql.py" and (module == "mcp" or module.startswith("mcp.")):
+                continue
+            assert not module.startswith((*MODEL_TOOLING, "nl2sql")), (path, module)
+            if module.startswith("dataagent"):
+                assert module == "dataagent.diagnostics.errors" or module.startswith(
+                    "dataagent.data_gateway."
+                ), (path, module)

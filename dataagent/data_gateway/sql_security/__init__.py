@@ -12,7 +12,7 @@
 # ============================================================================
 """Independent SQL security checks for NL2SQL candidates."""
 
-from dataagent.data_gateway.sql_security.checker import check_sql
+from dataagent.data_gateway.sql_security.checker import check_read_only_sql, check_sql
 from dataagent.data_gateway.sql_security.models import SecurityCheckResult, SecurityViolation
 
-__all__ = ["SecurityCheckResult", "SecurityViolation", "check_sql"]
+__all__ = ["SecurityCheckResult", "SecurityViolation", "check_read_only_sql", "check_sql"]

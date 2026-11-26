@@ -19,8 +19,8 @@ from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from pydantic import BaseModel, Field
 
 from dataagent import safe_error
-from nl2sql_local.hooks.lint import lint
-from nl2sql_local.tools.database import configuration, redaction_secrets
+from nl2sql_react.hooks.lint import lint
+from nl2sql_react.tools.database import configuration, redaction_secrets
 
 _RECORD = "nl2sql_local_result"
 _TOOL = "nl2sql-react__execute_sql"

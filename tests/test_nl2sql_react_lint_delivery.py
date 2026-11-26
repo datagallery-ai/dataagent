@@ -6,15 +6,15 @@ from pathlib import Path
 import pytest
 from conftest import call
 from langchain_core.messages import AIMessage
-from test_nl2sql_local import local_db as local_db  # noqa: F401
-from test_nl2sql_local_control import ANSWER, PREFIX, run, sql
+from test_nl2sql_react import local_db as local_db  # noqa: F401
+from test_nl2sql_react_control import ANSWER, PREFIX, run, sql
 
 from dataagent import LaunchOptions, prepare_runtime
 from dataagent.extensions.loading import PythonLoader
 
 PLUGIN = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
 LOADER = PythonLoader()
-lint = LOADER.load(PLUGIN, "nl2sql_local/hooks/lint.py:lint")
+lint = LOADER.load(PLUGIN, "nl2sql_react/hooks/lint.py:lint")
 
 
 @pytest.mark.parametrize(

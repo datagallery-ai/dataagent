@@ -166,7 +166,7 @@ plugins:
 | `emit_reasoning_tag` | 显式设置时统一控制 Generator 和 BIRD 修复 prompt 是否要求输出 `<reasoning>`。省略时 BIRD 根据模型的 thinking 配置选择 metavisor 模板 |
 | `generator.parse_retries` | 每个生成任务遇到回复截断或 SQL 解析失败后的额外重试次数，默认 3；设为 0 时只请求一次 |
 | `generator.num_workers` | 每策略并行度，**非常昂贵** |
-| `validator.sql_security_enabled` | SQLGlot 确定性安全检查，默认关；开启需启用 reflector |
+| `validator.sql_security_enabled` | 调用 Data Gateway 的 NL2SQL 安全规则，默认 `false`；开启需启用 Reflector |
 | `validator.db_explain` | 用 `EXPLAIN` 校验 SQL 模式与语法。MCP 默认前缀为 `EXPLAIN PLAN FOR`，可通过 `database.explain_prefix` 修改 |
 | `validator.semantic_check` | 原 Validator 的 LLM 语义检查，默认 `true`。设为 `false` 时跳过此项，其他已启用的检查照常执行。BIRD 链使用独立的 `bird-validator.checkers` 配置 |
 | `reflector.threshold` / `ref_retries` | 反思置信度阈值 / 生成-校验-反思重试次数 |
@@ -213,7 +213,7 @@ bird-validator:
 
 BIRD 节点把每条最终 SQL 的完整执行结果交给原 Selector，同一题内相同 SQL 复用执行结果。`selector.shortcut: 1` 指最高票组至少一票就直接选出结果；所有候选都执行失败时，沿用原 Selector 的模型评分。BIRD 流程在 Selector 结束，`selector.sel_retries` 使用默认值 0。
 
-可选的 `bird-validator` 段支持 `temperature`（默认 0.3）、`repair_attempts`（默认 10，限制一次修复中整批 XML 都解析失败的次数）、`preview_limit`（限制展示行数）和 `sql_security_enabled`（启用插件的额外 SQL 安全策略）。生成和修复共享单题 `model_call_budget`。
+可选的 `bird-validator` 段支持 `temperature`（默认 0.3）、`repair_attempts`（默认 10，限制一次修复中整批 XML 都解析失败的次数）、`preview_limit`（限制展示行数）和 `sql_security_enabled`（默认 `false`，设为 `true` 时调用 Data Gateway 的 NL2SQL 安全规则）。生成和修复共享单题 `model_call_budget`。
 
 ### GaussVector 配置
 

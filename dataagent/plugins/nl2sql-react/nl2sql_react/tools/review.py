@@ -17,12 +17,12 @@ from sqlglot.dialects.sqlite import SQLite
 from sqlglot.tokens import TokenType
 
 from dataagent import AgentContext, safe_error
-from nl2sql_local.hooks.lint import lint
-from nl2sql_local.hooks.projection import compare, describe
-from nl2sql_local.hooks.sql_rules import sql_rules_prompt
-from nl2sql_local.models import StrictModel
-from nl2sql_local.query_control.state import QueryContract, ledger, message
-from nl2sql_local.tools.database import configuration, redaction_secrets
+from nl2sql_react.hooks.lint import lint
+from nl2sql_react.hooks.projection import compare, describe
+from nl2sql_react.hooks.sql_rules import sql_rules_prompt
+from nl2sql_react.models import StrictModel
+from nl2sql_react.query_control.state import QueryContract, ledger, message
+from nl2sql_react.tools.database import configuration, redaction_secrets
 
 
 class Review(StrictModel):

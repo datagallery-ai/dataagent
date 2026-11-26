@@ -124,7 +124,7 @@ def local_db(tmp_path):
         "db_id": "fixture",
         "connection": {"path": str(database)},
     }
-    # Legacy protocol coverage opts out; default-on integration is in test_nl2sql_local_review_gate.
+    # Legacy protocol coverage opts out; default-on integration is in test_nl2sql_react_review_gate.
     config = {
         "models": {
             "primary": {
@@ -150,8 +150,8 @@ def local_db(tmp_path):
     path.write_text(json.dumps(config))
     runtime = prepare_runtime(LaunchOptions(cwd=tmp_path, config=path))
     loader = PythonLoader()
-    run = loader.load(PLUGIN, "nl2sql_local/tools/database.py:_run")
-    options = loader.load(PLUGIN, "nl2sql_local/tools/database.py:Config")(
+    run = loader.load(PLUGIN, "nl2sql_react/tools/database.py:_run")
+    options = loader.load(PLUGIN, "nl2sql_react/tools/database.py:Config")(
         database={"path": str(database), "db_id": "fixture"}, max_rows=2
     )
     return runtime, source, options, run
@@ -512,7 +512,7 @@ async def test_native_sequential_local_tasks_keep_separate_results(local_db):
 
 def exploration_tool(source, model, **options):
     """Exercise the real tool adapter and real recall loop with task-local limits."""
-    tool = PythonLoader().load(PLUGIN, "nl2sql_local/tools/database.py:db_explore")
+    tool = PythonLoader().load(PLUGIN, "nl2sql_react/tools/database.py:db_explore")
 
     async def invoke(*args, **kwargs):
         return (await tool.coroutine(*args, **kwargs))[0]

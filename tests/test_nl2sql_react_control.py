@@ -10,8 +10,8 @@ import pytest
 from conftest import call
 from langchain_core.messages import AIMessage, HumanMessage, ToolMessage
 from langgraph.checkpoint.memory import InMemorySaver
-from test_nl2sql_local import CONTRACT, SCHEMA_ISSUE, SelectingModel
-from test_nl2sql_local import local_db as local_db
+from test_nl2sql_react import CONTRACT, SCHEMA_ISSUE, SelectingModel
+from test_nl2sql_react import local_db as local_db
 
 from dataagent import LaunchOptions, create_agent, prepare_runtime
 from dataagent.extensions.loading import PythonLoader
@@ -809,7 +809,7 @@ async def test_parent_reuses_blocked_task_and_can_explain_the_failure(local_db, 
 
 async def test_new_user_turn_can_resume_after_clarification():
     plugin = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
-    before = PythonLoader().load(plugin, "nl2sql_local/hooks/parent.py:before_tool")
+    before = PythonLoader().load(plugin, "nl2sql_react/hooks/parent.py:before_tool")
     old = ToolMessage(
         content="blocked",
         tool_call_id="old",
@@ -898,7 +898,7 @@ async def test_parent_sql_is_unavailable_before_delegation(local_db, tmp_path):
 
 async def test_terminal_marker_still_rejects_legacy_parent_sql():
     plugin = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
-    before = PythonLoader().load(plugin, "nl2sql_local/hooks/parent.py:before_tool")
+    before = PythonLoader().load(plugin, "nl2sql_react/hooks/parent.py:before_tool")
     payload = {"status": "success", "rows": [[117.75]]}
     marker = {
         "user_id": "turn",
@@ -1108,7 +1108,7 @@ async def test_new_chat_turn_does_not_export_previous_local_sql(local_db):
 )
 async def test_successful_sql_delivery_allows_output_work_and_other_tasks(name, args):
     plugin = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
-    before = PythonLoader().load(plugin, "nl2sql_local/hooks/parent.py:before_tool")
+    before = PythonLoader().load(plugin, "nl2sql_react/hooks/parent.py:before_tool")
     question = (
         "Total payments? Also answer a different data question."
         if name == "task"
@@ -1140,8 +1140,8 @@ async def test_successful_sql_delivery_allows_output_work_and_other_tasks(name, 
 async def test_idless_sdk_messages_do_not_carry_a_stop_into_the_next_user_turn(status):
     plugin = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
     loader = PythonLoader()
-    after = loader.load(plugin, "nl2sql_local/hooks/parent.py:after_tool")
-    before = loader.load(plugin, "nl2sql_local/hooks/parent.py:before_tool")
+    after = loader.load(plugin, "nl2sql_react/hooks/parent.py:after_tool")
+    before = loader.load(plugin, "nl2sql_react/hooks/parent.py:before_tool")
     state = {"messages": [HumanMessage(content="Total payments?")]}
     request = SimpleNamespace(
         runtime=SimpleNamespace(state=state),
@@ -1391,7 +1391,7 @@ async def test_question_prefetch_prioritizes_relevant_table_with_same_budget(loc
 
 def test_question_prefetch_uses_column_names_and_has_stable_no_match_fallback():
     root = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
-    rank = PythonLoader().load(root, "nl2sql_local/hooks/context.py:rank_tables")
+    rank = PythonLoader().load(root, "nl2sql_react/hooks/context.py:rank_tables")
     inventory = ["a_history", "z_details"]
     columns = [
         {"table_name": "a_history", "column_name": "id"},

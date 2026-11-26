@@ -23,9 +23,8 @@ from collections.abc import Mapping
 from pathlib import Path
 from typing import Any
 
-from dataagent import read_yaml
+from dataagent import MCPConfig, read_yaml
 from nl2sql.constants import DEFAULT_NL2SQL_MODEL_CALL_BUDGET, DEFAULT_NL2SQL_PARSE_RETRIES
-from nl2sql.utils.sql_service import MCPConfig
 
 _NODE_ORDER = ("perceptor", "generator", "validator", "reflector", "executor", "selector")
 
@@ -130,8 +129,10 @@ class NL2SQLConfig:
                     f"nl2sql parameter {section!r} must be a mapping, got {raw.get(section)!r}"
                 )
 
-        if not isinstance(raw.get("validator", {}).get("semantic_check", True), bool):
-            raise ValueError("validator.semantic_check must be true or false")
+        validator = raw.get("validator", {})
+        for key, default in (("semantic_check", True), ("sql_security_enabled", False)):
+            if not isinstance(validator.get(key, default), bool):
+                raise ValueError(f"validator.{key} must be true or false")
         if not isinstance(raw.get("emit_reasoning_tag", False), bool):
             raise ValueError("emit_reasoning_tag must be true or false")
         if not isinstance(raw.get("generator", {}).get("emit_reasoning_tag", False), bool):

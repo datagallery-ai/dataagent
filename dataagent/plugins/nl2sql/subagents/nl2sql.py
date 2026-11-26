@@ -52,7 +52,8 @@ from nl2sql.errors import DataAgentError
 from nl2sql.graph import build_nl2sql_graph, state_defaults
 from nl2sql.hooks import HookContext, load_scenario
 from nl2sql.state import get_default_state
-from nl2sql.utils.sql_service import check_engine_driver
+
+from dataagent import check_engine_driver
 
 
 class _CallCounter:
@@ -272,7 +273,12 @@ def build_subagent(params: dict[str, Any], services) -> dict[str, Any]:
     nl2sql_config = NL2SQLConfig(params)
     engine = str(nl2sql_config.get("database.engine") or nl2sql_config.get("database.dialect"))
     if nl2sql_config.executes_sql or nl2sql_config.get("validator.db_explain", False):
-        check_engine_driver(engine)
+        try:
+            check_engine_driver(engine)
+        except DataAgentError as error:
+            raise DataAgentError(
+                source=error.source, component="nl2sql", fact=error.fact, trace_id=error.trace_id
+            ) from error
     model = _BudgetedModel(services.get_model(str(nl2sql_config.get("model"))))
     budget = nl2sql_config.model_call_budget
     semantic_client = services.semantic_client

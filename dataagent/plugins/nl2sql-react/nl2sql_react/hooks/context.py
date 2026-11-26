@@ -9,8 +9,8 @@ from threading import Event
 from langchain_core.messages import HumanMessage, SystemMessage
 
 from dataagent import safe_error
-from nl2sql_local.hooks.value_hints import collect_hints
-from nl2sql_local.tools.database import _run, configuration, redaction_secrets
+from nl2sql_react.hooks.value_hints import collect_hints
+from nl2sql_react.tools.database import _run, configuration, redaction_secrets
 
 
 def name_tokens(value):

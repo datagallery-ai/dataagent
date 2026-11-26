@@ -20,7 +20,7 @@ TOOL = "nl2sql-react__execute_sql"
 
 @pytest.fixture
 def hooks():
-    capture = PythonLoader().load(PLUGIN, "nl2sql_local/hooks/results.py:capture_result")
+    capture = PythonLoader().load(PLUGIN, "nl2sql_react/hooks/results.py:capture_result")
     return sys.modules[capture.__module__]
 
 

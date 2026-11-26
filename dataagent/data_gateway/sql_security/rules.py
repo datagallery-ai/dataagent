@@ -14,6 +14,7 @@
 
 # ruff: noqa: UP045
 
+from collections.abc import Callable
 from decimal import Decimal, InvalidOperation
 from typing import Any, Optional
 
@@ -136,6 +137,7 @@ _FORBIDDEN_QUERY_TYPES = _resolve_expression_types(
         "Window",
     )
 )
+_GROUPING_MODIFIER_TYPES = _resolve_expression_types(("Rollup", "Cube", "GroupingSets"))
 
 
 def check_allowed_functions(
@@ -204,7 +206,12 @@ def check_allowed_functions(
     return []
 
 
-def check_allowed_query_syntax(statement: exp.Expression) -> list[SecurityViolation]:
+def check_allowed_query_syntax(
+    statement: exp.Expression,
+    *,
+    nl2sql_policy: bool = False,
+    grouping_statement: Callable[[], exp.Expression] | None = None,
+) -> list[SecurityViolation]:
     """Reject query operators and clauses outside the fixed query syntax allowlist."""
     if not isinstance(statement, (exp.Select, exp.Union)):
         return [
@@ -283,6 +290,9 @@ def check_allowed_query_syntax(statement: exp.Expression) -> list[SecurityViolat
     for group in statement.find_all(exp.Group):
         if any(
             group.args.get(name) for name in ("grouping_sets", "cube", "rollup", "totals", "all")
+        ) or (
+            nl2sql_policy
+            and any(isinstance(item, _GROUPING_MODIFIER_TYPES) for item in group.expressions)
         ):
             return [SecurityViolation("SYNTAX-001", "GROUP BY modifier is not in the allowlist.")]
     for order in statement.find_all(exp.Order):
@@ -315,10 +325,91 @@ def check_allowed_query_syntax(statement: exp.Expression) -> list[SecurityViolat
             return [
                 SecurityViolation("SYNTAX-001", "LIMIT modifier is not in the syntax allowlist.")
             ]
+    if nl2sql_policy:
+        return _check_grouped_projections(grouping_statement() if grouping_statement else statement)
     return []
 
 
-def check_resource_usage(statement: exp.Expression) -> list[SecurityViolation]:
+def resolve_grouping_aliases(
+    statement: exp.Expression, *, dialect: str, schema: dict[str, Any]
+) -> exp.Expression:
+    """Bind unqualified GROUP BY aliases for the NL2SQL grouping checks."""
+    selects = list(statement.find_all(exp.Select))
+    candidates = {}
+    for index, select in enumerate(selects):
+        group = select.args.get("group")
+        if not isinstance(group, exp.Group):
+            continue
+        aliases: dict[str, list[int]] = {}
+        for position, projection in enumerate(select.expressions):
+            if isinstance(projection, exp.Alias):
+                aliases.setdefault(projection.alias.casefold(), []).append(position)
+        references = []
+        for item_index, item in enumerate(group.expressions):
+            if isinstance(item, exp.Column) and not item.table:
+                positions = aliases.get(item.name.casefold(), [])
+                if len(positions) == 1:
+                    references.append((item_index, positions[0]))
+        if references:
+            candidates[index] = references
+    if not candidates:
+        return statement
+
+    try:
+        qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
+    except ValueError:
+        # The workflow leaves source-column validation to the database.
+        return statement
+    qualified_selects = list(qualified.find_all(exp.Select))
+    if len(selects) != len(qualified_selects):
+        return statement
+
+    analysis = statement.copy()
+    analysis_selects = list(analysis.find_all(exp.Select))
+    for index, references in candidates.items():
+        select = qualified_selects[index]
+        resolved_group = select.args.get("group")
+        if not isinstance(resolved_group, exp.Group):
+            continue
+        group = analysis_selects[index].args["group"]
+        if len(resolved_group.expressions) != len(group.expressions) or len(
+            select.expressions
+        ) != len(analysis_selects[index].expressions):
+            continue
+        for item_index, position in references:
+            projection = select.expressions[position]
+            resolved = resolved_group.expressions[item_index].unnest()
+            if resolved == projection.unalias().unnest():
+                # A conflicting source column would resolve to a different expression.
+                group.expressions[item_index].replace(exp.Literal.number(position + 1))
+    return analysis
+
+
+def _check_grouped_projections(statement: exp.Expression) -> list[SecurityViolation]:
+    """Reject a selected column that GROUP BY leaves neither grouped nor aggregated."""
+    violations = []
+    for select in statement.find_all(exp.Select):
+        missing = _ungrouped_projection_columns(select)
+        if missing:
+            rendered = ", ".join(f"`{name}`" for name in missing)
+            violations.append(
+                SecurityViolation(
+                    "SYNTAX-001",
+                    (
+                        f"Selected column {rendered} is not in GROUP BY and is not aggregated, "
+                        "so the query cannot execute. Wrap a metric in SUM(), or add a dimension to GROUP BY."
+                    ),
+                )
+            )
+    return violations
+
+
+def check_resource_usage(
+    statement: exp.Expression,
+    *,
+    nl2sql_policy: bool = False,
+    grouping_statement: Callable[[], exp.Expression] | None = None,
+) -> list[SecurityViolation]:
     """Return violations for high-confidence resource abuse patterns."""
     if sum(1 for _ in statement.walk()) > 10_000:
         return [SecurityViolation("RESOURCE-002", "SQL AST exceeds 10,000 nodes.")]
@@ -328,13 +419,15 @@ def check_resource_usage(statement: exp.Expression) -> list[SecurityViolation]:
     violations = _check_resource_functions(statement)
     if violations:
         return violations
-    violations = _check_join_shapes(statement)
+    violations = _check_join_shapes(statement, nl2sql_policy=nl2sql_policy)
     if violations:
         return violations
     for clause in (*statement.find_all(exp.Where), *statement.find_all(exp.Having)):
         if _constant_boolean(clause.this) is True:
             return [SecurityViolation("RESOURCE-008", "WHERE or HAVING condition is always true.")]
-    if _returns_unfiltered_rows(statement):
+    if _returns_unfiltered_rows(
+        grouping_statement() if grouping_statement else statement, nl2sql_policy=nl2sql_policy
+    ):
         return [
             SecurityViolation(
                 "RESOURCE-009", "Unfiltered row query requires WHERE, HAVING, LIMIT, or FETCH."
@@ -348,8 +441,9 @@ def check_semantic_schema(
     *,
     dialect: str,
     schema: dict[str, Any],
+    validate_columns: bool = True,
 ) -> list[SecurityViolation]:
-    """Require every source table and source column to exist in semantic metadata."""
+    """Require modeled source tables and, when enabled, their exposed columns."""
     normalized_schema = {
         _normalize_identifier(table_name): table_meta for table_name, table_meta in schema.items()
     }
@@ -374,6 +468,8 @@ def check_semantic_schema(
             "modeled business table and use only that table's exposed columns."
         )
         return [SecurityViolation("SCHEMA-003", message)]
+    if not validate_columns:
+        return []
     try:
         qualified = qualify_with_semantic_schema(statement, dialect=dialect, schema=schema)
     except ValueError as exc:
@@ -437,7 +533,9 @@ def _check_resource_functions(statement: exp.Expression) -> list[SecurityViolati
     return []
 
 
-def _check_join_shapes(statement: exp.Expression) -> list[SecurityViolation]:
+def _check_join_shapes(
+    statement: exp.Expression, *, nl2sql_policy: bool = False
+) -> list[SecurityViolation]:
     for join in statement.find_all(exp.Join):
         if not _is_allowed_join_type(join):
             continue
@@ -451,7 +549,12 @@ def _check_join_shapes(statement: exp.Expression) -> list[SecurityViolation]:
                 )
             ]
         if condition is not None and _constant_boolean(condition) is True:
-            return [SecurityViolation("RESOURCE-007", "JOIN condition must not be always true.")]
+            message = "JOIN condition must not be always true."
+            if nl2sql_policy:
+                if _join_has_single_row_source(statement, join):
+                    continue
+                message += " Use CROSS JOIN when a Cartesian product is intended."
+            return [SecurityViolation("RESOURCE-007", message)]
     return []
 
 
@@ -470,16 +573,23 @@ def _is_allowed_join_type(join: exp.Join) -> bool:
     return kind in {"", "INNER", "CROSS"}
 
 
-def _returns_unfiltered_rows(statement: exp.Expression) -> bool:
+def _returns_unfiltered_rows(statement: exp.Expression, *, nl2sql_policy: bool) -> bool:
     if not isinstance(statement, (exp.Select, exp.Union, exp.Except, exp.Intersect)):
         return False
     if isinstance(statement, exp.Union):
-        return _union_returns_unfiltered_rows(statement)
-    scopes = traverse_scope(statement)
+        return _union_returns_unfiltered_rows(statement, nl2sql_policy=nl2sql_policy)
+    scopes = list(traverse_scope(statement))
     if not any(
         any(_is_base_relation(source) for source in scope.sources.values()) for scope in scopes
     ):
         return False
+    if nl2sql_policy:
+        root = next((scope for scope in scopes if scope.expression is statement), None)
+        if root is not None:
+            return not _scope_output_is_restricted(root)
+        return not any(
+            statement.args.get(name) is not None for name in ("where", "having", "limit")
+        )
     if statement.find(exp.Where) is not None or statement.find(exp.Having) is not None:
         return False
     if statement.args.get("limit") is not None:
@@ -504,7 +614,7 @@ def _returns_unfiltered_rows(statement: exp.Expression) -> bool:
     return True
 
 
-def _union_returns_unfiltered_rows(statement: exp.Union) -> bool:
+def _union_returns_unfiltered_rows(statement: exp.Union, *, nl2sql_policy: bool) -> bool:
     if statement.args.get("limit") is not None or statement.find(exp.TableSample):
         return False
     scope_by_expression = {}
@@ -514,11 +624,16 @@ def _union_returns_unfiltered_rows(statement: exp.Union) -> bool:
         scope = scope_by_expression.get(id(branch))
         if scope is None or not _scope_contains_base_relation(scope):
             continue
-        if _scope_contains_row_restriction(scope) or _scope_is_single_row_aggregate(scope):
-            continue
-        if all(isinstance(expression.unnest(), exp.Exists) for expression in branch.expressions):
-            continue
-        return True
+        if nl2sql_policy:
+            restricted = _scope_output_is_restricted(scope)
+        else:
+            restricted = (
+                _scope_contains_row_restriction(scope)
+                or _scope_is_single_row_aggregate(scope)
+                or all(isinstance(item.unnest(), exp.Exists) for item in branch.expressions)
+            )
+        if not restricted:
+            return True
     return False
 
 
@@ -568,42 +683,252 @@ def _scope_is_single_row_aggregate(scope: Any) -> bool:
     )
 
 
-def _constant_boolean(expression: exp.Expression) -> Optional[bool]:
-    expression = expression.unnest()
-    if isinstance(expression, exp.Boolean):
-        return bool(expression.this)
-    if isinstance(expression, exp.Not):
-        value = _constant_boolean(expression.this)
-        return None if value is None else not value
-    if isinstance(expression, exp.And):
-        left, right = _constant_boolean(expression.this), _constant_boolean(expression.expression)
-        if left is False or right is False:
+def _is_grouped_aggregate(statement: exp.Select) -> bool:
+    """A GROUP BY aggregate collapses rows, so it is not an unfiltered row dump."""
+    group = statement.args.get("group")
+    if (
+        not isinstance(group, exp.Group)
+        or statement.find(exp.Window)
+        or not statement.find(exp.AggFunc)
+    ):
+        return False
+    return any(
+        aggregate.find_ancestor(exp.Select) is statement
+        for projection in statement.expressions
+        for aggregate in projection.find_all(exp.AggFunc)
+    ) and not _ungrouped_projection_columns(statement)
+
+
+def _ungrouped_projection_columns(select: exp.Select) -> list[str]:
+    group = select.args.get("group")
+    if not isinstance(group, exp.Group):
+        return []
+    projections = select.expressions
+    grouped_names = set()
+    keys = set()
+    for item in group.expressions:
+        item = item.unnest()
+        if item.is_int:
+            digits = item.name.lstrip("0")
+            position = int(digits) if digits and len(digits) <= len(str(len(projections))) else 0
+            if 1 <= position <= len(projections) and not any(
+                projection.unalias().is_star for projection in projections[:position]
+            ):
+                keys.add(projections[position - 1].unalias().unnest())
+        else:
+            grouped_names.update(
+                column.name.casefold()
+                for column in item.find_all(exp.Column)
+                if column.find_ancestor(exp.Select) is select
+            )
+
+    missing: dict[str, str] = {}
+    for projection in projections:
+        for column in projection.walk(prune=lambda expression: expression.unnest() in keys):
+            if (
+                isinstance(column, exp.Column)
+                and column.find_ancestor(exp.Select) is select
+                and column not in keys
+                and column.name.casefold() not in grouped_names
+                and not _column_is_aggregated(column, select)
+            ):
+                missing.setdefault(column.name.casefold(), column.name)
+    return list(missing.values())
+
+
+def _column_is_aggregated(node: exp.Expression, select: exp.Select) -> bool:
+    current = node.parent
+    while current is not None and current is not select:
+        if isinstance(current, exp.Select):
             return False
-        return True if left is True and right is True else None
-    if isinstance(expression, exp.Or):
-        left, right = _constant_boolean(expression.this), _constant_boolean(expression.expression)
-        if left is True or right is True:
+        if isinstance(current, exp.AggFunc):
             return True
-        return False if left is False and right is False else None
+        if isinstance(current, exp.Filter) and isinstance(current.this, exp.AggFunc):
+            return True
+        current = current.parent
+    return False
+
+
+def _scope_output_is_restricted(
+    scope: Any,
+    *,
+    cache: dict[int, bool] | None = None,
+    stack: set[int] | None = None,
+) -> bool:
+    """Whether this scope's output rows are filtered, limited, or collapsed.
+
+    A WHERE inside a scalar subquery or a joined subquery does not filter a base
+    table read in the same scope. A derived table or CTE counts only when its own
+    output is restricted, or when this scope adds WHERE, HAVING, or LIMIT.
+    """
+    if cache is None:
+        cache = {}
+    if stack is None:
+        stack = set()
+    marker = id(scope)
+    cached = cache.get(marker)
+    if cached is not None:
+        return cached
+    if marker in stack:
+        return False
+    stack.add(marker)
+    restricted = _scope_output_restriction(scope, cache=cache, stack=stack)
+    stack.remove(marker)
+    cache[marker] = restricted
+    return restricted
+
+
+def _scope_output_restriction(scope: Any, *, cache: dict[int, bool], stack: set[int]) -> bool:
+    expression = getattr(scope, "expression", None)
+    if isinstance(expression, exp.Select):
+        if all(isinstance(item.unnest(), exp.Exists) for item in expression.expressions):
+            return True
+        if _is_grouped_aggregate(expression) or _scope_projection_is_single_row_aggregate(scope):
+            return True
+        if any(expression.args.get(name) is not None for name in ("where", "having", "limit")):
+            return True
+    direct_base = False
+    nested_sources: list[Any] = []
+    for source in getattr(scope, "sources", {}).values():
+        if _is_base_relation(source):
+            direct_base = True
+            if isinstance(source, exp.Table) and source.args.get("sample") is not None:
+                return True
+        elif hasattr(source, "sources"):
+            nested_sources.append(source)
+    if direct_base:
+        return False
+    if not nested_sources:
+        return True
+    return all(
+        _scope_output_is_restricted(source, cache=cache, stack=stack) for source in nested_sources
+    )
+
+
+def _scope_projection_is_single_row_aggregate(scope: Any) -> bool:
+    expression = scope.expression
+    if (
+        not isinstance(expression, exp.Select)
+        or expression.args.get("group") is not None
+        or expression.find(exp.Window)
+    ):
+        return False
+    has_aggregate = False
+    for projection in expression.expressions:
+        for function in projection.find_all(exp.Func):
+            if (
+                function.find_ancestor(exp.Select) is expression
+                and _function_name(function) == "generate_series"
+            ):
+                return False
+        for aggregate in projection.find_all(exp.AggFunc):
+            if aggregate.find_ancestor(exp.Select) is expression:
+                has_aggregate = True
+        for column in projection.find_all(exp.Column, exp.Star):
+            if column.find_ancestor(exp.Select) is not expression:
+                continue
+            aggregate_filter = column.find_ancestor(exp.Filter)
+            if column.find_ancestor(exp.AggFunc) is None and not (
+                aggregate_filter is not None and isinstance(aggregate_filter.this, exp.AggFunc)
+            ):
+                return False
+    return has_aggregate
+
+
+def _join_has_single_row_source(statement: exp.Expression, join: exp.Join) -> bool:
+    select = join.find_ancestor(exp.Select)
+    if select is None or len(select.args.get("joins") or []) != 1:
+        return False
+    from_clause = select.args.get("from_")
+    if not isinstance(from_clause, exp.From) or from_clause.this is None:
+        return False
+    scope = next((item for item in traverse_scope(statement) if item.expression is select), None)
+    if scope is None:
+        return False
+    left_source = scope.sources.get(from_clause.this.alias_or_name)
+    right_source = scope.sources.get(join.this.alias_or_name)
+    left_is_single_row = hasattr(
+        left_source, "selected_sources"
+    ) and _scope_projection_is_single_row_aggregate(left_source)
+    right_is_single_row = hasattr(
+        right_source, "selected_sources"
+    ) and _scope_projection_is_single_row_aggregate(right_source)
+    return left_is_single_row or right_is_single_row
+
+
+def _constant_boolean(expression: exp.Expression) -> Optional[bool]:
     comparison_types = (exp.EQ, exp.NEQ, exp.GT, exp.GTE, exp.LT, exp.LTE)
-    if isinstance(expression, comparison_types):
-        left, right = _literal_value(expression.this), _literal_value(expression.expression)
-        if left is None or right is None:
-            return None
-        if isinstance(expression, exp.EQ):
-            return left == right
-        if isinstance(expression, exp.NEQ):
-            return left != right
-        if type(left) is not type(right):
-            return None
-        if isinstance(expression, exp.GT):
-            return left > right
-        if isinstance(expression, exp.GTE):
-            return left >= right
-        if isinstance(expression, exp.LT):
-            return left < right
-        return left <= right
-    return None
+    stack: list[exp.Expression] = [expression.unnest()]
+    values: dict[int, Optional[bool]] = {}
+
+    while stack:
+        node = stack[-1]
+        node_id = id(node)
+        if node_id in values:
+            stack.pop()
+            continue
+        if isinstance(node, exp.Boolean):
+            values[node_id] = bool(node.this)
+            stack.pop()
+            continue
+        if isinstance(node, exp.Not):
+            child = node.this.unnest()
+            if id(child) not in values:
+                stack.append(child)
+                continue
+            child_value = values[id(child)]
+            values[node_id] = None if child_value is None else (not child_value)
+            stack.pop()
+            continue
+        if isinstance(node, (exp.And, exp.Or)):
+            left = node.this.unnest()
+            right = node.expression.unnest()
+            if id(left) not in values:
+                stack.append(left)
+                continue
+            if id(right) not in values:
+                stack.append(right)
+                continue
+            left_value, right_value = values[id(left)], values[id(right)]
+            if isinstance(node, exp.And):
+                if left_value is False or right_value is False:
+                    values[node_id] = False
+                elif left_value is True and right_value is True:
+                    values[node_id] = True
+                else:
+                    values[node_id] = None
+            elif left_value is True or right_value is True:
+                values[node_id] = True
+            elif left_value is False and right_value is False:
+                values[node_id] = False
+            else:
+                values[node_id] = None
+            stack.pop()
+            continue
+        if isinstance(node, comparison_types):
+            left, right = _literal_value(node.this), _literal_value(node.expression)
+            if left is None or right is None:
+                values[node_id] = None
+            elif isinstance(node, exp.EQ):
+                values[node_id] = left == right
+            elif isinstance(node, exp.NEQ):
+                values[node_id] = left != right
+            elif type(left) is not type(right):
+                values[node_id] = None
+            elif isinstance(node, exp.GT):
+                values[node_id] = left > right
+            elif isinstance(node, exp.GTE):
+                values[node_id] = left >= right
+            elif isinstance(node, exp.LT):
+                values[node_id] = left < right
+            else:
+                values[node_id] = left <= right
+            stack.pop()
+            continue
+        values[node_id] = None
+        stack.pop()
+
+    return values[id(expression.unnest())]
 
 
 def _literal_value(expression: exp.Expression) -> Optional[Any]:

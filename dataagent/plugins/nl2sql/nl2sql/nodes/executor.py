@@ -14,12 +14,12 @@ import asyncio
 import logging
 from typing import Any
 
+from dataagent import MCPInfrastructureError, build_sql_service
 from nl2sql.constants import DEFAULT_NL2SQL_PREVIEW_LIMIT
 from nl2sql.errors import DataAgentError
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.state import NL2SQLState
 from nl2sql.utils.nl2sql_utils import truncate
-from nl2sql.utils.sql_service import MCPInfrastructureError, build_sql_service
 
 logger = logging.getLogger(__name__)
 
@@ -71,11 +71,15 @@ class ExecutorNode(BaseNL2SQLNode):
     def _execute_queries(
         self, config: dict[str, Any], sqls: list[str], limit: int
     ) -> list[_ExecutionOutput]:
+        try:
+            service = build_sql_service(self.engine, config)
+        except (TypeError, ValueError) as error:
+            raise DataAgentError(source="tool", component="nl2sql", fact=str(error)) from error
         outputs: list[_ExecutionOutput] = []
-        with build_sql_service(self.engine, config) as service:
+        with service as connection:
             for sql in sqls:
                 try:
-                    outputs.append(service.execute(sql, limit=limit))
+                    outputs.append(connection.execute(sql, limit=limit))
                 except MCPInfrastructureError:
                     raise
                 except Exception as e:

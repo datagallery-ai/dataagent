@@ -4,33 +4,33 @@ subagents:
 - subagents/react.yaml
 tools:
   review_query:
-    entrypoint: nl2sql_local/tools/review.py:review_query
+    entrypoint: nl2sql_react/tools/review.py:review_query
     scope: subagents
   update_query_state:
-    entrypoint: nl2sql_local/tools/control.py:update_query_state
+    entrypoint: nl2sql_react/tools/control.py:update_query_state
     scope: subagents
   finish_query:
-    entrypoint: nl2sql_local/tools/control.py:finish_query
+    entrypoint: nl2sql_react/tools/control.py:finish_query
     scope: subagents
   search_objects:
-    entrypoint: nl2sql_local/tools/database.py:search_objects
+    entrypoint: nl2sql_react/tools/database.py:search_objects
     scope: subagents
   execute_sql:
-    entrypoint: nl2sql_local/tools/database.py:execute_sql
+    entrypoint: nl2sql_react/tools/database.py:execute_sql
     scope: subagents
   db_explore:
-    entrypoint: nl2sql_local/tools/database.py:db_explore
+    entrypoint: nl2sql_react/tools/database.py:db_explore
     scope: subagents
   select_result:
-    entrypoint: nl2sql_local/hooks/parent.py:select_result
+    entrypoint: nl2sql_react/hooks/parent.py:select_result
 hooks:
   after_tool:
   - matcher: task
-    entrypoint: nl2sql_local/hooks/parent.py:after_tool
+    entrypoint: nl2sql_react/hooks/parent.py:after_tool
   before_tool:
-  - entrypoint: nl2sql_local/hooks/parent.py:before_tool
+  - entrypoint: nl2sql_react/hooks/parent.py:before_tool
   after_agent:
-  - entrypoint: nl2sql_local/hooks/parent.py:after_agent
+  - entrypoint: nl2sql_react/hooks/parent.py:after_agent
   before_agent:
-  - entrypoint: nl2sql_local/tools/database.py:validate_config
+  - entrypoint: nl2sql_react/tools/database.py:validate_config
 system_prompt_file: prompts/routing.md
