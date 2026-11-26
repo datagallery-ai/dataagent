@@ -1,7 +1,7 @@
 # Bio Lab 一键评测
 
 评测入口通过原有 SDK 与插件加载机制使用 `nl2sql` 子 Agent 和 `data-qa` 插件，不新增工具注册机制。
-`data-qa` 插件只提供两个工具，不附加 prompt。场景指令仍放在本目录 `prompt.md`，由评测入口作为 system message 提交。
+评测启用 `data-qa` 后，框架会把插件的 `prompts/routing.md` 加入主 Agent 的系统提示词。评测入口只提交用户问题并处理反馈。
 
 评测生成的 `config.yaml` 包含以下插件配置（完整配置还包含模型和 NL2SQL 数据库参数）：
 
@@ -52,7 +52,7 @@ TC-W 的三个业务 skill 脚本只操作该题 `USER_SQLITE_PATH`，确认回�
 ## 文件与判分
 
 - `fixtures/`：旧题库、schema 响应、SQLite 数据库、SQL 规则、3 个业务 skill；运行不依赖旧 runtime。
-- `prompt.md`：评测场景指令；工具实现位于 `dataagent/plugins/data-qa/tools/`。
+- 问数流程和工具实现分别位于 `dataagent/plugins/data-qa/prompts/` 和 `dataagent/plugins/data-qa/tools/`。
 - `execution.py`：确认恢复、shell 证据（含 skill 目录下的 `cd && python`）。
 - `write_assertions.py`：TC-W 数据库副作用断言。
 - `<output>/<group>/results.json`：结果、SQL/shell 证据、确认记录及耗时。

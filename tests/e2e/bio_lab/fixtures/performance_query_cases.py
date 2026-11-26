@@ -713,6 +713,7 @@ TC_EXPECTED_ANSWER_ASSERTIONS = {
         "absence_answer_terms": TC_ABSENCE_ANSWER_TERMS,
     },
     "TC25": {
+        "grade_answer_only": True,
         "allow_human_feedback_pass": True,
         "expected_summary": "User 小张 does not exist and the requested status condition is contradictory.",
         "soft_required_terms": ["小张"],
@@ -736,6 +737,7 @@ TCW_EXPECTED_ANSWER_ASSERTIONS = {
         ],
     },
     "TC-W03": {
+        "grade_answer_and_db_effect_only": True,
         "allow_human_feedback_pass": True,
         "expected_summary": "SA55 / KP.2 request should stop because the SA55 sample volume is insufficient.",
         "required_terms": ["SA55", "KP.2"],
@@ -751,6 +753,7 @@ TCW_EXPECTED_ANSWER_ASSERTIONS = {
         ],
     },
     "TC-W05": {
+        "grade_answer_and_db_effect_only": True,
         "blocking": False,
         "expected_summary": "Data dictionary table is absent; the answer should reference neutralization_data and report the no-write outcome.",
         "required_terms": ["neutralization_data"],
@@ -776,11 +779,13 @@ TCW_EXPECTED_ANSWER_ASSERTIONS = {
         "required_terms": ["BD-368", "freeze_count"],
     },
     "TC-W10": {
+        "grade_answer_and_db_effect_only": True,
         "allow_human_feedback_pass": True,
         "expected_summary": "A newly created neutralization experiment cannot be initialized as COMPLETED.",
         "required_terms": ["COMPLETED"],
     },
     "TC-W11": {
+        "grade_answer_and_db_effect_only": True,
         "allow_human_feedback_pass": True,
         "expected_summary": "End date earlier than start date is a time-paradox; creation must be blocked.",
         "required_terms": ["结束日期", "开始日期"],

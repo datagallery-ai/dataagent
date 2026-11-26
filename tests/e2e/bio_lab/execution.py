@@ -1,20 +1,54 @@
 """Evaluation execution evidence and explicit simulated-user interrupt handling."""
 
+import asyncio
 import json
 import re
 import shlex
 from pathlib import Path
 
 
-async def invoke_with_feedback(
-    agent, query, thread_id, responses, transcript, *, instructions=None
-):
+def timeout_callback():
+    from langchain_core.callbacks import AsyncCallbackHandler
+
+    class ModelTimeoutTracker(AsyncCallbackHandler):
+        def __init__(self):
+            self.active = {}
+            self.cancelled_model = None
+
+        async def on_chat_model_start(
+            self, serialized, messages, *, run_id, metadata=None, **kwargs
+        ):
+            meta = metadata or {}
+            node = meta.get("langgraph_node", "model")
+            model = meta.get("ls_model_name") or kwargs.get("name") or "chat"
+            self.active[run_id] = f"{node} LLM {model}"
+
+        async def on_llm_end(self, response, *, run_id, **kwargs):
+            self.active.pop(run_id, None)
+
+        async def on_llm_error(self, error, *, run_id, **kwargs):
+            model = self.active.pop(run_id, None)
+            if model and isinstance(error, asyncio.CancelledError):
+                self.cancelled_model = model
+
+    return ModelTimeoutTracker()
+
+
+async def invoke_with_feedback(agent, query, thread_id, responses, transcript, *, progress=None):
     """Run/resume one graph; the caller owns a single deadline for the entire case."""
     from langgraph.types import Command
 
-    config = {"configurable": {"thread_id": thread_id}}
-    messages = [("system", instructions)] if instructions else []
-    inputs = {"messages": [*messages, ("user", query)]}
+    progress = progress or timeout_callback()
+    config = {"configurable": {"thread_id": thread_id}, "callbacks": [progress]}
+    inputs = {
+        "messages": [
+            (
+                "system",
+                "当需要向用户确认时，必须调用 `data-qa__request_human_feedback` 工具获取用户回复。仅在最终回答中提问无法完成确认。",
+            ),
+            ("user", query),
+        ]
+    }
     consumed = 0
     while True:
         state = await agent.ainvoke(inputs, config)

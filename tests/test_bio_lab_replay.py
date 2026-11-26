@@ -55,7 +55,6 @@ async def test_sdk_bootstrap_with_generated_config(tmp_path, monkeypatch):
                 "smoke",
                 ["继续"],
                 transcript,
-                instructions="先查 schema，再确认。",
             )
             assert state["messages"][-1].content == "完成"
             schema = next(
@@ -65,6 +64,17 @@ async def test_sdk_bootstrap_with_generated_config(tmp_path, monkeypatch):
             )
             assert json.loads(schema.content)["tables"]
             assert transcript[0]["consumed"]
+            routing = (
+                (Path(__file__).parents[1] / "dataagent/plugins/data-qa/prompts/routing.md")
+                .read_text()
+                .strip()
+            )
+            for messages in model.requests:
+                system = "\n".join(m.text for m in messages if m.type == "system")
+                assert system.count(routing) == 1
+                assert (
+                    system.count("必须调用 `data-qa__request_human_feedback` 工具获取用户回复") == 1
+                )
         disabled = replay.config_for(db)
         disabled["plugins"]["enabled"] = ["nl2sql"]
         config.write_text(json.dumps(disabled))
@@ -72,6 +82,7 @@ async def test_sdk_bootstrap_with_generated_config(tmp_path, monkeypatch):
         model = ScriptedModel(responses=[AIMessage(content="ok")])
         with create_agent(runtime, model=model, semantic_client=client) as agent:
             await agent.ainvoke({"messages": [("user", "hello")]})
+        assert all(routing not in m.text for m in model.requests[0] if m.type == "system")
         assert not {
             "data-qa__get_ontology_description_tool",
             "data-qa__request_human_feedback",
@@ -177,3 +188,72 @@ def test_shell_evidence_accepts_only_successful_recognized_commands(tmp_path):
             category,
             code,
         )
+
+
+async def test_case_timeout_retries_from_fresh_state(tmp_path, monkeypatch, capsys):
+    import asyncio
+    from contextlib import asynccontextmanager
+
+    import httpx
+    from openai import APITimeoutError
+
+    import dataagent
+
+    for key in ("DATAAGENT_HOME", "LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"):
+        monkeypatch.setenv(key, "offline")
+
+    @asynccontextmanager
+    async def fake_agent(*args, **kwargs):
+        yield None
+
+    monkeypatch.setattr(dataagent, "create_agent", fake_agent)
+    monkeypatch.setattr(
+        dataagent,
+        "prepare_runtime",
+        lambda _: SimpleNamespace(
+            paths=SimpleNamespace(for_session=lambda key: key, home=tmp_path)
+        ),
+    )
+    monkeypatch.setattr(replay, "collect_evidence", lambda *a, **kw: ("ok", [], []))
+    monkeypatch.setattr(replay, "evaluate_case", lambda *a: {"status": "passed"})
+
+    for mode, expected in [("recover", 2), ("deadline", 4), ("ordinary_error", 1)]:
+        args = SimpleNamespace(
+            group="TC",
+            case=[1],
+            output=tmp_path / mode,
+            env_file=None,
+            semantic_url=None,
+            timeout=0.1,
+        )
+        sessions = []
+
+        async def invoke(agent, query, session, responses, transcript, *, progress):
+            sessions.append(session)
+            with sqlite3.connect(args.output / session / "bio_lab.sqlite") as db:
+                db.execute("CREATE TABLE retry_probe (id INTEGER)")
+            if mode == "deadline":
+                await progress.on_chat_model_start(
+                    {}, [], run_id=1, metadata={"langgraph_node": "validator"}
+                )
+                try:
+                    await asyncio.Event().wait()
+                except asyncio.CancelledError as exc:
+                    await progress.on_llm_error(exc, run_id=1)
+                    raise
+            if mode == "ordinary_error":
+                raise ValueError("unrelated failure")
+            if len(sessions) == 1:
+                raise APITimeoutError(request=httpx.Request("POST", "https://model.invalid"))
+            return {"messages": []}
+
+        monkeypatch.setattr(replay, "invoke_with_feedback", invoke)
+        code = await replay.replay(args)
+        (result,) = json.loads((args.output / "results.json").read_text())
+        assert code == (0 if mode == "recover" else 1)
+        assert len(set(sessions)) == len(result["attempts"]) == expected
+        logs = capsys.readouterr().out
+        assert logs.count("重试本题") == expected - 1
+        if mode == "deadline":
+            assert "LLM 调用超时（validator" in logs
+            assert "已用完 3 次重试" in logs
