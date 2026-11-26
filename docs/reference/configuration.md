@@ -16,7 +16,7 @@
 | `plugins` | 对象 | `enabled: []`，`paths: []` | 启用列表和额外插件目录 |
 | `server` | 对象 | 见下表 | 后端监听地址。`dataagent serve`、`dataagent serve-a2a`（可用 `--host`、`--port` 覆盖）、网页和部署读同一字段 |
 | `semantic` | 对象或省略 | 省略 | 省略时不创建语义客户端 |
-| `a2a` | 对象或省略 | 省略 | 本进程要调用的远端 Agent。见下文 `a2a` 一节 |
+| `a2a` | 对象或省略 | 省略 | 本服务的 Agent Card 和本进程要调用的远端 Agent。见下文 `a2a` 一节 |
 
 ## `dataagent`
 
@@ -124,6 +124,8 @@ dataagent:
 
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |
+| `card.name` | 字符串或省略 | `DataAgent` | 本服务 Agent Card 的名称，设置时不能是空白 |
+| `card.description` | 字符串或省略 | `DataAgent` | 本服务 Agent Card 的用途说明，设置时不能是空白 |
 | `remote_agents` | 数组 | `[]` | 高层整表替换。`id` 不能重复；只配置出站调用，不控制入站 A2A 路由 |
 
 `remote_agents[]`：

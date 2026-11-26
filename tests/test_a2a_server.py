@@ -73,6 +73,33 @@ def test_agent_card_publishes_a_dialable_url():
     assert published("10.0.0.8") == "http://10.0.0.8:9999/a2a/jsonrpc"
 
 
+@pytest.mark.parametrize("standalone", [False, True], ids=["serve", "serve-a2a"])
+@pytest.mark.parametrize("include_description", [False, True])
+async def test_agent_card_reads_local_configuration(tmp_path, standalone, include_description):
+    from test_launch import MODEL, config
+
+    from dataagent import LaunchOptions, prepare_runtime
+
+    metadata = {"name": "销售数据助手"}
+    if include_description:
+        metadata["description"] = "查询销售指标"
+    config(tmp_path / "home/config.yaml", {**MODEL, "a2a": {"card": metadata}})
+    runtime = prepare_runtime(LaunchOptions(cwd=tmp_path))
+    if standalone:
+        app = create_a2a_server(runtime, host="127.0.0.1", port=8790)
+    else:
+        app = create_app(runtime, instance_id="test")
+    async with httpx.AsyncClient(
+        transport=httpx.ASGITransport(app=app), base_url="http://127.0.0.1:8790"
+    ) as client:
+        response = await client.get("/.well-known/agent-card.json")
+    assert response.status_code == 200
+    card = response.json()
+    assert card["name"] == "销售数据助手"
+    assert card["description"] == ("查询销售指标" if include_description else "DataAgent")
+    assert [skill["id"] for skill in card["skills"]] == ["chat"]
+
+
 def test_final_text_prefers_the_last_ai_message():
     assert (
         final_text(

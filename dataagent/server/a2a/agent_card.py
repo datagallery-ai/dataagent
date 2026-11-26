@@ -33,8 +33,8 @@ def build_agent_card(
     host: str,
     port: int,
     requires_bearer: bool = False,
-    name: str = "DataAgent",
-    description: str = "DataAgent",
+    name: str | None = None,
+    description: str | None = None,
 ) -> AgentCard:
     """Describe this process as one A2A agent with a single JSON-RPC binding.
 
@@ -42,8 +42,8 @@ def build_agent_card(
     """
     base_url = f"http://{_card_host(host)}:{port}"
     card = AgentCard(
-        name=name,
-        description=description,
+        name="DataAgent" if name is None else name,
+        description="DataAgent" if description is None else description,
         version=__version__,
         default_input_modes=["text/plain", "application/json"],
         default_output_modes=["text/plain", "application/json"],

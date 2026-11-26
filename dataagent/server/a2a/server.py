@@ -283,10 +283,13 @@ def build_a2a_routes(
 ) -> list:
     """Serve discovery even without a runtime; JSON-RPC needs the host's live engine."""
     server = runtime.settings.server if runtime is not None else ServerSettings()
+    card_settings = runtime.settings.a2a.card if runtime is not None else None
     card = build_agent_card(
         host=host or server.host,
         port=server.port if port is None else port,
         requires_bearer=runtime is not None and bool(runtime.a2a_auth_token),
+        name=card_settings.name if card_settings is not None else None,
+        description=card_settings.description if card_settings is not None else None,
     )
     routes = _agent_card_routes(card)
     if runtime is None:
