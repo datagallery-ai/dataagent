@@ -25,6 +25,8 @@ from utils.data_task_ir.core import get_ir_context
 from utils.data_task_ir.runtime import ir_enabled
 from utils.evidence import model_evidence
 from utils.schema_ddl import source_schemas_to_ddl
+from utils.sql_checker_static import parse_artifact
+from utils.sql_identifiers import target_table_parts
 
 logger = logging.getLogger(__name__)
 
@@ -152,18 +154,18 @@ def finish_output(result, runtime, *, params):
     parsed = sqlglot.parse(re.sub(r"\$\{[^}]+\}", "scheduler_value", sql), read=dialect)
     if len(parsed) != 1 or not isinstance(parsed[0], exp.Insert):
         raise ValueError("NL2SQL must return exactly one INSERT statement")
-    target = parsed[0].this
-    if isinstance(target, exp.Schema):
-        target = target.this
-    if not isinstance(target, exp.Table) or not target.db:
+    actual_parts = target_table_parts(parsed[0])
+    if len(actual_parts) < 2:
         raise ValueError("Generated INSERT must use a fully qualified target table")
     ddl = _select_ddl(runtime.context, result.get("question", ""))
-    expected = _ddl_table(ddl)
-    actual = f"{target.db}.{target.name}"
-    if actual.casefold() != expected.casefold():
-        raise ValueError(f"INSERT target {actual} differs from target DDL {expected}")
+    expected_parts = _ddl_table_parts(ddl)
+    actual = ".".join(actual_parts)
+    if actual_parts != expected_parts:
+        raise ValueError(
+            f"INSERT target {actual} differs from target DDL {'.'.join(expected_parts)}"
+        )
     try:
-        sql = sqlglot.parse_one(sql, read=dialect).sql(pretty=True)
+        sql = sqlglot.parse_one(sql, read=dialect).sql(dialect=dialect, pretty=True)
     except Exception:
         try:
             import sqlparse
@@ -179,28 +181,44 @@ def finish_output(result, runtime, *, params):
 
 
 def _ddl_table(path):
-    content = path.read_text(encoding="utf-8")
-    match = re.search(
-        r"CREATE\s+(?:EXTERNAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?([\w.]+)", content, re.I
-    )
-    if match is None:
-        raise ValueError(f"Cannot identify target table in {path.name}")
-    return match.group(1)
+    parts = _ddl_table_parts(path)
+    if len(parts) < 2:
+        raise ValueError(f"Target DDL in {path.name} must use a fully qualified table")
+    return ".".join(parts)
+
+
+def _ddl_table_parts(path):
+    """Read a single CREATE TABLE, reporting the offending file on any parse failure."""
+    try:
+        return target_table_parts(parse_artifact(path.read_text(encoding="utf-8"), "ddl"))
+    except (ValueError, OSError, sqlglot.errors.SqlglotError) as exc:
+        raise ValueError(f"Cannot read or parse target DDL {path}: {exc}") from exc
 
 
 def _select_ddl(context, question):
     root = context.session.outputs.resolve()
-    candidates = [
+    candidates = sorted(
         path for path in root.rglob("create_*.sql") if path.resolve().is_relative_to(root)
-    ]
-    named = [
-        path
-        for path in candidates
-        if re.search(rf"(?<![\w.]){re.escape(_ddl_table(path))}(?![\w.])", question)
-    ]
+    )
+    named = []
+    errors = {}
+    for path in candidates:
+        try:
+            parts = _ddl_table_parts(path)
+        except ValueError as exc:
+            errors[path] = exc
+            continue
+        pattern = r"\s*\.\s*".join(rf"`?{re.escape(part)}`?" for part in parts)
+        if re.search(rf"(?<![\w.]){pattern}(?![\w.])", question, re.IGNORECASE):
+            named.append(path)
+    # Keep all candidates in the fallback: a broken draft may be the intended target.
     selected = named or candidates
     if len(selected) != 1:
+        details = "; ".join(str(error) for error in errors.values())
         raise ValueError(
             "Write one create_*.sql, or name exactly one target table in the task description"
+            + (f". Invalid candidates: {details}" if details else "")
         )
+    if selected[0] in errors:
+        raise errors[selected[0]]
     return selected[0]

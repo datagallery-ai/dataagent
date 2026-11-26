@@ -10,7 +10,7 @@
 # See the License for the specific language governing permissions and
 # limitations under the License.
 # ============================================================================
-"""Statement parsing and target extraction for the SQL checker."""
+"""Statement parsing for the SQL checker."""
 
 from __future__ import annotations
 
@@ -35,13 +35,3 @@ def parse_artifact(sql: str, kind: str) -> exp.Expression:
     if kind == "ddl" and statement.args.get("kind", "").upper() != "TABLE":
         raise ValueError("DDL must create a table")
     return statement
-
-
-def table_name(statement: exp.Expression) -> str:
-    """Return the explicit target table for a CREATE or INSERT statement."""
-    target = statement.this
-    if isinstance(target, exp.Schema):
-        target = target.this
-    if not isinstance(target, exp.Table):
-        raise ValueError("An explicit target table is required")
-    return ".".join(part.sql(dialect="spark").lower() for part in target.parts)
