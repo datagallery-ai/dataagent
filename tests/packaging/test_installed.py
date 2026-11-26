@@ -146,4 +146,4 @@ def test_installed_command_and_module_entrypoints(installed_package):
     assert (
         run(str(cli), "--help").stdout == run(str(python), "-I", "-m", "dataagent", "--help").stdout
     )
-    assert "--workspace" in run(str(cli), "serve", "--help").stdout
+    assert "--workspace" not in run(str(cli), "serve", "--help").stdout

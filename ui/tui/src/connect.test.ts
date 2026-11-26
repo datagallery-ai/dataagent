@@ -95,10 +95,10 @@ it("an already running control plane is attached instead of started", async () =
   ]);
 });
 
-it("config and workspace are forwarded to the backend", async () => {
-  let captured: { configPath?: string | undefined; workspaces?: readonly string[] | undefined } | undefined;
+it("config is forwarded to the backend", async () => {
+  let captured: { configPath?: string | undefined } | undefined;
   const code = await runTui({
-    argv: ["--config", "cfg.json", "--workspace", "data"],
+    argv: ["--config", "cfg.yaml"],
     startBackend: async (options) => {
       captured = options;
       return startedBackend();
@@ -107,8 +107,7 @@ it("config and workspace are forwarded to the backend", async () => {
     renderApp: async () => "exit",
   });
   assert.equal(code, 0);
-  assert.equal(captured?.configPath, "cfg.json");
-  assert.deepEqual(captured?.workspaces, ["data"]);
+  assert.equal(captured?.configPath, "cfg.yaml");
 });
 
 const readyHealth = {
@@ -677,7 +676,7 @@ it("an unknown option does not start the backend", async () => {
 });
 
 it("Missing path values before starting", async () => {
-  for (const args of [["--workspace"], ["--config"], ["--env-file"]]) {
+  for (const args of [["--config"], ["--env-file"]]) {
     assert.equal(await runTui({ argv: args }), 1);
   }
 });

@@ -8,7 +8,7 @@ What you can give the model today:
 
 | Input | How to configure it |
 | --- | --- |
-| A local directory | `dataagent.workspaces`, or `--workspace` / `DATAAGENT_WORKSPACE` |
+| A local directory | `dataagent.input_workspaces` |
 | A Skill | `<home>/skills/<name>/SKILL.md` |
 | A plugin | `<home>/plugins/<id>/` or `plugins.paths`, then `plugins.enabled` |
 | MCP | `.mcp.yaml` at Home or at an enabled plugin root |

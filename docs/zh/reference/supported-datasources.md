@@ -8,7 +8,7 @@
 
 | 输入 | 怎么配 |
 | --- | --- |
-| 本机目录 | `dataagent.workspaces`，或 `--workspace` / `DATAAGENT_WORKSPACE` |
+| 本机目录 | `dataagent.input_workspaces` |
 | Skill | `<home>/skills/<name>/SKILL.md` |
 | 插件 | `<home>/plugins/<id>/` 或 `plugins.paths`，再写入 `plugins.enabled` |
 | MCP | Home 或已启用插件根目录的 `.mcp.yaml` |

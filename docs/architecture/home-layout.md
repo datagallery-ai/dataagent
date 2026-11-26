@@ -62,11 +62,11 @@
 
 工作区是进程启动时绑定的只读输入目录，不是 Home 里的子目录，也没有单独的工作区配置服务。
 
-配置写在 `dataagent.workspaces`：
+配置写在 `dataagent.input_workspaces`：
 
 ```yaml
 dataagent:
-  workspaces:
+  input_workspaces:
   - name: input
     path: /data/reports
     read_only: true
@@ -78,7 +78,7 @@ dataagent:
 | `path` | 已存在且进程可读、可进入的目录。解析后唯一 |
 | `read_only` | 只能是 `true` |
 
-来源由高到低：重复的 `--workspace`、环境变量 `DATAAGENT_WORKSPACE`、配置里的 `dataagent.workspaces`。都没有时列表为空。命令行输入的名称是 `workspace-0`、`workspace-1`。
+默认输入目录来自所选 YAML 的 `dataagent.input_workspaces`。没有配置时列表为空。
 
 新会话把当时的输入列表和产物目录写入 `sessions.sqlite` 的 `session_bindings`。恢复时继续用这份绑定。启动参数给出不同路径列表时，准备失败，需要另开新会话。
 

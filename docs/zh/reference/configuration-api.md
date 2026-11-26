@@ -32,4 +32,4 @@ models:
 
 ## 只读目录
 
-工作区不是 Home 里的子目录，也没有配置接口。把已经存在的目录写进 `dataagent.workspaces`，或在启动时传 `--workspace`。步骤见 [数据从哪里来](../guides/data-sources.md)。
+输入目录通过 YAML 的 `dataagent.input_workspaces` 配置，目录需已存在。步骤见 [数据从哪里来](../guides/data-sources.md)。

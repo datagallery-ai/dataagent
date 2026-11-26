@@ -23,6 +23,8 @@ The current backend has no registration/login, Web model management, datasource 
 
 ## 🚀 Run It Locally
 
+If you already have the wheel and TUI `.tgz`, follow [deployment from packages](docs/en/guides/dataagent-package.md). To deploy from source, follow the steps below or use the [source deployment guide](docs/en/quick-start.md).
+
 Requirements: Node.js ≥22.12.0 and uv; the backend supports Python 3.11 and 3.12. Install and run in the same environment. Do not share `node_modules` between Windows and WSL. This version has no Docker / Compose deployment.
 
 ### Linux one-click deployment
@@ -82,7 +84,7 @@ A 200 from `/healthz` means the control plane is live; a 200 from `/ready` means
 
 ## Configuration and independent services
 
-Build the DataAgent Python package with `uv build --wheel --clear --out-dir dist/server`. See [Python package deployment](docs/en/guides/agentkit-package.md) for installation and Web/TUI connection. `make build` also creates the TUI tarball. Run `npm run smoke:agentkit-package` afterward to verify the packages.
+The release artifacts are a Server wheel and a TUI `.tgz`. See [Release](docs/development/release.md) for build and verification commands, and [deployment from packages](docs/en/guides/dataagent-package.md) for installation, startup and compiled plugin entry configuration.
 
 Home defaults to `~/.dataagent`; set `DATAAGENT_HOME` in the process environment to change it. The CLI initializes missing configuration templates on first startup.
 

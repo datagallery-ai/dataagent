@@ -10,13 +10,13 @@
 
 ```yaml
 dataagent:
-  workspaces:
+  input_workspaces:
   - name: input
     path: /data/reports
     read_only: true
 ```
 
-也可以在启动控制面时重复传入 `--workspace`，或设置 `DATAAGENT_WORKSPACE`。这三项里，命令行优先。
+通过 `--config` 可以为 Server 选择另一份 YAML。相对路径以该 YAML 所在目录为基准。
 
 `read_only` 只能是 `true`。新会话把这份列表写入 `sessions.sqlite` 的 `session_bindings`，之后不改。Agent 新写的文件在该会话的产物目录，默认是 `<home>/outputs/<user>/<thread>/`，不在工作区里。
 

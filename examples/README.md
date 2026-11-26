@@ -38,7 +38,7 @@ npm run start:tui -- --config examples/nl2sql-entry.yaml
 除模型的 `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` 外，再设置 `SEMANTIC_BASE_URL` 和 `NL2SQL_DATABASE_PATH`。
 `NL2SQL_DATABASE_PATH` 是 sqlite 文件路径。这一层会把 `plugins.enabled` 换成 `["nl2sql"]`。
 它只写入口会用到的限额：`limits.timeout_seconds` 是宿主执行阶段时限，`plugins.config.nl2sql.model_call_budget` 是单次任务的模型调用上限。
-这份文件省略的 `hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `workspaces` 来自程序默认值，留在配置里，不装进这张图。
+这份文件省略的 `hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `input_workspaces` 来自程序默认值，留在配置里，不装进这张图。
 
 配置文件选择、插件依赖顺序、`defaults_file` 与 `plugins.config` 的合并/覆盖规则，以及环境文件优先级统一见 [配置操作](../docs/guides/configuration.md#优先级)。Home 和显式配置二选一，当前内置 nl2sql 没有声明默认配置文件。显式写出的值会覆盖插件默认值，省略项才继承；Hook 数组按相应契约追加。
 
@@ -55,7 +55,7 @@ SDK 的完整调用示例见 [不配置文件日志](../docs/guides/sdk.md#不�
 | `dataagent.limits.timeout_seconds` | `180`；正数，用于宿主执行阶段及模型请求等超时；A2A 排队与 Checkpoint 保存不计入调用时限，SDK 自行控制整轮时限 |
 | `dataagent.limits.model_calls_per_agent` | `128`；每个 Agent 每次调用的模型循环上限，非整棵子 Agent 树的预算；不覆盖摘要器所有内部调用 |
 | `dataagent.limits.tool_calls_per_agent` | `128`；每个 Agent 每次调用的工具次数上限；主/子 Agent 独立计数，新一轮重置；超限抛错 |
-| `dataagent.workspaces` | `[]`；可选只读输入列表，在 Home 或显式配置声明；空列表不创建默认输入目录 |
+| `dataagent.input_workspaces` | `[]`；可选只读输入列表，在 Home 或显式配置声明；空列表不创建默认输入目录 |
 | `dataagent.entry` | `null`；编译型子代理名。设置后图只有该子代理。本示例保持 `null`，仍装配 Deep Agents 根。入口示例见 [nl2sql-entry.yaml](nl2sql-entry.yaml) |
 | `dataagent.hooks` | 默认空；六事件分组，见下一节 |
 | `models.<id>.provider` | `"openai"`；当前唯一支持值，OpenAI-compatible 服务也使用它 |
@@ -123,7 +123,7 @@ dataagent:
 workspace 条目为 `{"name": "inputs", "path": "./data", "read_only": true}`：`name` 为展示/标识名称，必须唯一；`path` 必须存在且可读；当前只允许 `read_only: true`。
 CLI 相对路径仍以启动 cwd 为基准。
 
-workspace 优先级：CLI `--workspace`（可重复）> 有效 `DATAAGENT_WORKSPACE` > Home/显式配置的 `dataagent.workspaces`；未声明则为空列表，不创建默认输入目录。
+默认输入目录来自 Home 或显式选择的 YAML 中的 `dataagent.input_workspaces`。未声明时列表为空。
 默认 user 是 `default`。显式 workspace 不追加用户/session 子目录；恢复 session 使用已保存的输入绑定。
 Home 由进程 `DATAAGENT_HOME` 指定，默认 `~/.dataagent`；它同时决定配置、扩展和运行状态根。cwd 只解析相对参数，cwd 和输入目录都不提供自动配置层。
 

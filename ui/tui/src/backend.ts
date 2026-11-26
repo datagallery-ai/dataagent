@@ -73,8 +73,6 @@ function backendSpawnOptions(): {
 export async function startBackend(options: {
   configPath?: string | undefined;
   envFile?: string | undefined;
-  workspace?: string | undefined;
-  workspaces?: readonly string[] | undefined;
   user?: string | undefined;
   session?: string | undefined;
   spawnBackend?: BackendSpawner | undefined;
@@ -91,8 +89,6 @@ export async function startBackend(options: {
   ] as const) {
     if (path !== undefined) args.push(flag, resolve(cwd, path));
   }
-  const workspaces = [...(options.workspace ? [options.workspace] : []), ...(options.workspaces ?? [])];
-  for (const path of workspaces) args.push("--workspace", resolve(cwd, path));
   if (options.user) args.push("--user", options.user);
   if (options.session) args.push("--session", options.session);
   const env: NodeJS.ProcessEnv = {

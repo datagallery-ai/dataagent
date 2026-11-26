@@ -1,13 +1,13 @@
 # 快速启动
 
-完成一次本机对话。配置字段的完整表在 [配置参考](../reference/configuration.md)。
+本页从源码启动并完成一次本机对话。已有 wheel 或 TUI `.tgz` 时，可按[独立包部署](../zh/guides/dataagent-package.md)使用交付物。配置字段见[配置参考](../reference/configuration.md)。
 
 ## 环境
 
 - macOS 或 Linux
 - uv
-- Node.js 22+
-- Python 3.11 或 3.12，以及 uv
+- Node.js ≥22.12.0
+- Python 3.11 或 3.12
 
 请为 DataAgent 使用独立的 Python 环境。包的导入名是 `dataagent`。
 
@@ -62,16 +62,16 @@ Summarize 1, 2, 3.
 只启动后端：
 
 ```bash
-uv run dataagent serve
+uv run --no-sync dataagent serve
 ```
 
 就绪后可访问 `http://127.0.0.1:8790/healthz`。端口来自 `config.yaml` 的 `server.port`。响应里的对话状态在 `data.conversation`，不包含密钥。
 
 ## 可选输入目录
 
-`--workspace` 指向已经存在的只读输入目录。可以重复。相对路径以启动 npm 的目录为基准。未指定时输入列表为空，启动不会创建默认输入目录。
+在 YAML 的 `dataagent.input_workspaces` 中列出已有的只读输入目录。相对路径以 YAML 所在目录为基准。未配置时列表为空。
 
-TUI 拉起后端时可以重复 `--workspace`。连到已有控制面时，输入目录由那份控制面决定。工作目录由控制面的 `DATAAGENT_HOME` 决定。
+TUI 拉起后端时使用选中的 YAML。连接已有控制面时使用该服务的输入配置。工作目录由控制面的 `DATAAGENT_HOME` 决定。
 
 系统提示要求模型把这些目录当作只读输入，并把生成文件写到当前会话的 `outputs/`。文件工具和 shell 使用后端进程的权限，见 [安全](../architecture/security-boundaries.md)。
 

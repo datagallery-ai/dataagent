@@ -33,7 +33,7 @@ flowchart LR
 
 ## 输入
 
-CLI 的 workspace 列表优先。否则看 `DATAAGENT_WORKSPACE`。否则用配置里的 `dataagent.workspaces`。恢复会话时，若调用方又给了输入，路径列表必须和 `sessions.sqlite` 的 `session_bindings` 表 一致；没给则直接采用绑定。
+默认输入目录来自所选 YAML 的 `dataagent.input_workspaces`。恢复会话时，直接使用 `sessions.sqlite` 中该会话已保存的输入绑定。
 
 每个路径必须是可读目录。名称和路径都不能重复。
 

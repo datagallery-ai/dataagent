@@ -98,8 +98,6 @@ def test_real_backend_ready_and_graceful_cleanup(tmp_path):
             "serve",
             "--config",
             str(path),
-            "--workspace",
-            str(tmp_path),
         ],
         env={
             **os.environ,

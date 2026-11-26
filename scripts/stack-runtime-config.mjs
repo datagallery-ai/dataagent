@@ -38,7 +38,7 @@ function checkArgs(args) {
     }
     throw new Error(
       `Unknown argument: ${arg}. Accepted: --config <path>, --web-host <host>, --web-port <port>, --api, --web. ` +
-        "For other backend options (--user, --workspace, --session, --env-file), run `uv run dataagent serve` directly.",
+        "For other backend options (--user, --session, --env-file), run `uv run dataagent serve` directly.",
     );
   }
 }

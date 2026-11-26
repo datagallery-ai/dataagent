@@ -298,8 +298,10 @@ def _load_layer(
             absolute(item, path.parent, expand_home=True).resolve() for item in plugins["paths"]
         )
     agent_data = data.get("dataagent")
-    if isinstance(agent_data, dict) and "workspaces" in agent_data:
-        agent_data["workspaces"] = _resolve_workspace_entries(agent_data["workspaces"], path)
+    if isinstance(agent_data, dict) and "input_workspaces" in agent_data:
+        agent_data["input_workspaces"] = _resolve_workspace_entries(
+            agent_data["input_workspaces"], path
+        )
     if isinstance(agent_data, dict) and agent_data.get("output_root") is not None:
         try:
             agent_data["output_root"] = output_directory(agent_data["output_root"])
@@ -310,18 +312,18 @@ def _load_layer(
 
 def _resolve_workspace_entries(entries, source: Path):
     if not isinstance(entries, (list, tuple)):
-        raise ValueError(f"{source}: dataagent.workspaces must be a list")
+        raise ValueError(f"{source}: dataagent.input_workspaces must be a list")
     resolved = []
     names, paths = [], []
     for index, item in enumerate(entries):
         if not isinstance(item, Mapping) or not isinstance(item.get("path"), str):
-            raise ValueError(f"{source}: dataagent.workspaces[{index}].path must be a string")
+            raise ValueError(f"{source}: dataagent.input_workspaces[{index}].path must be a string")
         path = absolute(item["path"], source.parent, expand_home=True).resolve()
         resolved.append({**item, "path": path})
         names.append(item.get("name"))
         paths.append(path)
     if len(set(names)) != len(names):
-        raise ValueError(f"{source}: dataagent.workspaces contains duplicate names")
+        raise ValueError(f"{source}: dataagent.input_workspaces contains duplicate names")
     if len(set(paths)) != len(paths):
-        raise ValueError(f"{source}: dataagent.workspaces contains duplicate paths")
+        raise ValueError(f"{source}: dataagent.input_workspaces contains duplicate paths")
     return resolved

@@ -1,6 +1,5 @@
 """Real native graph checks for automatic resources and native file access."""
 
-from dataclasses import replace
 from unittest.mock import patch
 
 import pytest
@@ -22,7 +21,12 @@ from dataagent.extensions import select_plugins
 def options(tmp_path, **kwargs):
     workspace = tmp_path / "inputs"
     workspace.mkdir(exist_ok=True)
-    return replace(launch_options(tmp_path, **kwargs), workspaces=(workspace,))
+    opts = launch_options(tmp_path, **kwargs)
+    config(
+        opts.config,
+        {**MODEL, "dataagent": {"input_workspaces": [{"name": "inputs", "path": "inputs"}]}},
+    )
+    return opts
 
 
 def skill(root, name, content="Read this independent Skill."):
@@ -373,7 +377,11 @@ async def test_native_file_tools_read_home_files_with_glob_characters(tmp_path, 
     config(home / "config.yaml", MODEL)
     (home / ".env").write_text("SECRET_MARKER=secret-content\n")
     (home / "public.txt").write_text("public-evidence\n")
-    runtime = prepare_runtime(LaunchOptions(cwd=workspace, workspaces=(workspace,)))
+    config(
+        home / "config.yaml",
+        {**MODEL, "dataagent": {"input_workspaces": [{"name": "input", "path": str(workspace)}]}},
+    )
+    runtime = prepare_runtime(LaunchOptions(cwd=workspace))
     calls = [
         call("read_file", {"file_path": str(home / ".env")}),
         call("read_file", {"file_path": str(home / "config.yaml")}),

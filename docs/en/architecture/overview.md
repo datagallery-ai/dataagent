@@ -28,7 +28,7 @@ The Python SDK can skip HTTP and prepare the same runtime in process. Web/TUI us
 | `dataagent/` | Exposes the Python SDK. `bootstrap/` prepares the runtime and `assembly/graph.py` builds the agent graph. |
 | `dataagent/assembly/prompts/` | Renders the host templates for the main agent, subagents and filesystem instructions. Plugins keep their own prompts in their plugin directories. |
 | Home `~/.dataagent` | Configuration, Skills, plugins, and all session state. |
-| `dataagent.workspaces` | Read-only input directories bound when the process starts. They are not inside Home. |
+| `dataagent.input_workspaces` | Read-only input directories bound when the process starts. They are not inside Home. |
 
 The control plane does not expose datasource registration, a knowledge base, cookie login, or a separate configuration REST API.
 

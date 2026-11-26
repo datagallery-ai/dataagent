@@ -28,11 +28,15 @@ def runtime_for(tmp_path, *workspaces, user_id="default", session_id=None, extra
     }
     if extra:
         body.update(extra)
+    if workspaces:
+        body.setdefault("dataagent", {})["input_workspaces"] = [
+            {"name": f"workspace-{index}", "path": str(path)}
+            for index, path in enumerate(workspaces)
+        ]
     path.write_text(json.dumps(body))
     return prepare_runtime(
         LaunchOptions(
             cwd=tmp_path,
-            workspaces=workspaces,
             user_id=user_id,
             session_id=session_id,
             config=path,
@@ -86,7 +90,7 @@ def test_resume_keeps_legacy_default_without_creating_new_one(tmp_path):
     original = runtime_for(tmp_path, legacy)
     original.paths.open_session("existing", create=True)
     resumed = runtime_for(tmp_path, session_id="existing")
-    assert resumed.paths.workspaces[0].path == legacy
+    assert resumed.paths.open_session("existing", create=False)[1][0].path == legacy
     assert not (resumed.paths.home / "workspaces/default").exists()
 
 
@@ -305,10 +309,9 @@ def test_resume_keeps_the_saved_workspace_binding(tmp_path):
     other.mkdir()
     runtime = runtime_for(tmp_path, source)
     runtime.paths.open_session("sess-a", create=True)
-    resumed = runtime_for(tmp_path, user_id="default", session_id="sess-a")
-    assert resumed.paths.workspaces == runtime.paths.workspaces
-    with pytest.raises(ValueError, match="different workspace list"):
-        runtime_for(tmp_path, other, session_id="sess-a")
+    resumed = runtime_for(tmp_path, other, session_id="sess-a")
+    assert resumed.paths.open_session("sess-a", create=False)[1] == runtime.paths.workspaces
+    assert resumed.paths.open_session("new-session", create=True)[1][0].path == other
     with pytest.raises(ValueError, match="does not belong to user"):
         runtime_for(tmp_path, source, session_id="missing")
     with pytest.raises(ValueError, match="does not belong to user"):

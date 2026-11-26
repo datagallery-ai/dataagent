@@ -66,7 +66,7 @@ ui/web  --HTTP-->  dataagent serve  <--HTTP--  ui/tui
                          |
                     prepare_runtime
                          |
-              ~/.dataagent 与 dataagent.workspaces
+              ~/.dataagent 与 dataagent.input_workspaces
 ```
 
 网页经 Next 同源转发。TUI 直接请求控制面。对话都走 `POST /api/v1/runs`。会话、Checkpoint 和产物在同一个 Home。Python SDK 可以跳过 HTTP，调用同一套 `prepare_runtime`。网页怎么部署、页面上能做什么，写在仓库 `docs/`，不在这篇架构说明里。

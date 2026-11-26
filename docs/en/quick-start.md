@@ -1,6 +1,6 @@
-# Quick start
+# Deploy from source
 
-This guide is for a first deploy. Formal mode has two paths. Both start the same control plane. Web and TUI are its two presentations:
+This guide covers two ways to deploy from source. If you have the Server wheel or TUI npm package, follow [DataAgent package deployment](guides/dataagent-package.md).
 
 | Path | Hosts | Entry |
 | --- | --- | --- |
@@ -155,7 +155,7 @@ LLM_BASE_URL=https://your-openai-compatible-host/v1
 LLM_API_KEY=replace-with-your-key
 ```
 
-The model endpoint is a runtime setting, configured separately from npm / Python download sources. Services and pages can start before the model is configured. Complete model configuration before conversations and restart after changes.
+The root `.env.example` lists the settings you can configure for Server and TUI. The default model template uses the three settings above. Fill in or export the other runtime settings as needed, and set mirror URLs in the terminal before installation. Services and pages can start before the model is configured. Complete model configuration before conversations and restart after changes.
 
 ### 4. Build and start (same for formal test and real production)
 
@@ -206,6 +206,42 @@ In three sentences, say what you can do right now.
 ```
 
 If a read-only workspace is configured, ask which files are in that directory. A streamed reply means the Web path to the control plane is working. Database questions only make sense after the matching plugin is enabled.
+
+<a id="connect-source-frontends"></a>
+
+## Connect source frontends to an existing Server
+
+Prepare the frontend dependencies in the checkout. Web and TUI can connect to a Server you started from source or installed from the wheel:
+
+```bash
+npm install --include=dev
+```
+
+To start Web:
+
+```bash
+npm run build:web
+API_PROXY_TARGET=http://127.0.0.1:8790 npm run start:web
+```
+
+For the source TUI, build it and specify the Server address:
+
+```bash
+npm run build:tui
+npm run start:tui -- --runtime-url http://127.0.0.1:8790
+```
+
+Use a Server address reachable from the frontend machine.
+
+## Use a compiled plugin entry from source
+
+Enable the plugin and set `dataagent.entry` in YAML. For the built-in nl2sql entry, prepare the model, semantic service and SQLite file used by `examples/nl2sql-entry.yaml`, then run this command from the repository root:
+
+```bash
+uv run --no-sync dataagent serve --config examples/nl2sql-entry.yaml
+```
+
+Connect from another terminal using the explicit address above. See [compiled plugin entry](guides/dataagent-package.md#compiled-entry) for the complete configuration and plugin `entrypoint` format.
 
 ## Start the TUI
 
@@ -308,7 +344,7 @@ Stop the conflicting process, or change `server.port` in `config.yaml`. `npm run
 
 ### The model cannot read a local directory
 
-- The control plane has no datasource registry. Put the directory in `dataagent.workspaces`, or pass `--workspace` at startup.
+- The control plane has no datasource registry. Put the directory in `dataagent.input_workspaces`.
 - The directory must exist before startup, and the process must be able to read and enter it.
 - A new session writes that list into the `session_bindings` table in `sessions.sqlite`. After changing the list, start a new session.
 

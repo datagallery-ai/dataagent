@@ -67,10 +67,15 @@ def test_two_sources_only_disabled_plugins_and_adjacent_configs_ignored(tmp_path
     plugin = home / "plugins/analytics"
     config(plugin / ".plugin.yaml", {"id": "analytics"})
     config(plugin / ".mcp.yaml", {"mcpServers": {"calc": stdio()}})
-    external = config(tmp_path / "config.yaml", {**MODEL, "plugins": {"enabled": ["analytics"]}})
-    runtime = prepare(
-        tmp_path, {"calc": stdio()}, config=external, workspaces=(tmp_path / "input",)
+    external = config(
+        tmp_path / "config.yaml",
+        {
+            **MODEL,
+            "plugins": {"enabled": ["analytics"]},
+            "dataagent": {"input_workspaces": [{"name": "input", "path": "input"}]},
+        },
     )
+    runtime = prepare(tmp_path, {"calc": stdio()}, config=external)
     assert list(runtime.extensions.mcp_servers) == ["mcp__user__calc", "mcp__analytics__calc"]
     assert runtime.extensions.mcp_servers["mcp__analytics__calc"]["cwd"] == str(plugin)
     with pytest.raises(TypeError):

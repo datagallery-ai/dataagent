@@ -136,7 +136,7 @@ async function main() {
     const bin = path.join(venv, process.platform === "win32" ? "Scripts" : "bin");
     const python = path.join(bin, process.platform === "win32" ? "python.exe" : "python");
     const cli = path.join(bin, process.platform === "win32" ? "dataagent.exe" : "dataagent");
-    console.log("[smoke:agentkit-package] install the wheel and TUI tarball outside the checkout");
+    console.log("[smoke:dataagent-package] install the wheel and TUI tarball outside the checkout");
     await run("uv", ["pip", "install", "--python", python, "./" + wheel], { cwd: temporary });
     const npmOptions = { cwd: temporary, shell: process.platform === "win32" };
     await run("npm", ["install", "--no-audit", "--no-fund", "./" + tarball], npmOptions);
@@ -146,7 +146,7 @@ async function main() {
       assert.doesNotMatch(help.stdout, /--workspace/);
     }
     await assert.rejects(
-      run("npm", ["exec", "--offline", "--", "dataagent-cli", "--workspace", "."], npmOptions),
+      run("npm", ["exec", "--offline", "--", "dataagent-cli", "--config", "config.yaml"], npmOptions),
       error => error.code === 1 && /dataagent serve.*--runtime-url/.test(error.stderr)
     );
     const tuiEntry = pathToFileURL(path.join(temporary, "node_modules/@datagallery/tui/ui/tui/dist/index.js"));
@@ -178,7 +178,7 @@ config['plugins']['config'] = {'data-qa': {'database': 'fixture'}}
 (home / 'config.yaml').write_text(yaml.safe_dump(config, allow_unicode=True))
 `], { cwd: temporary });
     await run(cli, ["--help"], { cwd: temporary });
-    console.log("[smoke:agentkit-package] installed SDK invocation");
+    console.log("[smoke:dataagent-package] installed SDK invocation");
     await run(python, ["-I", "-c", `
 import asyncio
 from dataagent import LaunchOptions, create_agent, prepare_runtime
@@ -189,7 +189,7 @@ async def main():
         assert result['messages'][-1].content == ${JSON.stringify(ANSWER)}
 asyncio.run(main())
 `], { cwd: temporary });
-    console.log("[smoke:agentkit-package] start installed runtime outside the checkout");
+    console.log("[smoke:dataagent-package] start installed runtime outside the checkout");
     backend = service(cli, ["serve"], { cwd: temporary, env });
     await waitFor(api + "/ready", backend);
     assert.equal((await fetch(api + "/healthz")).status, 200);
@@ -208,7 +208,7 @@ asyncio.run(main())
       cwd: path.join(ROOT, "ui/web"), env: { ...env, API_PROXY_TARGET: api },
     });
     await waitFor(browser + "/data-tasks", web);
-    console.log("[smoke:agentkit-package] Web proxy: real AG-UI success and provider error");
+    console.log("[smoke:dataagent-package] Web proxy: real AG-UI success and provider error");
     let webThread;
     for (const fails of [false, true]) {
       const request = input(fails ? "provider-error" : "package web test");
@@ -225,7 +225,7 @@ asyncio.run(main())
       sourceStarted = true;
       throw new Error("Attach mode must not launch source runtime");
     };
-    console.log("[smoke:agentkit-package] TUI attach: real AG-UI success, error, and session history");
+    console.log("[smoke:dataagent-package] TUI attach: real AG-UI success, error, and session history");
     assert.equal(await runTui({ argv: ["--runtime-url", api], env,
       startBackend,
       renderApp: async ({ client, tui }) => {
@@ -247,7 +247,7 @@ asyncio.run(main())
         return "exit";
       },
     }), 0);
-    console.log("[smoke:agentkit-package] stopped backend: verify frontend connection errors");
+    console.log("[smoke:dataagent-package] stopped backend: verify frontend connection errors");
     await stop(backend);
     const unavailable = await fetch(browser + "/api/v1/sessions");
     assert.equal(unavailable.status, 502);
@@ -257,7 +257,7 @@ asyncio.run(main())
       renderApp: async () => { rendered = true; return "exit"; },
     }), 1);
     assert.equal(rendered, false, "An unavailable service cannot open a conversation");
-    console.log("[smoke:agentkit-package] unconfigured model: healthy service, unavailable conversation");
+    console.log("[smoke:dataagent-package] unconfigured model: healthy service, unavailable conversation");
     const unconfigured = { ...env, DATAAGENT_HOME: path.join(temporary, "unconfigured") };
     for (const key of ["LLM_MODEL", "LLM_BASE_URL", "LLM_API_KEY"]) delete unconfigured[key];
     // Keep the same listen address while allowing the CLI to initialize its own templates.
@@ -283,7 +283,7 @@ config['server'] = dict(host='127.0.0.1', port=${apiPort})
     assert.equal(rendered, false, "A model must be configured before conversations");
     assert.equal(sourceStarted, false, "Attach mode must not launch source runtime");
     passed = true;
-    console.log("[smoke:agentkit-package] ok");
+    console.log("[smoke:dataagent-package] ok");
   } finally {
     await stop(web);
     await stop(backend);
@@ -291,7 +291,7 @@ config['server'] = dict(host='127.0.0.1', port=${apiPort})
     if (previousHome === undefined) delete process.env.DATAAGENT_HOME;
     else process.env.DATAAGENT_HOME = previousHome;
     if (passed) await rm(temporary, { recursive: true, force: true });
-    else console.error(`[smoke:agentkit-package] retained environment and logs: ${temporary}`);
+    else console.error(`[smoke:dataagent-package] retained environment and logs: ${temporary}`);
   }
 }
 

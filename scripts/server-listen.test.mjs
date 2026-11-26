@@ -9,7 +9,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { readServerListen, resolveHome } from "../ui/shared/server-listen.mjs";
 
-const agentkit = fileURLToPath(new URL("../.", import.meta.url));
+const dataagent = fileURLToPath(new URL("../.", import.meta.url));
 
 function tempHome() {
   return mkdtempSync(join(tmpdir(), "dataagent-listen-"));
@@ -18,8 +18,8 @@ function tempHome() {
 function runPython(args, options) {
   return spawnSync(
     "uv",
-    ["run", "--no-sync", "--project", agentkit, "python", ...args],
-    { cwd: agentkit, encoding: "utf8", ...options },
+    ["run", "--no-sync", "--project", dataagent, "python", ...args],
+    { cwd: dataagent, encoding: "utf8", ...options },
   );
 }
 

@@ -69,7 +69,7 @@ Create and fill in the repository root `.env` using the [configuration instructi
 uv run --no-sync --env-file .env dataagent serve
 ```
 
-Here uv loads the root `.env` into the process environment. If model configuration is provided through Home `.env` or process variables, omit `--env-file .env`. To replace Home's environment file, pass `--env-file` after `dataagent serve`. For A2A only, replace `serve` with `serve-a2a`. Backend-only installations can skip npm installation and frontend builds. `serve-a2a` has no REST health, session, or artifact endpoints. To connect frontends to an existing backend, see [Web/TUI connections](agentkit-package.md#connect-web-and-tui).
+Here uv loads the root `.env` into the process environment. If model configuration is provided through Home `.env` or process variables, omit `--env-file .env`. To replace Home's environment file, pass `--env-file` after `dataagent serve`. For A2A only, replace `serve` with `serve-a2a`. Backend-only installations can skip npm installation and frontend builds. `serve-a2a` has no REST health, session, or artifact endpoints. To connect frontends to an existing backend, see [Web/TUI connections](../quick-start.md#connect-source-frontends).
 
 ## Model gateway and validation
 

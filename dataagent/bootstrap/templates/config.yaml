@@ -1,6 +1,7 @@
 schema_version: 4
 dataagent:
   model: primary
+  input_workspaces: []
   limits:
     timeout_seconds: 180
     model_calls_per_agent: 128

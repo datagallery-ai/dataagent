@@ -103,7 +103,7 @@ async function renderTuiApp(options: RenderAppOptions): Promise<AppExitReason> {
   return exitReason;
 }
 
-const LOCAL_START_FLAGS = ["--config", "--env-file", "--workspace", "--user", "--session"] as const;
+const LOCAL_START_FLAGS = ["--config", "--env-file", "--user", "--session"] as const;
 const sourceCheckout = existsSync(new URL("../../../dataagent/__main__.py", import.meta.url));
 
 function printHelp(): void {
@@ -118,7 +118,6 @@ Options:${sourceCheckout ? `
   --config <path>         Use this file instead of Home config.yaml
   --env-file <path>       Optional environment file, resolved by the backend
   --user <id>             Local profile (default: default)
-  --workspace <path>      Read-only input; repeat to mount more than one
   --session <id>          Resume a session in the selected profile` : ""}
   --runtime-url <url>     Attach to this control plane and do not start
                           a backend. Omit it to use Home config.yaml
@@ -129,7 +128,7 @@ Options:${sourceCheckout ? `
   --help, -h              Show this help message
 
 Examples:
-  dataagent-cli${sourceCheckout ? "\n  dataagent-cli --workspace /existing/data" : ""}
+  dataagent-cli${sourceCheckout ? "\n  dataagent-cli --config /path/to/config.yaml" : ""}
   da --runtime-url http://127.0.0.1:8790
 
 Notes:
@@ -143,17 +142,6 @@ Notes:
   a loopback address, or another IP. 0.0.0.0 and :: connect through
   loopback.
 `);
-}
-
-function getRepeatedArg(args: string[], name: string): string[] {
-  const values: string[] = [];
-  for (let index = 0; index < args.length; index += 1) {
-    if (args[index] !== name) continue;
-    const next = args[index + 1];
-    if (!next || next.startsWith("-")) throw new Error(`${name} requires a value`);
-    values.push(next);
-  }
-  return values;
 }
 
 function getOptionalArg(args: string[], name: string): string | undefined {
@@ -173,7 +161,7 @@ function resolveResumeRequest(
   return sessionId ? { enabled: true, sessionId } : { enabled: true };
 }
 
-const VALUE_FLAGS = ["--config", "--env-file", "--workspace", "--user", "--session", "--runtime-url"] as const;
+const VALUE_FLAGS = ["--config", "--env-file", "--user", "--session", "--runtime-url"] as const;
 
 /** Accept the startup flags. Anything else is an unknown option. */
 export function parseTuiArgs(args: string[]): void {
@@ -257,7 +245,6 @@ export async function runTui(options: RunTuiOptions = {}): Promise<number> {
     const backend = attachUrl ? undefined : await launchBackend({
       configPath: getOptionalArg(args, "--config"),
       envFile: getOptionalArg(args, "--env-file"),
-      workspaces: getRepeatedArg(args, "--workspace"),
       user: getOptionalArg(args, "--user"),
       session,
     });

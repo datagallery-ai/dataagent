@@ -74,7 +74,7 @@ npm run build
 uv run --no-sync --env-file .env dataagent serve
 ```
 
-这里由 uv 将仓库根 `.env` 注入进程环境。若改用 Home `.env` 或进程环境提供模型配置，省略 `--env-file .env`。需要替换 Home 环境文件时，将 `--env-file` 放在 `dataagent serve` 之后。只提供 A2A 时将 `serve` 换成 `serve-a2a`；仅运行后端可跳过 npm 安装和前端构建。`serve-a2a` 没有 REST 健康、会话和产物接口。需要前端时，连接已有后端的命令见 [Web/TUI 连接](agentkit-package.md#connect-web-and-tui)。
+这里由 uv 将仓库根 `.env` 注入进程环境。若改用 Home `.env` 或进程环境提供模型配置，省略 `--env-file .env`。需要替换 Home 环境文件时，将 `--env-file` 放在 `dataagent serve` 之后。只提供 A2A 时将 `serve` 换成 `serve-a2a`；仅运行后端可跳过 npm 安装和前端构建。`serve-a2a` 没有 REST 健康、会话和产物接口。需要前端时，连接已有后端的命令见 [Web/TUI 连接](../quick-start.md#connect-source-frontends)。
 
 ## 模型与检查
 

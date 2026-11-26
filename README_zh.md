@@ -23,6 +23,8 @@ Python SDK → 同一套配置准备与 Agent 装配（可跳过 HTTP）
 
 ## 🚀 正式态跑通
 
+已有 wheel 和 TUI `.tgz` 时，按 [独立包部署](docs/zh/guides/dataagent-package.md) 安装和启动。从源码部署时，按下文操作或参考 [源码部署快速开始](docs/zh/quick-start.md)。
+
 需要 Node.js ≥22.12.0 和 uv，后端支持 Python 3.11 和 3.12。安装与运行应处于同一环境；Windows 与 WSL 不要共用 `node_modules`。本版本不提供 Docker / Compose 部署。
 
 ### Linux 一键部署
@@ -82,7 +84,7 @@ npm run start:tui
 
 ## 配置与独立启动
 
-使用 `uv build --wheel --clear --out-dir dist/server` 生成 DataAgent 的 Python 安装包。安装与 Web/TUI 连接步骤见 [Python 包部署](docs/zh/guides/agentkit-package.md)。`make build` 可同时生成 TUI npm 包，构建后用 `npm run smoke:agentkit-package` 验证。
+交付物是 Server wheel 和 TUI `.tgz`。出包和验收命令见[发布说明](docs/development/release.md)。安装、启动和编译型插件入口配置见[独立包部署](docs/zh/guides/dataagent-package.md)。
 
 Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI 首次启动会初始化缺少的配置模板。
 

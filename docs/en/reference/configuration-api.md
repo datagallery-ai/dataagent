@@ -32,4 +32,4 @@ Restart the control plane after changing the model, port, or Home.
 
 ## Read-only directories
 
-A workspace is not a subdirectory of Home, and there is no configuration route for it. Put an existing directory in `dataagent.workspaces`, or pass `--workspace` at startup. Steps are in [Where data comes from](../guides/data-sources.md).
+Set existing input directories in the YAML field `dataagent.input_workspaces`. Steps are in [Where data comes from](../guides/data-sources.md).

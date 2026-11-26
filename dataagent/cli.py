@@ -81,14 +81,8 @@ def _parser() -> argparse.ArgumentParser:
     )
     api.add_argument("--user", default="default", help="Local user ID (default: default)")
     api.add_argument(
-        "--workspace",
-        action="append",
-        default=None,
-        help="Read-only input workspace; repeat for more than one",
-    )
-    api.add_argument(
         "--session",
-        help="Adopt that session's recorded workspace binding as the process default",
+        help="Check that the existing session belongs to this user",
     )
     api.add_argument("--env-file", help="Environment file resolved by the backend")
     api.add_argument(
@@ -104,12 +98,6 @@ def _parser() -> argparse.ArgumentParser:
         help="Use this file instead of Home config.yaml",
     )
     a2a.add_argument("--user", default="default", help="Local user ID (default: default)")
-    a2a.add_argument(
-        "--workspace",
-        action="append",
-        default=None,
-        help="Read-only input workspace; repeat for more than one",
-    )
     a2a.add_argument("--env-file", help="Environment file resolved by the backend")
     a2a.add_argument("--host", default=None, help="Bind address (default: config server.host)")
     a2a.add_argument(
@@ -144,7 +132,6 @@ def _prepare(args):
         return prepare_runtime(
             LaunchOptions(
                 config=args.config or None,
-                workspaces=tuple(args.workspace or ()),
                 user_id=args.user,
                 session_id=getattr(args, "session", None),
                 env_file=args.env_file,

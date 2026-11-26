@@ -2,7 +2,17 @@
 
 本文回答“从仓库代码怎样得到可以交付的 `.whl` 和 `.tgz`”。包边界和启动契约见[发布方案](package-distribution.md)。
 
-**当前 `make build` 将 Server wheel 和 TUI npm 包分别生成到 `dist/server/` 和 `dist/tui/`。** 下文将 Web 和 TUI 合包的流程是设计方案。现有流水线命令和目录见[发布说明](release.md)。
+**当前交付使用 Server wheel 和独立 TUI npm 包。** 在仓库根目录执行：
+
+```bash
+make prepare
+make build
+npm run smoke:dataagent-package
+```
+
+产物在 `dist/server/` 和 `dist/tui/`，Web 构建结果留在 `ui/web/.next/`。部署机器安装成品的步骤见 [DataAgent 包部署](../zh/guides/dataagent-package.md)。
+
+当前构建和验收命令见[发布说明](release.md)。第 3 节起记录 Web/TUI 合包设计。
 
 ## 1. 先看出包路径
 
@@ -33,7 +43,7 @@ ui/ 启动器 ──────┘        ↑
 在仓库根目录执行：
 
 ```bash
-uv build --wheel --out-dir dist/release/current
+uv build --wheel --clear --out-dir dist/server
 ```
 
 构建工具读取 `pyproject.toml`，由 hatchling 收集 Python 模块和资源，输出到指定目录。它不需要先构建 Web/TUI，也不会把主包的第三方依赖一起塞进 wheel。
@@ -41,7 +51,7 @@ uv build --wheel --out-dir dist/release/current
 按当前元数据，输出为：
 
 ```text
-dist/release/current/datagallery_dataagent-0.2.0-py3-none-any.whl
+dist/server/datagallery_dataagent-0.2.0-py3-none-any.whl
 ```
 
 wheel 只安装一个顶层包 `dataagent`。服务在 `dataagent/server/`，内置插件在 `dataagent/plugins/`，宿主提示词模板在 `dataagent/assembly/prompts/`。命令入口为 `dataagent = dataagent.cli:main`。
@@ -56,7 +66,7 @@ wheel 只安装一个顶层包 `dataagent`。服务在 `dataagent/server/`，内
 datagallery_dataagent-0.3.0-py3-none-any.whl
 ```
 
-## 3. 完成改造后的一键出包
+## 3. Web/TUI 合包后的构建流程（设计）
 
 目标是在干净的发布 checkout 中执行：
 

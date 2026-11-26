@@ -63,7 +63,7 @@ START → <entry> → END
 
 入口节点不设置 `emit-messages` 或 `emit-tool-calls`。工厂拿到的是 `AgentContext` 缓存里的原模型，不改 `disable_streaming`。正文 token、工具调用和推理按模型 chunk 进入前端。节点返回的回复仍在最终 `MESSAGES_SNAPSHOT`。`STEP_STARTED` 和 `STEP_FINISHED` 仍会发出。
 
-会话 `outputs/` 仍传给工厂，结果文件落在这个会话目录。`dataagent.hooks`、调用上限和 `workspaces` 留在配置里，不装进这张图，也不因此报错。见 [入口模式](../extensions/subagents.md#入口模式)。错误入口不会让 `/healthz` 失败，响应里的 `entry` 仍是配置值。名字在插件工厂之前核对。`/api/v1/runs` 在第一次请求返回 HTTP 409。
+会话 `outputs/` 仍传给工厂，结果文件落在这个会话目录。`dataagent.hooks`、调用上限和 `input_workspaces` 留在配置里，不装进这张图，也不因此报错。见 [入口模式](../extensions/subagents.md#入口模式)。错误入口不会让 `/healthz` 失败，响应里的 `entry` 仍是配置值。名字在插件工厂之前核对。`/api/v1/runs` 在第一次请求返回 HTTP 409。
 
 ## 一轮的边界
 

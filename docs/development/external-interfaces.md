@@ -75,7 +75,7 @@
 | C1 | 端口已修。新增 `dataagent.server_listen`，降级启动时也读所选配置的 `server` 段。“缺少环境变量时 models 段降级、其他段退出”的差异已写进 `cli-and-environment.md`，行为未改，转为 P1 |
 | C2 | 已修。`.env.example`、`README.md`、`README_zh.md` 改为“网页上不能改模型”，并说明根 `.env` 覆盖 Home `.env`。根 `.env` 仍是文档推荐的模型配置位置，所以保留模型变量 |
 | C3 | 不处理。插件是示例，模型别名由用户在插件配置中指定 |
-| C4 | 已修。`configuration.md` 列全 `timeout_seconds` 的用途、补 `a2a` 行、写明 `output_root` 例外；`cli-and-environment.md` 增加 `history_sql` 命令、`DATAAGENT_HISTORY_SQL_CORPUS`，说明“进程环境”变量不读 `.env`，改正 `--user`、`--workspace`、`--session` 的说明 |
+| C4 | 已修。`configuration.md` 列全 `timeout_seconds` 的用途、补 `a2a` 行、写明 `output_root` 例外；`cli-and-environment.md` 增加 `history_sql` 命令、`DATAAGENT_HISTORY_SQL_CORPUS`，说明“进程环境”变量不读 `.env`，改正 `--user`、`--session` 的说明 |
 | 4.6 | 已修，见 4.6 节。`load_a2a_tools` 是内部函数，不导出 |
 
 ### 4.1.2 P1 处理结果（2026-11-14）
@@ -92,7 +92,7 @@
 | C5 | 已修。`serve-a2a` 的 `--host`、`--port` 默认读 `server.*` |
 | C6 | 已修。`--auth-token` 默认取 `DATAAGENT_A2A_AUTH_TOKEN` |
 | E3 | 已修（文档）。`hooks.md` 写明两种拒绝方式和工具 Hook 取上下文的方法 |
-| S5 | 已修，见 4.1.3：`LaunchOptions` 输入目录只留 `workspaces` |
+| S5 | 已修，见 4.1.3：默认输入目录由 YAML 的 `dataagent.input_workspaces` 指定 |
 | C8 | 关闭。名称保留，P0 已改正文档 |
 | C7 | 关闭。de-agent 的 `history_sql` 已是环境变量优先于配置，符合 R7 |
 | C1 剩余 | 已修，见 C1 行 |
@@ -112,7 +112,7 @@
 | A2A 服务端 | `dataagent.server.a2a` | `create_a2a_server`、`run_a2a_server` |
 
 - 低层建图函数命名为 `build_graph`，名字说明它返回 LangGraph 图。
-- `LaunchOptions` 只保留 `config`、`env_file`、`user_id`、`workspaces`、`cwd`、`init_home`、`session_id`；输入目录只有 `workspaces` 一种写法。
+- `LaunchOptions` 只保留 `config`、`env_file`、`user_id`、`cwd`、`init_home`、`session_id`；默认输入目录由所选 YAML 的 `dataagent.input_workspaces` 指定。
 - A2A 客户端和服务端按上表分别导入。
 - `dataagent/server/` 只从 `dataagent` 和 `dataagent.host` 导入，由 `test_layering.py` 检查；`test_public_sdk_exports_only_the_high_level_path` 固定三层的导出列表。
 - 文档：`python-api.md` 按三层重写，`create_agent` 只列 SDK 参数，宿主参数（`session`、`input_workspaces`、`extension_revision`）和 `Agent.graph`/`graph_for`/`as_agui` 归入宿主接口；`sdk.md` 删除低层图和扩展刷新两节；扩展与参考文档不再要求用户调用 `build_graph`、`load_extensions`、`refresh_extensions`。

@@ -1,6 +1,6 @@
-# 快速开始
+# 源码部署快速开始
 
-这篇文档面向第一次部署的用户。正式态有两条路径，启动后都是同一个控制面。网页和 TUI 是它的两种展示：
+本页介绍两种源码部署方式。已有 Server wheel 或 TUI npm 包时，可直接按 [DataAgent 包部署](guides/dataagent-package.md) 安装。
 
 | 路径 | 适用环境 | 入口 |
 | --- | --- | --- |
@@ -157,7 +157,7 @@ LLM_BASE_URL=https://your-openai-compatible-host/v1
 LLM_API_KEY=replace-with-your-key
 ```
 
-模型服务地址属于运行配置，与 npm / Python 下载源分开设置。服务可以在未配置模型时启动并提供页面；对话前需补齐模型配置，修改后重启服务。
+根目录 `.env.example` 标明了 Server 和 TUI 的手动运行配置。默认模型模板使用上面三项，其余按需填写或从启动终端导出。安装镜像在安装前按[工具准备步骤](#manual-prerequisites)从终端设置。服务可以在未配置模型时启动并提供页面；对话前需补齐模型配置，修改后重启服务。
 
 ### 4. 构建并启动（正式测试 / 真实生产相同）
 
@@ -210,6 +210,42 @@ curl -I http://127.0.0.1:3000/data-tasks
 ```
 
 如果配置了只读工作区，可以改问那个目录里有哪些文件。看到流式回复后，说明网页到控制面的链路已经跑通。数据库类问题只有在相应插件启用之后才有意义。
+
+<a id="connect-source-frontends"></a>
+
+## 源码前端连接已有 Server
+
+在前端源码目录准备 npm 依赖，并按需启动 Web 或 TUI。这里的 Server 可以来自源码部署，也可以是已经启动的 wheel 服务：
+
+```bash
+npm install --include=dev
+```
+
+启动 Web：
+
+```bash
+npm run build:web
+API_PROXY_TARGET=http://127.0.0.1:8790 npm run start:web
+```
+
+只需要源码版 TUI 时，构建 TUI 并显式指定 Server 地址：
+
+```bash
+npm run build:tui
+npm run start:tui -- --runtime-url http://127.0.0.1:8790
+```
+
+将地址换成从前端所在机器可访问的 Server 地址。
+
+## 源码 Server 使用编译型插件入口
+
+在 YAML 中启用插件并设置 `dataagent.entry`。内置 nl2sql 可用仓库的 `examples/nl2sql-entry.yaml`，先按示例准备模型、语义服务和 SQLite 文件，然后在仓库根目录运行：
+
+```bash
+uv run --no-sync dataagent serve --config examples/nl2sql-entry.yaml
+```
+
+另开终端，用上一节的显式地址连接。插件声明里的 `entrypoint` 写法和完整配置见 [使用编译型插件入口](guides/dataagent-package.md#compiled-entry)。
 
 ## 启动 TUI
 
@@ -312,7 +348,7 @@ curl http://127.0.0.1:8790/ready
 
 ### 模型读不到本机目录
 
-- 控制面没有数据源注册。把目录写进 `dataagent.workspaces`，或启动时传 `--workspace`。
+- 控制面没有数据源注册。把目录写进 `dataagent.input_workspaces`。
 - 目录必须在启动前存在，并且进程可以读取和进入。
 - 新会话会把当时的目录列表写入 `sessions.sqlite` 的 `session_bindings`。改列表后要开新会话。
 

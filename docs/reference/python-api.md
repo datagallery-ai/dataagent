@@ -36,7 +36,7 @@
 ```python
 from dataagent import LaunchOptions, create_agent, prepare_runtime
 
-runtime = prepare_runtime(LaunchOptions(workspaces=("/existing/data",)))
+runtime = prepare_runtime(LaunchOptions(config="/path/to/config.yaml"))
 async with create_agent(runtime, checkpointer=checkpointer) as agent:
     result = await agent.ainvoke(
         {"messages": [("user", "Summarize 1, 2, 3")]},
@@ -53,10 +53,9 @@ async with create_agent(runtime, checkpointer=checkpointer) as agent:
 | `config` | `None` | 配置文件。省略时读 Home `config.yaml` |
 | `env_file` | `None` | 环境文件。设置后用这一份代替 Home `.env` |
 | `user_id` | `"default"` | 本地用户 ID，决定 `runtime/users/<user>/` |
-| `workspaces` | `()` | 只读输入目录 |
 | `cwd` | `Path.cwd()` | 相对路径的基准 |
 | `init_home` | `False` | `True` 时创建 Home 模板，不覆盖已有文件 |
-| `session_id` | `None` | 宿主用：沿用该会话创建时记录的输入目录。不选择对话；对话由调用时的 `thread_id` 决定 |
+| `session_id` | `None` | 宿主用：检查会话属于当前用户。打开会话时使用已保存的输入目录，对话由调用时的 `thread_id` 决定 |
 
 ### `create_agent`
 
