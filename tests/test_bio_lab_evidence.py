@@ -210,3 +210,28 @@ def test_recovered_tools_do_not_override_write_verdict():
 
     assert verdict(failed + recovered) == "passed"
     assert verdict(failed) == "requires_manual_review"
+
+
+@pytest.mark.parametrize("answer_matches", [True, False])
+@pytest.mark.parametrize("effect_matches", [True, False])
+@pytest.mark.parametrize("key", ["TC-W02", "TC-W04"])
+def test_creation_case_main_verdict(key, answer_matches, effect_matches, monkeypatch):
+    fixtures = replay.load_cases()
+    db = replay.FIXTURES / "data/bio_lab.sqlite"
+    rule = replay.rule_for(fixtures, key)
+    answer = (
+        " ".join(group[0] for group in rule["required_any_term_groups"]) if answer_matches else ""
+    )
+    effect = {"kind": fixtures.TCW_DB_EFFECT_ASSERTIONS[key]["kind"], "matched": effect_matches}
+    monkeypatch.setattr(replay, "capture_write_effects", lambda *_: effect)
+    result = replay.evaluate_write_case(fixtures, key, {}, db, "", answer, [], [])
+    answer_status = "passed" if answer_matches else "non_blocking_answer_assertion_failed"
+    assert result["answer_assertion"]["status"] == answer_status
+    assert result["db_effect"]["matched"] == effect_matches
+    expected = answer_status
+    if not effect_matches:
+        if key == "TC-W02":
+            expected = "failed"
+        elif answer_matches:
+            expected = "non_blocking_db_assertion_failed"
+    assert result["status"] == expected

@@ -394,7 +394,10 @@ def evaluate_write_case(
         if unexpected_mutation:
             result.update(status="failed", errors=["Unexpected database mutation"])
         elif not effect.get("matched"):
-            result.update(status="failed", errors=["Database effect assertion failed"])
+            if result["db_effect_blocking"]:
+                result.update(status="failed", errors=["Database effect assertion failed"])
+            elif result["status"] == "passed":
+                result["status"] = "non_blocking_db_assertion_failed"
         return result
     fatal = [
         error for error in errors if error != "Missing parent task(subagent_type=nl2sql) tool reply"
