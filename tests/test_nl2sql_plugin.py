@@ -25,11 +25,14 @@ import json
 import sqlite3
 import sys
 from pathlib import Path
+from unittest.mock import AsyncMock
 
 import httpx
+import mcp
 import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
+from mcp.client import streamable_http
 
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from dataagent.client import create_agent
@@ -684,6 +687,92 @@ def test_connection_config_strips_reserved_database_keys():
         }
     )
     assert config.connection_config() == {"path": "/tmp/staff.db"}
+
+
+MCP_DATABASE = {"engine": "mcp", "dialect": "mysql", "path": "http://mcp.invalid/mcp"}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "remove", "message"),
+    [
+        ({}, ("path",), "path"),
+        ({"unknown": True}, (), "unknown"),
+        ({"path": 42}, (), "database.path"),
+        ({"read_tool": None}, (), "database.read_tool"),
+        ({"timeout": "30"}, (), "database.timeout"),
+        ({"timeout": True}, (), "database.timeout"),
+        ({"explain_prefix": []}, (), "database.explain_prefix"),
+    ],
+)
+def test_mcp_database_config_rejects_invalid_parameters(overrides, remove, message):
+    from nl2sql.config_manager import NL2SQLConfig
+
+    database = {key: value for key, value in MCP_DATABASE.items() if key not in remove}
+    database.update(overrides)
+    with pytest.raises(ValueError, match=message):
+        NL2SQLConfig({"model": "primary", "database": database})
+
+
+@pytest.fixture
+def mcp_backend(monkeypatch):
+    session, transport = AsyncMock(), AsyncMock()
+    monkeypatch.setattr(httpx, "AsyncClient", lambda **kwargs: AsyncMock())
+    session.__aenter__.return_value = session
+    transport.__aenter__.return_value = (None, None, None)
+    session.list_tools.return_value = mcp.types.ListToolsResult(
+        tools=[mcp.types.Tool(name="dme_read_query", inputSchema={})]
+    )
+    monkeypatch.setattr(mcp, "ClientSession", lambda *args, **kwargs: session)
+    monkeypatch.setattr(streamable_http, "streamable_http_client", lambda *a, **kw: transport)
+    return session
+
+
+async def test_mcp_compiled_query(tmp_path, mcp_backend):
+    mcp_backend.call_tool.return_value = mcp.types.CallToolResult(
+        content=[], structuredContent={"columns": ["n"], "rows": [{"n": 1}]}
+    )
+    payload, _ = await _run_task(tmp_path, params={"database": MCP_DATABASE})
+    assert payload["rows_preview"] == [[1]] and payload["error"] is None
+    queries = [call.args[1]["query"] for call in mcp_backend.call_tool.await_args_list]
+    assert queries == [f"EXPLAIN PLAN FOR {EXPECTED_SQL}", EXPECTED_SQL]
+
+
+async def test_mcp_row_preserves_explicit_null(tmp_path, mcp_backend):
+    mcp_backend.call_tool.return_value = mcp.types.CallToolResult(
+        content=[], structuredContent={"columns": ["n"], "rows": [{"n": None}]}
+    )
+    payload, _ = await _run_task(tmp_path, params={"database": MCP_DATABASE})
+    assert payload["rows_preview"] == [[None]] and payload["error"] is None
+
+
+async def test_mcp_row_missing_column_is_infrastructure_error(tmp_path, mcp_backend):
+    mcp_backend.call_tool.return_value = mcp.types.CallToolResult(
+        content=[], structuredContent={"columns": ["n"], "rows": [{"N": 1}]}
+    )
+    params = {"database": MCP_DATABASE, "validator": {"db_explain": False}}
+    payload, _ = await _run_task(tmp_path, params=params)
+    assert payload["source"] == "tool"
+    assert "MCP SQL row missing column: 'n'" in payload["error"]
+
+
+@pytest.mark.parametrize("stage", ["query", "session", "metadata"])
+async def test_mcp_errors_reach_the_correct_layer(tmp_path, mcp_backend, stage):
+    from nl2sql.utils import sql_service
+
+    message = "Session terminated" if stage == "session" else "SQL rejected"
+    error = mcp.shared.exceptions.McpError(
+        mcp.types.ErrorData(code=32600 if stage == "session" else -32603, message=message)
+    )
+    getattr(mcp_backend, "list_tools" if stage == "metadata" else "call_tool").side_effect = error
+    if stage == "query":
+        service = sql_service.build_sql_service("mcp", {"path": MCP_DATABASE["path"]})
+        assert await asyncio.to_thread(service.explain, "SELECT 1") == message
+        assert mcp_backend.call_tool.await_count == 1
+    else:
+        params = {"database": MCP_DATABASE, "validator": {"db_explain": stage == "metadata"}}
+        payload, _ = await _run_task(tmp_path, params=params)
+        assert payload["source"] == "tool" and message in payload["error"]
+        assert mcp_backend.call_tool.await_count == (0 if stage == "metadata" else 1)
 
 
 # --------------------------------------------------------------------------- helpers

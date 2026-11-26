@@ -25,6 +25,7 @@ from typing import Any
 
 from dataagent import read_yaml
 from nl2sql.constants import DEFAULT_NL2SQL_MODEL_CALL_BUDGET, DEFAULT_NL2SQL_PARSE_RETRIES
+from nl2sql.utils.sql_service import MCPConfig
 
 _NODE_ORDER = ("perceptor", "generator", "validator", "reflector", "executor", "selector")
 
@@ -113,6 +114,15 @@ class NL2SQLConfig:
         for key in ("db_id", "engine"):
             if key in database and not isinstance(database.get(key), str):
                 raise ValueError(f"database.{key} must be a string, got {database.get(key)!r}")
+
+        if (database.get("engine") or dialect) == "mcp":
+            connection = {
+                key: value for key, value in database.items() if key not in _CONNECTION_RESERVED
+            }
+            try:
+                MCPConfig(**connection)
+            except TypeError as exc:
+                raise ValueError(f"Invalid MCP database configuration: {exc}") from exc
 
         for section in ("bird-validator", *_NODE_ORDER):
             if section in raw and not isinstance(raw.get(section), Mapping):

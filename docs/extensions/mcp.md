@@ -54,3 +54,12 @@ agent = create_agent(runtime, mcp_tools=await load_mcp_tools(runtime))
 没有 MCP 配置时不必调用。配置了却没把工具传给 `create_agent` 时，`create_agent` 立即报错。
 
 每次工具调用都会打开并关闭一次 MCP 会话。stdio 服务因此在每次调用时启动。需要跨调用保留的数据，请放在文件或外部服务中。
+
+## NL2SQL 插件的 MCP SQL 连接
+
+NL2SQL 的 `engine: mcp` 是插件私有的 SQL transport。插件通过
+`plugins.config.nl2sql.database.path` 配置的 endpoint 直接调用读取工具执行查询和
+`EXPLAIN`，模型无需选择工具。配置示例见 [NL2SQL 插件](../../dataagent/plugins/nl2sql/README.md)。
+
+`.mcp.json` 的连接配置、认证 headers、工具发现及工具级 Hook 和计数仅适用于宿主
+MCP 工具路径。NL2SQL 插件按自己的数据库配置建立连接并发现读取工具。

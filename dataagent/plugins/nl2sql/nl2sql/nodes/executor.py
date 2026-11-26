@@ -19,7 +19,7 @@ from nl2sql.errors import DataAgentError
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.state import NL2SQLState
 from nl2sql.utils.nl2sql_utils import truncate
-from nl2sql.utils.sql_service import build_sql_service
+from nl2sql.utils.sql_service import MCPInfrastructureError, build_sql_service
 
 logger = logging.getLogger(__name__)
 
@@ -76,6 +76,8 @@ class ExecutorNode(BaseNL2SQLNode):
             for sql in sqls:
                 try:
                     outputs.append(service.execute(sql, limit=limit))
+                except MCPInfrastructureError:
+                    raise
                 except Exception as e:
                     outputs.append((None, None, _candidate_error_text(e)))
         return outputs
