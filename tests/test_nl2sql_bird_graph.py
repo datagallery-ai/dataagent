@@ -145,13 +145,17 @@ def test_incompatible_bird_config_is_rejected(override):
         NL2SQLConfig({"model": "m", "database": {"dialect": "sqlite"}, "nodes": NODES, **override})
 
 
-async def test_secure_bird_rejects_unapproved_sql_before_execution(tmp_path, monkeypatch):
+@pytest.mark.parametrize("security_enabled", [None, False, True], ids=["default", "off", "on"])
+async def test_bird_sql_security_switch_before_execution(tmp_path, monkeypatch, security_enabled):
     db, schema = _sqlite_fixture(tmp_path)
     # Exists in the database but is absent from the allowed schema.
     with sqlite3.connect(db) as conn:
         conn.execute("CREATE TABLE unapproved_table (salary REAL)")
+        conn.execute("INSERT INTO unapproved_table VALUES (7.0)")
     params = bird_config(db, schema)
-    params["bird-validator"] = {"sql_security_enabled": True, "repair_attempts": 1}
+    params["bird-validator"] = {"repair_attempts": 1}
+    if security_enabled is not None:
+        params["bird-validator"]["sql_security_enabled"] = security_enabled
     params["selector"] = {"shortcut": 1}
     runtime = bird_runtime(tmp_path, params)
 
@@ -164,20 +168,24 @@ async def test_secure_bird_rejects_unapproved_sql_before_execution(tmp_path, mon
         return conn
 
     monkeypatch.setattr(sqlite3, "connect", traced_connect)
-    sql = "SELECT salary FROM unapproved_table"
-    model = ScriptedModel(
-        responses=[
-            AIMessage(content=f"```sql\n{sql}\n```"),
-            *[AIMessage(content=f"<result>{sql}</result>") for _ in range(4)],
-        ]
-    )
+    sql = "SELECT salary FROM unapproved_table WHERE salary > 0"
+    responses = [AIMessage(content=f"```sql\n{sql}\n```")]
+    if security_enabled:
+        responses.extend(AIMessage(content=f"<result>{sql}</result>") for _ in range(4))
+    model = ScriptedModel(responses=responses)
     async with create_agent(runtime, model=model) as agent:
         state = await agent.ainvoke({"messages": [HumanMessage(content="Show salaries")]})
     payload = json.loads(state["messages"][-1].content)
-    assert payload["source"] == "constraint"
-    assert "sql" not in payload
-    assert not any("unapproved_table" in stmt for stmt in statements)
-    assert not list(runtime.paths.output_root.rglob("*.csv"))
+    candidate_executed = any("unapproved_table" in stmt for stmt in statements)
+    if security_enabled:
+        assert payload["source"] == "constraint"
+        assert "sql" not in payload
+        assert not candidate_executed
+        assert not list(runtime.paths.output_root.rglob("*.csv"))
+    else:
+        assert candidate_executed
+        assert payload["sql"] == sql
+        assert payload["row_count"] == 1
 
 
 async def test_host_passes_provider_thinking_options_to_repair_prompt(tmp_path):

@@ -12,7 +12,7 @@ from pathlib import Path
 
 from langchain_core.messages import HumanMessage, SystemMessage
 
-from nl2sql_local.tools.database import configuration
+from nl2sql_react.tools.database import configuration
 
 STOP = frozenset(
     "a an the is are was were be been of in on at to for from by with and or as it its their that which what who please give list provide".split()

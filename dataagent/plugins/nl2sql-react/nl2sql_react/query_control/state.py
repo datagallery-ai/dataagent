@@ -9,7 +9,7 @@ from typing import Literal
 from langchain_core.messages import HumanMessage, ToolMessage
 from pydantic import Field
 
-from nl2sql_local.models import StrictModel
+from nl2sql_react.models import StrictModel
 
 KEY = "nl2sql_query_control"
 PREFIX = "nl2sql-react__"

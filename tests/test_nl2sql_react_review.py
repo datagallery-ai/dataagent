@@ -14,7 +14,7 @@ PLUGIN = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
 
 
 def test_review_sql_identity_includes_explicit_cte_columns():
-    sql_key = PythonLoader().load(PLUGIN, "nl2sql_local/tools/review.py:sql_key")
+    sql_key = PythonLoader().load(PLUGIN, "nl2sql_react/tools/review.py:sql_key")
     first = "WITH p(total) AS (SELECT amount FROM payments) SELECT * FROM p"
     second = "WITH p(other_total) AS (SELECT amount FROM payments) SELECT * FROM p"
     assert sql_key(first) != sql_key(second)
@@ -24,8 +24,8 @@ def test_review_sql_identity_includes_explicit_cte_columns():
 @pytest.mark.parametrize("mode", ["critique", "independent"])
 async def test_review_keeps_original_evidence_and_has_one_review_allowance(failure, mode):
     loader = PythonLoader()
-    tool = loader.load(PLUGIN, "nl2sql_local/tools/review.py:review_query")
-    contract_type = loader.load(PLUGIN, "nl2sql_local/query_control/state.py:QueryContract")
+    tool = loader.load(PLUGIN, "nl2sql_react/tools/review.py:review_query")
+    contract_type = loader.load(PLUGIN, "nl2sql_react/query_control/state.py:QueryContract")
     contract = contract_type(
         metric="Rate", grain="Per school", numerator="free", denominator="enrollment", joins=[]
     )

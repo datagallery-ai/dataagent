@@ -8,10 +8,10 @@ from types import SimpleNamespace
 import pytest
 from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, ToolMessage
-from test_nl2sql_local import CONTRACT, SCHEMA_ISSUE, SelectingModel
-from test_nl2sql_local import local_db as local_db  # noqa: F401
-from test_nl2sql_local_control import PREFIX, run, sql
-from test_nl2sql_local_lint_delivery import configured, saved_metadata
+from test_nl2sql_react import CONTRACT, SCHEMA_ISSUE, SelectingModel
+from test_nl2sql_react import local_db as local_db  # noqa: F401
+from test_nl2sql_react_control import PREFIX, run, sql
+from test_nl2sql_react_lint_delivery import configured, saved_metadata
 
 from dataagent import create_agent
 from dataagent.extensions.loading import PythonLoader
@@ -76,7 +76,7 @@ def enabled(tmp_path, **options):
 
 def test_ver4_defaults_enable_integrated_features():
     plugin = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
-    config = PythonLoader().load(plugin, "nl2sql_local/tools/database.py:Config")(
+    config = PythonLoader().load(plugin, "nl2sql_react/tools/database.py:Config")(
         database={"path": "/unused.sqlite", "db_id": "fixture"}
     )
     assert (

@@ -34,6 +34,7 @@ from conftest import ScriptedModel, call
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage, ToolMessage
 from mcp.client import streamable_http
 
+from dataagent import DataAgentError, build_sql_service
 from dataagent.bootstrap import LaunchOptions, prepare_runtime
 from dataagent.client import create_agent
 from dataagent.config.settings import Settings
@@ -64,26 +65,30 @@ _PLUGIN_RESPONSES = [
 
 
 @pytest.mark.parametrize(
-    "engine,requirement",
+    "engine,driver,requirement",
     [
-        ("mysql", "datagallery-dataagent"),
-        ("gaussvector", "datagallery-dataagent"),
-        ("hive", "datagallery-dataagent[spark]"),
-        ("spark", "datagallery-dataagent[spark]"),
+        ("mysql", "pymysql", "datagallery-dataagent"),
+        ("gaussvector", "psycopg2", "datagallery-dataagent"),
+        ("hive", "pyspark", "datagallery-dataagent[spark]"),
+        ("spark", "pyspark", "datagallery-dataagent[spark]"),
     ],
 )
-def test_missing_driver_identifies_required_installation(monkeypatch, engine, requirement):
-    from nl2sql.utils import sql_service
-
-    def missing_driver(name):
-        raise ModuleNotFoundError(name)
-
-    monkeypatch.setattr(sql_service.importlib, "import_module", missing_driver)
-    with pytest.raises(sql_service.DataAgentError) as error:
-        sql_service.check_engine_driver(engine)
+def test_missing_driver_identifies_required_installation(monkeypatch, engine, driver, requirement):
+    monkeypatch.setitem(sys.modules, driver, None)
+    params = {"model": "primary", "database": {"dialect": engine, "engine": engine}}
+    model = ScriptedModel(responses=[])
+    with pytest.raises(DataAgentError) as error:
+        _compile(params, model)
     assert error.value.fact.endswith(f"请在运行环境安装 {requirement}")
+    assert error.value.source == "config" and error.value.component == "nl2sql"
     assert ("可选依赖" in error.value.fact) == (engine in {"hive", "spark"})
-    sql_service.check_engine_driver("sqlite")
+    # SQL-only assembly needs no database driver. EXPLAIN alone needs one.
+    params["nodes"] = ["perceptor", "generator"]
+    assert _compile(params, model)["subagents"][0]["name"] == "nl2sql"
+    params["nodes"].append("validator")
+    params["validator"] = {"db_explain": True}
+    with pytest.raises(DataAgentError, match="请在运行环境安装"):
+        _compile(params, model)
 
 
 async def test_task_end_to_end_on_sqlite(tmp_path):
@@ -185,6 +190,30 @@ async def test_sql_security_check_runs_in_the_compiled_plugin(tmp_path):
 
     assert payload["sql"] == secured_sql
     assert payload["error"] is None
+
+
+@pytest.mark.parametrize("security_enabled", [None, False, True], ids=["default", "off", "on"])
+async def test_sql_security_switch_in_delegated_workflow(tmp_path, security_enabled):
+    sql = "SELECT salary FROM employees"
+    validator = {"semantic_check": False}
+    if security_enabled is not None:
+        validator["sql_security_enabled"] = security_enabled
+    payload, _ = await _run_task(
+        tmp_path,
+        params={
+            "validator": validator,
+            "reflector": {"ref_retries": 0},
+            "selector": {"shortcut": 1},
+        },
+        plugin_responses=[AIMessage(content=f"```sql\n{sql}\n```")],
+    )
+
+    if security_enabled:
+        assert payload["source"] == "constraint"
+        assert "RESOURCE-009" in payload["error"]
+    else:
+        assert payload["sql"] == sql
+        assert payload["row_count"] == 7
 
 
 async def test_native_stream_reports_nl2sql_steps_while_model_is_waiting(tmp_path):
@@ -337,6 +366,21 @@ async def test_failed_execution_writes_no_result_file(tmp_path):
     assert payload["error"]
     assert "result_file" not in payload
     assert not (outputs / "nl2sql").exists()
+
+
+async def test_factory_error_preserves_the_structured_task_reply(tmp_path):
+    payload, _ = await _run_task(
+        tmp_path,
+        params={
+            "database": {"dialect": "sqlite", "engine": "unsupported"},
+            "validator": {"db_explain": False},
+        },
+    )
+    assert payload == {
+        "error": "Unsupported database engine: unsupported",
+        "source": "tool",
+        "component": "nl2sql",
+    }
 
 
 async def test_model_call_budget_surfaces_as_error_reply(tmp_path):
@@ -757,15 +801,13 @@ async def test_mcp_row_missing_column_is_infrastructure_error(tmp_path, mcp_back
 
 @pytest.mark.parametrize("stage", ["query", "session", "metadata"])
 async def test_mcp_errors_reach_the_correct_layer(tmp_path, mcp_backend, stage):
-    from nl2sql.utils import sql_service
-
     message = "Session terminated" if stage == "session" else "SQL rejected"
     error = mcp.shared.exceptions.McpError(
         mcp.types.ErrorData(code=32600 if stage == "session" else -32603, message=message)
     )
     getattr(mcp_backend, "list_tools" if stage == "metadata" else "call_tool").side_effect = error
     if stage == "query":
-        service = sql_service.build_sql_service("mcp", {"path": MCP_DATABASE["path"]})
+        service = build_sql_service("mcp", {"path": MCP_DATABASE["path"]})
         assert await asyncio.to_thread(service.explain, "SELECT 1") == message
         assert mcp_backend.call_tool.await_count == 1
     else:

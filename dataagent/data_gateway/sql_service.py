@@ -1,4 +1,4 @@
-"""SQLite metadata and bounded read-only extensions over the existing NL2SQL driver."""
+"""Database service factory and SQLite metadata and read-only operations."""
 
 import contextlib
 import csv
@@ -9,21 +9,28 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from dataagent.bootstrap.paths import builtin_plugins_path
-from dataagent.extensions.loading import PythonLoader
-
-# Cross-plugin imports use the existing loader's isolated namespace. This loads
-# the legacy library, never enables its agent or adds its routing prompt.
-_legacy_root = builtin_plugins_path() / "nl2sql"
-_loader = PythonLoader()
-LegacySQLiteService = _loader.load(_legacy_root, "nl2sql/utils/sql_service.py:SQLiteService")
-LegacySQLiteConfig = _loader.load(_legacy_root, "nl2sql/utils/sql_service.py:SQLiteConfig")
-DEFAULT_SQLITE_TIMEOUT = LegacySQLiteService.TIME_OUT
-DEFAULT_SQLITE_PROGRESS_INTERVAL = 10_000
+from ._sql_drivers import (
+    DEFAULT_SQLITE_PROGRESS_INTERVAL,
+    GaussVectorConfig,
+    GaussVectorService,
+    MCPConfig,
+    MCPInfrastructureError,
+    MySQLConfig,
+    MySQLService,
+    SparkConfig,
+    SparkService,
+    SqlService,
+)
+from ._sql_drivers import (
+    SQLiteConfig as SQLiteDriverConfig,
+)
+from ._sql_drivers import (
+    SQLiteService as SQLiteDriver,
+)
 
 
 @dataclass
-class SQLiteConfig(LegacySQLiteConfig):
+class SQLiteConfig(SQLiteDriverConfig):
     descriptions_dir: str | None = None
 
 
@@ -31,9 +38,7 @@ class UnknownTableError(ValueError):
     code = "unknown_table"
 
 
-class SQLiteService(LegacySQLiteService):
-    TIME_OUT = DEFAULT_SQLITE_TIMEOUT
-
+class SQLiteService(SQLiteDriver):
     def __init__(
         self,
         config: SQLiteConfig,
@@ -42,8 +47,6 @@ class SQLiteService(LegacySQLiteService):
         cancelled: Callable[[], bool] | None = None,
     ):
         super().__init__(config)
-        self.config = config
-        self._database_path = config.path
         if not isinstance(config.path, str) or not config.path.strip():
             raise ValueError("database.path is required for SQLite")
         if timeout_seconds is not None and timeout_seconds <= 0:
@@ -54,25 +57,26 @@ class SQLiteService(LegacySQLiteService):
         self._cancelled = cancelled or (lambda: False)
 
     def _remaining_time(self) -> float:
-        remaining = (
-            self._deadline - time.monotonic() if self._deadline is not None else self.TIME_OUT
-        )
-        if remaining <= 0 or self._cancelled():
+        if self._cancelled():
+            raise TimeoutError("SQLite execution deadline exceeded or cancelled")
+        if self._deadline is None:
+            # The per-query limit is enforced by SQLite's progress callback.
+            return self.TIME_OUT
+        remaining = self._deadline - time.monotonic()
+        if remaining <= 0:
             raise TimeoutError("SQLite execution deadline exceeded or cancelled")
         return remaining
 
     def _get_conn(self):
-        # Keep the old driver's connection lifecycle while preserving URI escaping,
-        # configurable deadlines and cancellation from ver6.1.
         if self._conn is not None:
             return self._conn
         remaining = self._remaining_time()
-        self.config.path = (
-            Path(self._database_path).expanduser().resolve().as_uri().removeprefix("file:")
-        )
         conn = super()._get_conn()
         conn.execute(f"PRAGMA busy_timeout = {int(min(5.0, remaining) * 1000)}")
         return conn
+
+    def _connection_path(self) -> str:
+        return Path(self.config.path).expanduser().resolve().as_uri().removeprefix("file:")
 
     def _before_execute(self, conn):
         deadline = time.monotonic() + self._remaining_time()
@@ -276,15 +280,6 @@ class SQLiteService(LegacySQLiteService):
             "ddl": entry["sql"] or "",
         }
 
-    def _handle_explain_error(self, e: Exception) -> str:
-        import sqlite3
-
-        if isinstance(e, sqlite3.Error):
-            if "interrupted" in str(e):
-                return "Query timeout."
-            return str(e)
-        raise e
-
 
 def build_sql_service(
     engine: str,
@@ -292,9 +287,25 @@ def build_sql_service(
     *,
     timeout_seconds: float | None = None,
     cancelled: Callable[[], bool] | None = None,
-) -> SQLiteService:
-    if engine not in {"sqlite", "sqlite3"}:
-        raise ValueError("nl2sql-local currently supports SQLite only")
-    return SQLiteService(
-        SQLiteConfig(**config), timeout_seconds=timeout_seconds, cancelled=cancelled
-    )
+) -> SqlService:
+    """Construct a service. Metadata, explicit deadlines and cancellation are SQLite-only."""
+    if engine in {"sqlite", "sqlite3"}:
+        return SQLiteService(
+            SQLiteConfig(**config), timeout_seconds=timeout_seconds, cancelled=cancelled
+        )
+    if engine not in {"mysql", "gaussvector", "hive", "spark", "mcp"}:
+        raise ValueError(f"Unsupported database engine: {engine}")
+    if timeout_seconds is not None or cancelled is not None:
+        raise ValueError("Explicit deadlines and cancellation are supported only for SQLite")
+    if engine == "mysql":
+        return MySQLService(MySQLConfig(**config))
+    if engine == "gaussvector":
+        return GaussVectorService(GaussVectorConfig(**config))
+    if engine == "mcp":
+        from ._mcp_sql import MCPSqlService
+
+        try:
+            return MCPSqlService(MCPConfig(**config))
+        except (TypeError, ValueError) as exc:
+            raise MCPInfrastructureError(exc) from exc
+    return SparkService(SparkConfig(**config))

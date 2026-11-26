@@ -52,12 +52,11 @@ plugins:
 ## 配置与接口边界
 
 - `.plugin.yaml` 注册六个子代理工具与根级 `select_result`，加载路由与生命周期 Hook。
-- 内部 Python 模块统一放在 `nl2sql_local` 包下，避免与同进程的其他插件共享 `hooks`、`tools` 等导入名。
-- `nl2sql_local/tools/database.py` 校验插件内 database 参数，通过已有 `AgentContext` 读取插件配置；
+- 内部 Python 模块统一放在 `nl2sql_react` 包下，避免与同进程的其他插件共享 `hooks`、`tools` 等导入名。
+- `nl2sql_react/tools/database.py` 校验插件内 database 参数，通过已有 `AgentContext` 读取插件配置；
   不需要宿主顶层 `datasources` 或新增上下文方法。连接参数不暴露为模型工具参数。
-- `dataagent/data_gateway/` 保留公共 schema、SQL 静态检查和数据库执行能力。
-  SQLite 子类复用随包分发的原 NL2SQL 驱动，并补上元数据、只读限制、超时和取消。
-  它不会自动启用原 NL2SQL Agent；安装包须保留原插件的 SQL 服务文件。
+- `dataagent/data_gateway/` 提供公共 schema、SQL 静态检查和数据库执行能力。插件通过 SDK 的
+  `build_sql_service` 访问网关维护的 SQLite 驱动、元数据读取、只读限制、超时和取消。
 - `dataagent/db_explore/` 保留可复用的探索 Agent；使用原生 LangChain create_agent，
   调用方显式传入模型、数据库和预算。无需扩展宿主 core/graph。
 - Local、SQL reviewer 和数据库探索复用 `dataagent.model` 指定的宿主模型。
@@ -72,7 +71,7 @@ plugins:
 `sql_lint`、`projection_check`、`schema_prefetch`、`schema_prefetch_strategy`、
 `schema_sample_rows`、`schema_value_hints`、经哈希校验的 `examples` 等开关。
 设置 `user_sql_rules: sql_rules_bird` 可加载 [BIRD 补充规则](prompts/sql_rules_bird.md)。
-控制预算见 `nl2sql_local/query_control/state.py`，完整参数及默认值见 `nl2sql_local/tools/database.py`。
+控制预算见 `nl2sql_react/query_control/state.py`，完整参数及默认值见 `nl2sql_react/tools/database.py`。
 数据库探索默认预取不超过 8 张表的完整元数据，随后允许一轮工具调用。
 目录超过完整预取上限时，默认先提供表名，并为描述表和取值探查各留一轮。
 显式设置 `dbexplore.max_tool_rounds` 时，以该值为上限。

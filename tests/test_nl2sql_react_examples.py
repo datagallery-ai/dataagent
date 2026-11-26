@@ -42,7 +42,7 @@ def setup(tmp_path):
         "max_examples": 1,
     }
     loader = PythonLoader()
-    hook = loader.load(PLUGIN, "nl2sql_local/hooks/examples.py:prepare_examples")
+    hook = loader.load(PLUGIN, "nl2sql_react/hooks/examples.py:prepare_examples")
     context = SimpleNamespace(
         get_plugin_config=lambda _: {
             "database": {"path": "/unused.sqlite", "db_id": "current"},
@@ -98,6 +98,6 @@ async def test_identical_cross_database_question_is_excluded_with_evidence(tmp_p
 
 
 async def test_examples_default_disabled_without_files_or_models():
-    hook = PythonLoader().load(PLUGIN, "nl2sql_local/hooks/examples.py:prepare_examples")
+    hook = PythonLoader().load(PLUGIN, "nl2sql_react/hooks/examples.py:prepare_examples")
     context = SimpleNamespace(get_plugin_config=lambda _: {"database": {"path": "/unused.sqlite"}})
     assert await hook({}, SimpleNamespace(context=context), params={}) is None

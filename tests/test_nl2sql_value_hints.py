@@ -11,8 +11,8 @@ from dataagent.extensions.loading import PythonLoader
 def test_literal_hints_use_real_rows_and_preserve_quoted_identifiers(tmp_path):
     plugin = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
     loader = PythonLoader()
-    collect = loader.load(plugin, "nl2sql_local/hooks/value_hints.py:collect_hints")
-    config_type = loader.load(plugin, "nl2sql_local/tools/database.py:Config")
+    collect = loader.load(plugin, "nl2sql_react/hooks/value_hints.py:collect_hints")
+    config_type = loader.load(plugin, "nl2sql_react/tools/database.py:Config")
     path = tmp_path / "fixture.sqlite"
     injected = "x'); DROP TABLE decoy; --"
     with sqlite3.connect(path) as db:
@@ -67,7 +67,7 @@ def test_literal_hints_use_real_rows_and_preserve_quoted_identifiers(tmp_path):
 
 def test_literal_extraction_has_bounds_and_decodes_sql_quotes():
     plugin = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
-    parse = PythonLoader().load(plugin, "nl2sql_local/hooks/value_hints.py:literals")
+    parse = PythonLoader().load(plugin, "nl2sql_react/hooks/value_hints.py:literals")
     assert parse("name = 'Ancestor''s Chosen'; language = 'Korean'") == [
         "Ancestor's Chosen",
         "Korean",

@@ -5,21 +5,16 @@ import logging
 from dataclasses import dataclass, replace
 from typing import Any
 
-import sqlglot
 from langchain_core.messages import HumanMessage
-from sqlglot import exp
 
-from dataagent import collect_model_stream
+from dataagent import build_sql_service, check_read_only_sql, check_sql, collect_model_stream
 from nl2sql.constants import DEFAULT_NL2SQL_PREVIEW_LIMIT
 from nl2sql.errors import DataAgentError
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
 from nl2sql.nodes.checkers.base import DEFAULT_REPAIR_ATTEMPTS
 from nl2sql.nodes.checkers.checkers import DEFAULT_CHECKERS, RepairError, validate_sql
-from nl2sql.security import check_sql
-from nl2sql.security.checker import _check_read_only_structure
 from nl2sql.state import NL2SQLState, Result
 from nl2sql.utils.nl2sql_utils import truncate
-from nl2sql.utils.sql_service import build_sql_service
 
 logger = logging.getLogger(__name__)
 
@@ -79,30 +74,14 @@ class BirdValidatorNode(BaseNL2SQLNode):
 
     def _execute(self, sql: str, schema: dict) -> _Execution:
         if self.sql_security_enabled:
-            checked = check_sql(sql, dialect=self.dialect, schema=schema)
-            if checked.violations:
-                return _Execution(
-                    sql, None, None, "; ".join(v.message for v in checked.violations), True
-                )
-            sql = checked.normalized_sql or sql
+            checked = check_sql(sql, dialect=self.dialect, schema=schema, policy="nl2sql")
         else:
-            try:
-                statements = [
-                    s
-                    for s in sqlglot.parse(
-                        sql, read=self.dialect, error_level=sqlglot.ErrorLevel.RAISE
-                    )
-                    if s
-                ]
-            except sqlglot.errors.SqlglotError as exc:
-                return _Execution(sql, None, None, str(exc), True)
-            if len(statements) != 1 or not isinstance(
-                statements[0], (exp.Select, exp.Union, exp.Intersect, exp.Except)
-            ):
-                return _Execution(sql, None, None, "Only one read-only SELECT is allowed.", True)
-            violations = _check_read_only_structure(statements[0])
-            if violations:
-                return _Execution(sql, None, None, "; ".join(v.message for v in violations), True)
+            checked = check_read_only_sql(sql, dialect=self.dialect)
+        if checked.violations:
+            return _Execution(
+                sql, None, None, "; ".join(v.message for v in checked.violations), True
+            )
+        sql = checked.normalized_sql or sql
         with build_sql_service(self.engine, self._config.connection_config()) as service:
             columns, rows, error = service.execute(sql, limit=-1)
         if self.engine == "sqlite" and error == "interrupted":

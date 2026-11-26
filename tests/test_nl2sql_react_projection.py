@@ -4,16 +4,16 @@ from pathlib import Path
 
 from conftest import call
 from langchain_core.messages import AIMessage
-from test_nl2sql_local import CONTRACT, SelectingModel
-from test_nl2sql_local import local_db as local_db  # noqa: F401
-from test_nl2sql_local_control import PREFIX, run, sql
+from test_nl2sql_react import CONTRACT, SelectingModel
+from test_nl2sql_react import local_db as local_db  # noqa: F401
+from test_nl2sql_react_control import PREFIX, run, sql
 
 from dataagent.extensions.loading import PythonLoader
 
 PLUGIN = Path(__file__).resolve().parents[1] / "dataagent/plugins/nl2sql-react"
-projection = PythonLoader().load(PLUGIN, "nl2sql_local/hooks/projection.py:compare")
-names = PythonLoader().load(PLUGIN, "nl2sql_local/hooks/projection.py:projection_names")
-describe = PythonLoader().load(PLUGIN, "nl2sql_local/hooks/projection.py:describe")
+projection = PythonLoader().load(PLUGIN, "nl2sql_react/hooks/projection.py:compare")
+names = PythonLoader().load(PLUGIN, "nl2sql_react/hooks/projection.py:projection_names")
+describe = PythonLoader().load(PLUGIN, "nl2sql_react/hooks/projection.py:describe")
 
 
 def test_names_come_from_aliases_columns_and_order():

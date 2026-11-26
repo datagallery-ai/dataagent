@@ -34,7 +34,6 @@ from pathlib import Path
 
 import pytest
 import sqlglot
-from nl2sql.security import check_sql
 from nl2sql.state import Result, get_default_state
 from nl2sql.utils.nl2sql_utils import schema_to_ddl
 from scenarios.udn.common.dimension_join import (
@@ -49,6 +48,7 @@ from scenarios.udn.common.dimension_join import (
 )
 from sqlglot import exp
 
+from dataagent import check_sql
 from nl2sql_scenarios.support import scripted_model
 
 PACK_ROOT = (
@@ -218,10 +218,18 @@ async def test_rewrites_dimension_deterministically_and_augments_downstream_cont
     assert "## Dimension Lookup Schema" in results[0].prompt
     assert "dim_exp_county" in results[0].prompt
     assert (
-        check_sql(MECHANICAL_REWRITTEN, dialect="postgres", schema=state["schema"]).violations == []
+        check_sql(
+            MECHANICAL_REWRITTEN, dialect="postgres", schema=state["schema"], policy="nl2sql"
+        ).violations
+        == []
     )
     assert (
-        check_sql(MECHANICAL_REWRITTEN, dialect="postgres", schema=_fact_state()["schema"])
+        check_sql(
+            MECHANICAL_REWRITTEN,
+            dialect="postgres",
+            schema=_fact_state()["schema"],
+            policy="nl2sql",
+        )
         .violations[0]
         .rule_id
         == "SCHEMA-001"

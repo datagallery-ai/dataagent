@@ -13,17 +13,17 @@ filesystem_tools:
 - read_file
 hooks:
 - event: before_agent
-  entrypoint: nl2sql_local/hooks/sql_rules.py:prepare_sql_rules
+  entrypoint: nl2sql_react/hooks/sql_rules.py:prepare_sql_rules
 - event: before_agent
-  entrypoint: nl2sql_local/hooks/examples.py:prepare_examples
+  entrypoint: nl2sql_react/hooks/examples.py:prepare_examples
 - event: after_model
-  entrypoint: nl2sql_local/query_control/flow.py:after_model
+  entrypoint: nl2sql_react/query_control/flow.py:after_model
 - event: before_agent
-  entrypoint: nl2sql_local/hooks/context.py:prepare_context
+  entrypoint: nl2sql_react/hooks/context.py:prepare_context
 - event: before_tool
-  entrypoint: nl2sql_local/query_control/flow.py:before_tool
+  entrypoint: nl2sql_react/query_control/flow.py:before_tool
 - event: after_tool
-  entrypoint: nl2sql_local/query_control/flow.py:after_tool
+  entrypoint: nl2sql_react/query_control/flow.py:after_tool
 - event: after_agent
-  entrypoint: nl2sql_local/query_control/flow.py:after_agent
+  entrypoint: nl2sql_react/query_control/flow.py:after_agent
 system_prompt_file: prompts/agent.md

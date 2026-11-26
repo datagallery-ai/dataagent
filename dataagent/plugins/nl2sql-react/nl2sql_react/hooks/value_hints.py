@@ -4,7 +4,7 @@ import json
 import re
 import time
 
-from nl2sql_local.tools.database import _run
+from nl2sql_react.tools.database import _run
 
 
 def literals(question):

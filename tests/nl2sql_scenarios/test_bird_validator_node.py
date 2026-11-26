@@ -10,7 +10,8 @@ from nl2sql.config_manager import NL2SQLConfig
 from nl2sql.errors import DataAgentError
 from nl2sql.nodes.bird_validator import BirdValidatorNode
 from nl2sql.state import Result, get_default_state
-from nl2sql.utils.sql_service import SQLiteService
+
+from dataagent.data_gateway.sql_service import SQLiteService
 
 
 class Model:

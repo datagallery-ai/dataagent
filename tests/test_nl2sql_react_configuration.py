@@ -1,4 +1,4 @@
-"""Plugin-owned configuration and isolated reuse of the legacy NL2SQL driver."""
+"""Plugin-owned configuration and reuse of the shared database service."""
 
 import subprocess
 import sys
@@ -10,7 +10,7 @@ import yaml
 from conftest import ScriptedModel
 from langchain_core.messages import AIMessage
 
-from dataagent import LaunchOptions, create_agent, prepare_runtime
+from dataagent import LaunchOptions, build_sql_service, create_agent, prepare_runtime
 from dataagent.assembly.context import AgentContext
 from dataagent.extensions.loading import PythonLoader
 
@@ -49,7 +49,7 @@ def configured(tmp_path, *, database=None, enabled=True):
 def test_plugin_database_uses_existing_context_without_host_datasources(tmp_path):
     runtime = configured(tmp_path)
     context = AgentContext(runtime)
-    read = PythonLoader().load(PLUGIN, "nl2sql_local/tools/database.py:configuration")
+    read = PythonLoader().load(PLUGIN, "nl2sql_react/tools/database.py:configuration")
     config, source = read(context)
     assert not hasattr(runtime.settings, "datasources")
     assert not hasattr(context, "get_datasource")
@@ -61,7 +61,7 @@ def test_plugin_database_uses_existing_context_without_host_datasources(tmp_path
 
 def test_relative_database_path_is_rejected_instead_of_using_launch_directory(tmp_path):
     runtime = configured(tmp_path, database={"path": "./fixture.sqlite"})
-    read = PythonLoader().load(PLUGIN, "nl2sql_local/tools/database.py:configuration")
+    read = PythonLoader().load(PLUGIN, "nl2sql_react/tools/database.py:configuration")
     with pytest.raises(ValueError, match="absolute database path"):
         read(AgentContext(runtime))
 
@@ -69,7 +69,7 @@ def test_relative_database_path_is_rejected_instead_of_using_launch_directory(tm
 def test_local_diagnostics_redact_plugin_owned_connection(tmp_path):
     runtime = configured(tmp_path)
     context = AgentContext(runtime)
-    secrets = PythonLoader().load(PLUGIN, "nl2sql_local/tools/database.py:redaction_secrets")(
+    secrets = PythonLoader().load(PLUGIN, "nl2sql_react/tools/database.py:redaction_secrets")(
         context
     )
     assert str(tmp_path / "fixture.sqlite") in secrets
@@ -90,7 +90,7 @@ def test_local_example_loads_without_host_configuration_extensions(tmp_path, mon
             cwd=tmp_path, config=PLUGIN.parents[2] / "examples/nl2sql-react/config.example.yaml"
         )
     )
-    _, source = PythonLoader().load(PLUGIN, "nl2sql_local/tools/database.py:configuration")(
+    _, source = PythonLoader().load(PLUGIN, "nl2sql_react/tools/database.py:configuration")(
         AgentContext(runtime)
     )
     assert source["db_id"] == "fixture"
@@ -112,17 +112,12 @@ async def test_disabled_local_does_not_import_plugin_or_legacy_driver(tmp_path, 
     assert result["messages"][-1].content == "Original host behavior"
 
 
-def test_local_reuses_legacy_execute_and_preserves_special_database_paths(tmp_path):
+def test_local_preserves_special_database_paths(tmp_path):
     import sqlite3
 
     loader = PythonLoader()
-    from dataagent.data_gateway.sql_service import LegacySQLiteService as legacy
-    from dataagent.data_gateway.sql_service import SQLiteService as service_type
-
-    options = loader.load(PLUGIN, "nl2sql_local/tools/database.py:Config")
-    run = loader.load(PLUGIN, "nl2sql_local/tools/database.py:_run")
-    assert service_type.execute is legacy.execute
-    assert service_type.explain is legacy.explain
+    options = loader.load(PLUGIN, "nl2sql_react/tools/database.py:Config")
+    run = loader.load(PLUGIN, "nl2sql_react/tools/database.py:_run")
     path = tmp_path / "odd # % ? name.sqlite"
     with sqlite3.connect(path) as db:
         db.executescript("CREATE TABLE values_test(n INTEGER); INSERT INTO values_test VALUES(42)")
@@ -136,7 +131,7 @@ def test_local_reuses_legacy_execute_and_preserves_special_database_paths(tmp_pa
     assert result["rows"] == [[42]]
 
 
-def test_loading_legacy_library_does_not_enable_its_agent(tmp_path):
+def test_react_can_load_without_the_original_nl2sql_agent(tmp_path):
     from dataagent.assembly.graph import load_extensions
 
     runtime = configured(tmp_path)
@@ -173,7 +168,7 @@ assert "nl2sql-react__review_query" in {tool.name for tool in local["tools"]}
     assert result.returncode == 0, result.stderr
 
 
-def test_both_plugins_can_compile_without_changing_legacy_execute(tmp_path):
+def test_both_plugins_can_compile_and_use_the_shared_sqlite_driver(tmp_path):
     import sqlite3
 
     from dataagent.assembly.graph import load_extensions
@@ -193,17 +188,17 @@ def test_both_plugins_can_compile_without_changing_legacy_execute(tmp_path):
     compiled = load_extensions(runtime, model_resolver=context.get_model, context=context)
     assert {child["name"] for child in compiled["subagents"]} == {"nl2sql", "nl2sql-react"}
     assert {tool.name for tool in compiled["tools"]} == {"nl2sql-react__select_result"}
-    from dataagent.data_gateway.sql_service import LegacySQLiteConfig as legacy_config
-    from dataagent.data_gateway.sql_service import LegacySQLiteService as legacy
-    from dataagent.data_gateway.sql_service import SQLiteService as service
-
-    assert service.execute is legacy.execute
     database = tmp_path / "fixture.sqlite"
     with sqlite3.connect(database) as db:
-        db.executescript("CREATE TABLE original(n INTEGER); INSERT INTO original VALUES(7)")
-    with legacy(legacy_config(str(database))) as connection:
-        columns, rows, error = connection.execute("SELECT n FROM original", limit=10)
-    assert error is None and columns == ["n"] and rows == [(7,)]
+        db.executescript("CREATE TABLE original(n INTEGER); INSERT INTO original VALUES(7),(8),(9)")
+    with build_sql_service("sqlite", {"path": str(database)}) as service:
+        assert service.explain("SELECT n FROM original") is None
+        assert "no such column" in service.explain("SELECT missing FROM original")
+        assert "no such column" in service.execute("SELECT missing FROM original")[2]
+        query = "SELECT n FROM original ORDER BY n"
+        assert service.execute(query, limit=-1) == (["n"], [(7,), (8,), (9,)], None)
+        assert service.execute(query, limit=1) == (["n"], [(7,), (8,)], None)
+        assert service.execute(query + " LIMIT 0") == (["n"], [], None)
 
 
 def test_local_tools_use_the_public_runtime_without_registering_new_root_tools(tmp_path):
@@ -212,9 +207,9 @@ def test_local_tools_use_the_public_runtime_without_registering_new_root_tools(t
 
     loader = PythonLoader()
     assert (
-        loader.load(PLUGIN, "nl2sql_local/tools/database.py:build_sql_service") is build_sql_service
+        loader.load(PLUGIN, "nl2sql_react/tools/database.py:build_sql_service") is build_sql_service
     )
-    assert loader.load(PLUGIN, "nl2sql_local/tools/database.py:recall_database") is recall_database
+    assert loader.load(PLUGIN, "nl2sql_react/tools/database.py:recall_database") is recall_database
     runtime = configured(tmp_path, enabled=False)
     assert runtime.settings.plugins.enabled == ()
     assert not hasattr(runtime.settings, "datasources")

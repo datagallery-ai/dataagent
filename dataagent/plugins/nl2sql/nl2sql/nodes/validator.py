@@ -16,11 +16,10 @@ import logging
 import re
 from typing import Any
 
+from dataagent import MCPInfrastructureError, build_sql_service, check_sql
 from nl2sql.nodes.base_nl2sql_node import BaseNL2SQLNode
-from nl2sql.security import check_sql
 from nl2sql.state import NL2SQLState, Result
 from nl2sql.utils.nl2sql_utils import flatten_schema, metadata_parser
-from nl2sql.utils.sql_service import MCPInfrastructureError, build_sql_service
 
 logger = logging.getLogger(__name__)
 
@@ -95,7 +94,9 @@ class ValidatorNode(BaseNL2SQLNode):
         res = []
         for gr in gen_res:
             if self.sql_security_enabled:
-                security_result = check_sql(gr.sql, dialect=self.dialect, schema=schema)
+                security_result = check_sql(
+                    gr.sql, dialect=self.dialect, schema=schema, policy="nl2sql"
+                )
                 if security_result.normalized_sql is not None:
                     gr.sql = security_result.normalized_sql
                 gr.security_checked = True
