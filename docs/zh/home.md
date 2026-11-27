@@ -11,7 +11,7 @@ hide:
 
 # DataGallery
 
-企业级 Data Agent 工作台 —— 用统一语义读懂业务口径，在只读安全边界内执行多表、多步的复杂分析，每一步可审计、可回放，把一句提问变成一次可信的数据分析。
+本地 Data Agent 工作台。通过 Web 或 TUI 提问，结合已配置的插件与语义服务完成多步分析，并查看会话历史、产物和运行轨迹。
 
 </section>
 
@@ -28,8 +28,8 @@ hide:
 </div>
 
 <div class="df-proof" markdown>
-### 受控的数据边界
-默认只读 SQL、凭据隔离、字段脱敏、行数限制、超时和审计，比通用 coding agent 更适合真实企业数据环境。
+### 数据访问与执行边界
+输入工作区向 Agent 提供只读约定。文件工具和 shell 使用 Server 进程的操作系统权限。NL2SQL 的安全规则由插件配置决定。参见[安全说明](concepts/security.md)。
 </div>
 
 <div class="df-proof" markdown>
@@ -60,24 +60,17 @@ Web 工作台适合可视化复盘，TUI 适合 SSH 和终端工作流，API / A
 <div class="df-grid df-route-grid" markdown>
 
 <div class="df-card" markdown>
-### 本地试用
-启动控制面，在网页或 TUI 里完成第一次提问。
+### 使用与集成
+部署 DataAgent，使用 Web 或 TUI，或者通过 API、Python SDK 和扩展接入自己的系统。
 
-[开始快速体验](quick-start.md){ .df-card-action }
+[查看使用与集成文档](index.md){ .df-card-action }
 </div>
 
 <div class="df-card" markdown>
-### 理解系统
-一个控制面、两种展示、Home 目录和工作区。
+### 开发者文档
+搭建源码环境，了解架构，运行测试和构建发布制品。
 
-[查看架构概览](architecture/overview.md){ .df-card-action }
-</div>
-
-<div class="df-card" markdown>
-### 接入 API
-调用控制面的 `POST /api/v1/runs` 和会话接口。
-
-[查看 API 参考](reference/rest-api.md){ .df-card-action }
+[查看开发者文档](../development/index.md){ .df-card-action }
 </div>
 
 </div>

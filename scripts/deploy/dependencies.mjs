@@ -108,7 +108,7 @@ export async function ensureDependencies(options = {}) {
 
   if (missing.some(entry => entry.name === "uv")) {
     throw new Error(
-      "缺少 uv。请先将 uv 安装到 PATH 后重试；自定义下载源配置方法见 docs/zh/guides/mirror-deployment.md；官方安装说明：https://docs.astral.sh/uv/getting-started/installation/"
+      "缺少 uv。请先将 uv 安装到 PATH 后重试；自定义下载源配置方法见 docs/zh/guides/deploy-mirrors.md；官方安装说明：https://docs.astral.sh/uv/getting-started/installation/"
     );
   }
   const actions = new Set();

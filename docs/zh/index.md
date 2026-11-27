@@ -1,33 +1,15 @@
-# 用户指南
+# 使用与集成
 
-这是一个本地控制面，Web 和 TUI 是它的两种展示。
+从这里开始试用、部署和使用 DataAgent，或将它接入自己的系统。
 
-<div class="df-grid" markdown>
+| 我想要 | 从这里开始 |
+| --- | --- |
+| 完成第一次提问 | [快速开始](quick-start.md) |
+| 部署 DataAgent | [源码部署](guides/deploy-source.md)、[独立包部署](guides/deploy-packages.md)或[自定义镜像部署](guides/deploy-mirrors.md) |
+| 在工作台提问和查看结果 | [Web 工作台](guides/web.md)、[TUI](guides/tui.md)、[数据输入](guides/inputs.md)和[会话与产物](guides/sessions-and-outputs.md) |
+| 接入自己的应用 | [REST API](reference/rest-api.md)、[AG-UI 接入指南](reference/agent-runtime.md)、[A2A](reference/a2a.md)、[Python SDK](guides/integrate/sdk.md)、[扩展](guides/integrate/extensions/overview.md)和 [MCP](guides/integrate/extensions/mcp.md) |
+| 配置服务或排查故障 | [配置](reference/configuration-api.md)、[进阶配置](guides/configuration.md)、[配置字段](reference/configuration.md)和[故障排查](guides/troubleshooting.md) |
+| 了解支持的行为和安全边界 | [能力全览](concepts/capabilities.md)、[架构概览](concepts/architecture.md)和[安全说明](concepts/security.md) |
+| 查看使用场景或寻求帮助 | [场景案例](community/scenario-cases.md)和[社区](community/index.md) |
 
-<div class="df-card" markdown>
-<p class="df-card-title">产品概览</p>
-了解 DataAgent 的定位、适用场景和能力边界。
-
-[阅读概览](overview.md)
-</div>
-
-<div class="df-card" markdown>
-<p class="df-card-title">快速开始</p>
-写入模型密钥，在网页或 TUI 里完成第一次提问。
-
-[本地启动](quick-start.md)
-</div>
-
-</div>
-
-## 推荐体验路径
-
-1. 阅读 [产品概览](overview.md)，确认 DataAgent 解决的问题和能力边界。
-2. 按 [快速开始](quick-start.md)：Linux（包括 openEuler）推荐 `./deploy.sh`；Windows / macOS 可用手动 npm（`npm install` + `uv sync` → 配置 → `build` / `start`）。把模型密钥写入 `.env`，打开 `/data-tasks` 或 TUI 提问。
-3. 查看 [能力全览](capabilities.md)，了解 Web、TUI 和控制面实际提供的接口。
-4. 根据使用入口选择 [Web 工作台指南](guides/web-workbench.md) 或 [TUI 指南](guides/tui.md)。
-5. 需要让模型读本机目录时，阅读 [数据从哪里来](guides/data-sources.md)。
-
-## 文档边界
-
-这套文档面向产品试用、客户演示、开源访客和集成开发者。如果你是二次开发或集成方，请优先阅读 `API Reference` 和 `Developer Guide`。
+要修改 DataAgent 源码，请从[开发者文档](../development/index.md)开始。

@@ -1,6 +1,6 @@
 # Contributing
 
-Thanks for helping improve this project.
+Thanks for helping improve this project. See the [developer docs](docs/development/index.md) for setup, architecture, testing, and releases.
 
 ## Before You Start
 
@@ -10,29 +10,11 @@ Thanks for helping improve this project.
 
 ## Local Setup
 
-Use Node.js ≥22.12.0, uv, and Python 3.11 or 3.12. Install frontend dependencies with `npm install --include=dev` and prepare the Python development environment with `uv sync`. `npm run build` compiles the web app and TUI.
-
-```bash
-npm install --include=dev
-uv sync
-cp .env.example .env
-npm run build
-npm run start
-```
-
-Open the workbench at <http://127.0.0.1:3000/data-tasks>.
+Follow the [development setup guide](docs/development/setup.md) to install dependencies, run the source checkout, and debug a component.
 
 ## Verification
 
-Run the broad checks before opening a larger pull request:
-
-```bash
-npm run build
-npm run test:web
-npm run smoke:docs
-```
-
-For smaller changes, run the targeted script that matches the package you touched. The root `package.json` lists the available checks.
+Use the [testing guide](docs/development/testing.md) to select checks for the affected area. For changes to distribution artifacts, follow the [build and release guide](docs/development/release.md).
 
 ## Security And Data Hygiene
 
@@ -44,6 +26,8 @@ For smaller changes, run the targeted script that matches the package you touche
 ## Pull Request Checklist
 
 - The change is scoped to the issue or stated goal.
+- The description explains the scope and any compatibility, migration, or deployment impact.
+- The description lists the checks that were run.
 - Public docs are updated when behavior changes.
 - Relevant smoke checks pass locally.
 - No generated build output, local storage, or machine-specific files are included.

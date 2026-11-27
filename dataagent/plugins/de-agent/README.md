@@ -105,13 +105,6 @@ NL2SQL 上下文包含三个字段：`schema_str`（本次所选表的完整 sch
 
 ## 验证
 
-迁移快照的结果见 [迁移与验证说明](../../../docs/de-agent-migration.md)：
-2026-10-20 第 1–33 题评测全部完成，31 道 Agent 正常结束，32 道产出 DDL/INSERT；
-语义 Judge 为 21 PASS、10 PARTIAL、1 FAIL、1 UNKNOWN。31 道最终产物通过静态检查。
-第 2 题检索未收敛，第 13 题收尾达到步数上限，不能将其语义 PASS 计为完整成功。
-上述成绩对应基线 `4b61bdd3` 的冻结快照，不代表后续同步到 `ec489ce` 的全量成绩。
-同步后的检查另记于迁移说明；本轮没有执行 Hive SQL。
-
 配置与 Hook 契约：`uv run pytest tests/test_plugin_configuration.py -q`。
 
 真实 Agent 验收（真实 DeepSeek、真实语义后端，不使用 fake LLM）：
@@ -123,14 +116,6 @@ uv run pytest tests/test_de_agent_live.py -q
 ```
 
 该用例使用已存在的测试源表 `temp.tmp_dwd_adv_1688_intentions_crowd_ds`，只生成 SQL，不执行目标写入。
-
-2026-10-20 首版验收（基线 `deepagents_refactor_new@4b61bdd3`）：
-
-- 配置、编译、Hook、语义客户端配置相关检查：173 项通过；所有修改的 Python 文件通过 Ruff 格式与 lint 检查。
-- 真实 DeepSeek + 已部署语义服务：2 项通过。覆盖主 Agent 原生 task 全链路、实际 DDL/INSERT 文件、交付检查完成状态、两个并发 NL2SQL 会话隔离、缺少证据时返回失败。
-- 测试仅生成 SQL，没有执行 Hive 写入。加列与特征工程的完整业务案例尚未做端到端验收。
-- 测试中 semantic/retrieve 曾超时，表字段接口正常。检索错误以原生工具错误返回；明确来源表直接查 schema，未知来源的语义召回可用性仍取决于后端。
-
 
 ## 2026-11-24 main 同步
 

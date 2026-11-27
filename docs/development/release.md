@@ -1,60 +1,53 @@
-# 发布
+# 构建与发布
 
-发布前在仓库根目录执行：
+当前交付两个独立制品：Server wheel 和 TUI npm 包。Web 从源码构建并以当前 checkout 中的产物运行。已拿到制品时按[独立包部署](../zh/guides/deploy-packages.md)安装。
+
+## 构建制品 { #build-artifacts }
+
+需要 Python 3.11 或 3.12、uv 和 Node.js ≥22.12.0。在仓库根目录运行：
 
 ```bash
-npm install --include=dev
-uv sync
-uv run --no-sync ruff check .
-uv run --no-sync pytest -q
-npm run test:tui
-uv run --no-sync pytest -q -m 'tui and not live'
+make prepare PYTHON_VERSION=3.12
+make build PYTHON_VERSION=3.12
 ```
 
-持有模型凭据时，可额外运行带 `-m live` 的测试，见 [测试](testing.md)。
+`make prepare` 安装 npm 依赖并同步 Python 运行依赖。`make build` 调用 uv 构建 Server wheel，编译 Web 和 TUI，再由 [package-tui.mjs](../../scripts/package-tui.mjs) 打包 TUI。Web 项目源码部署时可单独执行 `npm run build:web`。
 
-## 构建流水线产物
+| 输出 | 内容与元数据 |
+| --- | --- |
+| `dist/server/*.whl` | Python 发行包 `datagallery-dataagent`。导入名和 CLI 为 `dataagent`，包内容和版本见 [pyproject.toml](../../pyproject.toml) |
+| `dist/tui/*.tgz` | npm 包 `@datagallery/tui`，入口为 `dataagent-cli` 和 `da`。版本见 [ui/tui/package.json](../../ui/tui/package.json) |
+| `ui/web/.next/` | Web 构建结果，留在源码目录运行 |
 
-在仓库根目录执行 `make prepare` 和 `make build PYTHON_VERSION=3.12`，归档 `dist/server/` 下的 Python wheel 和 `dist/tui/` 下的 TUI npm 包。Web 构建文件留在 `ui/web/.next/`。
-
-源码部署继续使用 `npm run build`。独立交付后的安装与连接见[包部署](../zh/guides/dataagent-package.md)。
-
-## 单独生成 Python 安装包
+只出 Server wheel 时，从仓库根运行：
 
 ```bash
 uv build --wheel --clear --out-dir dist/server
 ```
 
-发行包名为 `datagallery-dataagent`，导入名和 CLI 为 `dataagent`。版本来自 `pyproject.toml`。包包含 Server、Home 模板、提示词和内置插件。安装时通过包元数据解析运行依赖，可选择 `spark`、`video` 或 `all`。
+构建命令只生成文件，上传和分发由发布作业另行处理。记录对应的 Git 提交、版本和校验值，交付本次验收实际使用的文件。
 
-## 验证安装包与前端
+## 验收制品 { #verify-artifacts }
 
 ```bash
-make prepare
-make build
+make test
+uv run --no-sync ruff check .
 npm run smoke:dataagent-package
 ```
 
-验收脚本在仓库外安装本次构建的 wheel 和 TUI npm 包。它验证 CLI、插件资源、SDK、HTTP 和 A2A，并通过本地测试模型验证 Web 代理、TUI 安装后的启动入口、流式对话及错误处理。
+`make test` 的测试层级与凭据使用说明见[测试指南](testing.md)。[制品 smoke](../../scripts/smoke-dataagent-package.mjs) 使用已构建的 Web，并在仓库外安装本次 Server wheel 和 TUI tgz。它检查 CLI、内置资源、SDK、HTTP 和 A2A，并通过本地模型替身验证 Web 代理、TUI 连接与流式结果。
 
-缺少模型时，应为 `/healthz=200`、`/ready=503`；模型请求失败应产生 `RUN_ERROR`，不报告成功；后端停服时 Web 应返回 502，TUI 应明确报连接错误，不另起源码后端。外部模型与数据库服务仍需单独配置和验证。
+| 场景 | 预期 |
+| --- | --- |
+| 模型配置齐全 | 请求流收到回复并以完成事件结束 |
+| 上游模型调用失败 | AG-UI 以 `RUN_ERROR` 结束 |
+| Server 缺少模型配置 | `/healthz` 返回 200，`/ready` 和对话接口返回 503 |
+| Server 已停止 | Web 代理返回 502，TUI 报连接失败 |
 
-## 配置版本
+Smoke 使用本机模型替身。真实模型和数据库连接按交付环境另外验收。Python sdist、wheel 文件与安装资源可用[安装包测试](testing.md#package-tests)单独检查。
 
-| 对象 | 版本 | 读取规则 |
-| --- | --- | --- |
-| 产品 `config.yaml` | `schema_version` 4 | 其他版本会导致启动失败，程序不改写该文件 |
-| 插件 `.plugin.yaml` | `schema_version` 3 | 其他版本会导致加载失败 |
-| 子代理 YAML | `schema_version` 1（可省略） | 其他版本会导致加载失败 |
-| Hook | 六个事件和 Python 入口 | 声明字段是 `event`、`entrypoint`、`params` |
-| MCP | `.mcp.yaml` 的 `mcpServers` | 连接写在该文件中，不写在产品配置里 |
+## 兼容性检查 { #compatibility-review }
 
-启动不改写已有配置文件。环境引用的写法是 `$env{NAME}`。
-
-## 状态兼容
-
-- Checkpoint 保存在 `<home>/runtime/checkpoints.sqlite`，使用 LangGraph 的 Sqlite saver。修改 `DeepAgentState` 或私有状态键之后，确认已有会话仍能 `aget_state`。
-- `session_bindings` 是会话固定输入和输出绑定的唯一来源；首版不支持旧文件格式的兼容读取或迁移。
-- 进程启动时，索引里仍为 `running` 的会话改为 `interrupted`。这些轮次不会自动重放。
-- Trace 使用 OTLP JSON。更早的自定义轨迹文件保持原样。
-- 长工具结果的路径写在消息里。修改 `artifacts/large_tool_results` 前缀后，旧消息中的路径会失效。
+- 修改公开配置时依据[产品配置](../zh/reference/configuration.md)、[扩展声明](../zh/reference/extension-schema.md)和 [MCP 配置](../zh/reference/mcp-configuration.md)检查版本与字段。
+- 修改图状态或私有状态键时，用升级前的会话数据验证仍能读取 Checkpoint 并按约定续接。会话索引、绑定、产物和 Trace 的归属见[状态与存储](architecture/state-and-storage.md)。
+- 修改长工具结果的目录时，检查历史消息中的引用能否打开。相关落盘规则见[上下文管理](architecture/context-management.md)。

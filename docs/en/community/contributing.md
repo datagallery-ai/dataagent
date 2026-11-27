@@ -1,34 +1,7 @@
 # Contributing
 
-DataGallery welcomes focused contributions that improve the workbench, docs, examples, connectors, and runtime reliability.
+Contributions can improve the workbench, runtime, connectors, documentation, examples, or tests.
 
-## What to contribute
-
-- Product and documentation fixes that make the first-run experience clearer.
-- Reproducible bugs with logs, traces, and screenshots.
-- Datasource or connector improvements with clear setup and validation notes.
-- Scenario cases that show how teams use DataGallery for real data-agent workflows.
-- Tests and smoke checks that protect the control plane: one `dataagent serve` process, Web and TUI against `POST /api/v1/runs`, and Home configuration.
-
-## Pull request expectations
-
-Keep pull requests narrow and easy to review:
-
-1. Link the issue or describe the user-facing problem.
-2. Explain the implementation scope.
-3. Include tests, smoke checks, or documentation validation.
-4. Call out compatibility, migration, or deployment impact.
-5. Avoid bundling unrelated formatting or refactors.
-
-Read the repository-level [CONTRIBUTING.md](https://github.com/datagallery-lab/datafoundry/blob/main/CONTRIBUTING.md) before opening a pull request.
-
-## Local validation
-
-For docs-only changes, run:
-
-```bash
-npm run docs:build
-npm run smoke:docs
-```
-
-For product or runtime changes, add the relevant build, typecheck, test, or smoke command in the pull request description.
+- Follow the [repository contribution guide](../../../CONTRIBUTING.md) for issues, pull requests, and validation.
+- Use the [developer docs](../../development/index.md) to set up a checkout, find the affected module, and choose tests.
+- To share a workflow or example dataset, follow the [scenario guide](scenario-cases.md).

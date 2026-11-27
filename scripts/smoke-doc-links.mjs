@@ -7,13 +7,17 @@ const files = roots.flatMap((root) => collectDocFiles(root)).sort();
 const brokenLinks = [];
 const forbiddenPublicLinks = [];
 const sensitiveMatches = [];
+const missingTranslations = [];
 const markdownLinkPattern = /\[[^\]]*]\(([^)]+)\)/g;
 
 for (const file of files) {
   const text = readFileSync(file, "utf8");
-  // Archived designs describe historical files, not the current checkout.
-  if (!file.startsWith("docs/archive/")) scanLinks(file, text);
+  scanLinks(file, text);
   scanSensitiveContent(file, text);
+  const counterpart = translationCounterpart(file);
+  if (counterpart && !existsSync(counterpart)) {
+    missingTranslations.push({ file, counterpart });
+  }
 }
 
 if (brokenLinks.length > 0) {
@@ -37,7 +41,14 @@ if (sensitiveMatches.length > 0) {
   }
 }
 
-if (brokenLinks.length > 0 || forbiddenPublicLinks.length > 0 || sensitiveMatches.length > 0) {
+if (missingTranslations.length > 0) {
+  console.error("Public documentation is missing translations:");
+  for (const { file, counterpart } of missingTranslations) {
+    console.error(`- ${file} needs ${counterpart}`);
+  }
+}
+
+if (brokenLinks.length || forbiddenPublicLinks.length || sensitiveMatches.length || missingTranslations.length) {
   process.exit(1);
 }
 
@@ -60,6 +71,22 @@ function collectDocFiles(path) {
 
 function isDocFile(path) {
   return path.endsWith(".md") || path.endsWith(".html");
+}
+
+function translationCounterpart(file) {
+  const path = file.replaceAll("\\", "/");
+  if (path === "docs/index.md") {
+    return "docs/zh/home.md";
+  }
+  if (path === "docs/zh/home.md") {
+    return "docs/index.md";
+  }
+  const match = /^docs\/(en|zh)\/(.+\.md)$/.exec(path);
+  if (!match) {
+    return null;
+  }
+  const [, language, name] = match;
+  return `docs/${language === "en" ? "zh" : "en"}/${name}`;
 }
 
 function scanLinks(file, text) {

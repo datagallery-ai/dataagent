@@ -1,7 +1,7 @@
 # YAML 配置说明
 
 [config.yaml](config.yaml) 是覆盖当前全部产品配置字段的可运行示例，并启用两个随附的 Python Hook。
-只需要默认配置时，使用 [config.example.yaml](../config.example.yaml)。YAML 支持注释；字段说明集中在本文。
+只需要默认配置时，使用 [config.example.yaml](../config.example.yaml)。YAML 支持注释。本文说明怎样运行示例，完整字段见[配置参考](../docs/zh/reference/configuration.md)。
 
 ## 配置文件清单
 
@@ -40,11 +40,11 @@ npm run start:tui -- --config examples/nl2sql-entry.yaml
 它只写入口会用到的限额：`limits.timeout_seconds` 是宿主执行阶段时限，`plugins.config.nl2sql.model_call_budget` 是单次任务的模型调用上限。
 这份文件省略的 `hooks`、`model_calls_per_agent`、`tool_calls_per_agent` 和 `input_workspaces` 来自程序默认值，留在配置里，不装进这张图。
 
-配置文件选择、插件依赖顺序、`defaults_file` 与 `plugins.config` 的合并/覆盖规则，以及环境文件优先级统一见 [配置操作](../docs/guides/configuration.md#优先级)。Home 和显式配置二选一，当前内置 nl2sql 没有声明默认配置文件。显式写出的值会覆盖插件默认值，省略项才继承；Hook 数组按相应契约追加。
+配置文件选择、插件依赖顺序、`defaults_file` 与 `plugins.config` 的合并/覆盖规则，以及环境文件优先级统一见 [配置操作](../docs/zh/guides/configuration.md#优先级)。Home 和显式配置二选一，当前内置 nl2sql 没有声明默认配置文件。显式写出的值会覆盖插件默认值，省略项才继承；Hook 数组按相应契约追加。
 
-扩展相关配置可在下一轮请求前刷新；模型、宿主路径、`dataagent.entry` 和服务配置仍需重启，见 [扩展生命周期](../docs/architecture/extension-lifecycle.md)。字段定义见 [配置参考](../docs/reference/configuration.md)。
+扩展相关配置可在下一轮请求前刷新；模型、宿主路径、`dataagent.entry` 和服务配置仍需重启，见 [扩展生命周期](../docs/development/architecture/extension-lifecycle.md)。字段定义见 [配置参考](../docs/zh/reference/configuration.md)。
 
-SDK 的完整调用示例见 [不配置文件日志](../docs/guides/sdk.md#不配置文件日志) 与 [写入统一 backend.log](../docs/guides/sdk.md#写入统一-backendlog)。A2A 请求参数、等待/异步任务及认证见 [A2A](../docs/reference/a2a.md)。
+SDK 的调用示例见[第一次调用](../docs/zh/guides/integrate/sdk.md#without-file-logging)，需要文件日志时见[接入 backend.log](../docs/zh/guides/integrate/sdk.md#backend-log)。A2A 请求参数、等待/异步任务及认证见 [A2A](../docs/zh/reference/a2a.md)。
 
 ## 产品字段
 
@@ -73,10 +73,9 @@ SDK 的完整调用示例见 [不配置文件日志](../docs/guides/sdk.md#不�
 再使用启动时捕获的环境值解析该模型。未使用模型的变量可以暂不定义，实际使用时缺失则报错。
 工具的完整示例见 [llm-utils](plugins/llm-utils/README.md)；该机制不增加 `/model` 命令。
 
-## 六类 Hooks
+## 示例 Hook
 
-每个事件对应数组；条目包含 `entrypoint`、可选 `params`（默认 `{}`），工具事件还可包含 `matcher`。
-组内不写 `event`。也可以写成带 `event` 的扁平列表。产品、插件和 SubAgent 共用同一声明格式。
+[config.yaml](config.yaml) 从同目录的 `hooks/` 注册两个示例函数：
 
 ```yaml
 dataagent:
@@ -92,26 +91,7 @@ dataagent:
         blocked_tools: []
 ```
 
-| 事件 | 调用点与 Python 签名 |
-| --- | --- |
-| `before_agent` | Agent 调用开始前；`handle(state, runtime, *, params)` |
-| `after_agent` | Agent 正常执行至末尾；同上，不是异常/取消回调 |
-| `before_model` | 每次模型调用前；同上，可访问完整原生 state/runtime |
-| `after_model` | 每次模型调用返回后；同上，不是逐 token 回调 |
-| `before_tool` | 工具调用前；`handle(request, *, params)` |
-| `after_tool` | 工具正常返回结果后；`handle(request, result, *, params)`；异常直接抛出时不调用 |
-
-`entrypoint` 为 `相对路径.py:函数名`，以声明所在配置目录为基准；插件及其子 Agent 的引用均以插件根目录为基准。
-不接受绝对路径或越出该根目录的路径。只把文件放入 `hooks/` 不会自动注册。
-
-`matcher` 精确匹配实际工具名，不支持 glob/正则；省略即匹配所有工具。
-`params` 是自定义 JSON 参数，不是宿主配置。示例的 `max_chars` / `blocked_tools` 由相应 Python 函数定义。
-
-使用普通 `def` / `async def`，不传装饰后的 middleware 对象。四种 state Hook 可返回 `None`、原生 state-update dict 或 `Command`；
-工具 Hook 还可返回原生请求/结果替换对象；拒绝单个工具可返回错误 ToolMessage，抛异常则结束整轮。完整返回契约见 [Hook](../docs/extensions/hooks.md#函数签名)，不使用 `action: deny`；异步 Hook 需用 `ainvoke` / `astream`。
-
-插件清单里的 Hook 先装配，随后是选中产品文件里的 `dataagent.hooks`。before 正序、after 逆序，重复声明不去重。
-根 Hooks 不自动继承到子 Agent；子 Agent 在自己的 YAML 中注册。
+复制配置时请一起复制 `hooks/`。按[Hook 指南](../docs/zh/guides/integrate/extensions/hooks.md#hook-signatures)选择事件和函数签名，声明字段见[扩展参考](../docs/zh/reference/extension-schema.md)。
 
 ## 插件、路径和内部状态
 
@@ -142,7 +122,7 @@ REST 的 Agent 事件迭代时限包含其中的模型请求、重试等待和�
 
 ## MCP
 
-格式与语义见 [MCP 配置](../docs/reference/mcp-configuration.md)。可运行本地示例见
+格式与语义见 [MCP 配置](../docs/zh/reference/mcp-configuration.md)。可运行本地示例见
 [mcp/.mcp.yaml](mcp/.mcp.yaml) 与 [math_server.py](mcp/math_server.py)。
 MCP 服务声明不写入产品 `config.yaml` 或插件 `.plugin.yaml`。
 覆盖 stdio、HTTP、SSE 全部支持字段的模板见 [mcp/mcp.full.yaml](mcp/mcp.full.yaml)，

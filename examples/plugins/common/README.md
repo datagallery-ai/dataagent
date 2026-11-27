@@ -30,11 +30,4 @@
 
 ## MCP
 
-`.mcp.yaml` 使用 `{"mcpServers": {}}` 格式，仓库完整模板位于 `examples/mcp/mcp.full.yaml`。
-例如放入名为 `analytics` 的服务后，其 `query` 工具名为 `mcp__common__analytics__query`。
-在本目录配置 stdio 时，工作目录为本插件根；环境引用仍从产品环境解析，不读取插件旁 `.env`。
-
-没有默认 MCP 服务地址或凭证，所以保留空对象，不放会导致启动失败的占位连接。
-配置真实服务后，REST/TUI 下一轮自动刷新；冷启动连接失败会导致启动失败，热更新失败则拒绝该轮请求。
-用户安装后更适合在 Home `.mcp.yaml`
-填写个人服务，不需要修改安装包内置资源。只放配置文件不会为它增加 shell 沙箱隔离。
+随附的 [`.mcp.yaml`](.mcp.yaml) 声明空的服务集合。添加名为 `analytics` 的服务后，它的 `query` 工具会注册为 `mcp__common__analytics__query`。配置与刷新规则见 [MCP 接入指南](../../../docs/zh/guides/integrate/extensions/mcp.md)。

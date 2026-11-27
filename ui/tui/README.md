@@ -5,7 +5,7 @@ Terminal interface for the datagallery monorepo.
 - **User guide:** [TUI 指南](../../docs/zh/guides/tui.md)
 - **Quick start:** [快速开始](../../docs/zh/quick-start.md)
 
-For a standalone installation, install the TUI tarball with `npm install -g ./datagallery-tui-0.2.0.tgz` and connect to a running Server with `dataagent-cli --runtime-url http://127.0.0.1:8790` or `da --runtime-url http://127.0.0.1:8790`. See the [package deployment guide](../../docs/en/guides/dataagent-package.md).
+For a standalone installation, install the TUI tarball with `npm install -g ./datagallery-tui-0.2.0.tgz` and connect to a running Server with `dataagent-cli --runtime-url http://127.0.0.1:8790` or `da --runtime-url http://127.0.0.1:8790`. See the [package deployment guide](../../docs/en/guides/deploy-packages.md).
 
 To run from the repository root:
 
@@ -33,7 +33,7 @@ There is no project configuration layer or trust prompt. Logs/checkpoints live i
 Existing session input bindings are retained; no files are migrated or deleted. TUI theme
 and log variables stay in the TUI process environment. `--env-file` is forwarded to the backend that this TUI starts.
 
-See the [configuration and plugin guide](../../docs/python-guide.md).
+See the [configuration and plugin guide](../../docs/zh/guides/integrate/index.md).
 
 ## Chat and keyboard behavior
 
@@ -57,7 +57,7 @@ uses a single bullet without repeated role/timestamp headers. Tools show an
 action, target and a short output preview; **Ctrl+O** toggles input/output details.
 Produced artifacts appear as compact `/outputs` entries below their source reply;
 artifacts without a source association appear under Session outputs.
-See the [DataAgent guide](../../docs/python-guide.md)
+See the [DataAgent guide](../../docs/zh/guides/integrate/index.md)
 for the frontend/backend boundary and workspace configuration.
 
 A separate `Run completed`, `Run failed`, or `Interrupted — continue this conversation`
@@ -90,5 +90,5 @@ The Python suite includes a real PTY probe for the locked Ink 7.1.0 fullscreen c
 workaround, including an unpatched control. Run it before changing Ink: if upstream
 fixes the one-row offset, remove the workaround instead of applying it twice.
 
-See the [DataAgent guide](../../docs/python-guide.md)
+See the [DataAgent guide](../../docs/zh/guides/integrate/index.md)
 for verification entrypoints; IME candidate-window behavior still needs a manual check.

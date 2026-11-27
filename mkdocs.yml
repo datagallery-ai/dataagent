@@ -6,19 +6,17 @@ repo_url: https://github.com/datagallery-lab/datafoundry
 edit_uri: edit/main/docs/
 
 exclude_docs: |
-  archive/
   README.md
   assets/readme/tui-demo.mp4
   en/README.md
   zh/README.md
 
 not_in_nav: |
+  /index.md
   development/*.md
-  architecture/*.md
-  extensions/*.md
-  guides/*.md
-  reference/*.md
-  de-agent-migration.md
+  en/reference/supported-datasources.md
+  en/guides/compatibility/
+  en/guides/integrate/extensions/
   zh/*.md
   zh/**/*.md
 
@@ -46,10 +44,10 @@ theme:
     - search.suggest
 
 extra_css:
-  - stylesheets/extra.css
+  - assets/mkdocs/extra.css
 
 extra_javascript:
-  - javascripts/language-switcher.js
+  - assets/mkdocs/language-switcher.js
 
 extra:
   source_tree_url: !ENV [DATAAGENT_DOCS_SOURCE_TREE_URL, "https://gitcode.com/datagallery/dataagent/blob/main"]
@@ -76,36 +74,63 @@ markdown_extensions:
       permalink: true
 
 nav:
-  - Home: index.md
-  - User Guide:
+  - Use and Integration:
       - en/index.md
-      - Product overview: en/overview.md
       - Quick start: en/quick-start.md
-      - Capabilities: en/capabilities.md
-      - Guides:
-          - Custom mirrors: en/guides/mirror-deployment.md
-          - Web workbench: en/guides/web-workbench.md
+      - Deploy and configure:
+          - Source deployment: en/guides/deploy-source.md
+          - Package deployment: en/guides/deploy-packages.md
+          - Custom mirrors: en/guides/deploy-mirrors.md
+          - Configuration: en/reference/configuration-api.md
+          - Advanced configuration: en/guides/configuration.md
+          - Troubleshooting: en/guides/troubleshooting.md
+      - Work with DataAgent:
+          - Web workbench: en/guides/web.md
           - TUI: en/guides/tui.md
-          - DataAgent package deployment: en/guides/dataagent-package.md
-          - Where data comes from: en/guides/data-sources.md
-  - Developer Guide:
-      - Python SDK and extensions: python-guide.md
+          - Data inputs: en/guides/inputs.md
+          - Sessions and outputs: en/guides/sessions-and-outputs.md
+      - Integrate and extend:
+          - Python SDK and extensions: en/guides/integrate/index.md
+          - AG-UI integration: en/reference/agent-runtime.md
+          - Python SDK: en/guides/integrate/sdk.md
+          - Extensions: en/guides/integrate/extensions/overview.md
+          - Plugins: en/guides/integrate/extensions/plugins.md
+          - MCP integration: en/guides/integrate/extensions/mcp.md
+      - Reference:
+          - REST API: en/reference/rest-api.md
+          - AG-UI protocol: en/reference/events.md
+          - A2A: en/reference/a2a.md
+          - Configuration fields: en/reference/configuration.md
+          - CLI and environment: en/reference/cli-and-environment.md
+          - Python API: en/reference/python-api.md
+          - Extension schema: en/reference/extension-schema.md
+          - MCP configuration: en/reference/mcp-configuration.md
+      - Concepts:
+          - Product overview: en/concepts/overview.md
+          - Capabilities: en/concepts/capabilities.md
+          - Architecture overview: en/concepts/architecture.md
+          - Security: en/concepts/security.md
+      - Community:
+          - en/community/index.md
+          - Contact us: en/community/contact-us.md
+          - Contributing: en/community/contributing.md
+          - Scenario cases: en/community/scenario-cases.md
+          - Collaboration policy: en/community/collaboration-policy.md
+  - Developer Docs:
+      - development/index.md
       - Development setup: development/setup.md
-      - Package layout: development/package-distribution.md
-      - Package build runbook: development/package-build-runbook.md
+      - Testing: development/testing.md
       - Architecture:
-          - Overview: en/architecture/overview.md
-      - Security: en/security.md
-  - API Reference:
-      - REST API: en/reference/rest-api.md
-      - Configuration: en/reference/configuration-api.md
-      - Agent Runtime: en/reference/agent-runtime.md
-      - Supported inputs: en/reference/supported-datasources.md
-  - Release Notes:
-      - v0.2.0: en/releases/v0.2.0.md
-  - Community:
-      - en/community/index.md
-      - Contact us: en/community/contact-us.md
-      - Contributing: en/community/contributing.md
-      - Scenario cases: en/community/scenario-cases.md
-      - Collaboration policy: en/community/collaboration-policy.md
+          - Architecture overview: development/architecture/overview.md
+          - Bootstrap: development/architecture/bootstrap.md
+          - Execution: development/architecture/execution.md
+          - Context management: development/architecture/context-management.md
+          - Extension lifecycle: development/architecture/extension-lifecycle.md
+          - Home layout: development/architecture/home-layout.md
+          - State and storage: development/architecture/state-and-storage.md
+          - Observability: development/architecture/observability.md
+          - Security boundaries: development/architecture/security-boundaries.md
+          - HTTP implementation: development/reference/rest-api.md
+      - Core maintenance: development/core-maintenance.md
+      - Build and release: development/release.md
+      - Legacy migration: development/archive/main-legacy-migration.md

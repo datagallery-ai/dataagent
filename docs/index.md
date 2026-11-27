@@ -11,7 +11,7 @@ hide:
 
 # DataAgent
 
-An enterprise-grade Data Agent workbench — understand business definitions through unified semantics, run multi-table and multi-step analysis inside a read-only safety boundary, make every step auditable and replayable, and turn one question into trusted data analysis.
+A local Data Agent workbench for multi-step analysis. Use Web or TUI to ask questions, connect configured plugins and semantic services, and review conversation history, outputs, and traces.
 
 </section>
 
@@ -28,8 +28,8 @@ Schema, metrics, field relationships, and datasource context are resolved before
 </div>
 
 <div class="df-proof" markdown>
-### Controlled Data Boundary
-Read-only SQL, credential isolation, masking, row limits, timeouts, and audit trails keep enterprise data work safer than a general coding agent.
+### Data access and execution
+Input workspaces give the Agent read-only guidance. File tools and shell run with the Server process's operating-system permissions. NL2SQL safety rules depend on plugin configuration. See [security](en/concepts/security.md).
 </div>
 
 <div class="df-proof" markdown>
@@ -60,24 +60,17 @@ Use the Web workbench for visual analysis review, the TUI for SSH and terminal w
 <div class="df-grid df-route-grid" markdown>
 
 <div class="df-card" markdown>
-### Try locally
-Start the control plane and ask the first question in the Web UI or the TUI.
+### Use and Integration
+Deploy DataAgent, use Web or TUI, or integrate through APIs, the Python SDK, and extensions.
 
-[Open quick start](en/quick-start.md){ .df-card-action }
+[Open use and integration docs](en/index.md){ .df-card-action }
 </div>
 
 <div class="df-card" markdown>
-### Understand the system
-One control plane, two presentations, Home layout, and workspaces.
+### Developer Docs
+Set up a source checkout, understand the architecture, run tests, or build a release.
 
-[Read architecture](en/architecture/overview.md){ .df-card-action }
-</div>
-
-<div class="df-card" markdown>
-### Integrate APIs
-Call `POST /api/v1/runs` and the session routes on the control plane.
-
-[View API reference](en/reference/rest-api.md){ .df-card-action }
+[Open developer docs](development/index.md){ .df-card-action }
 </div>
 
 </div>

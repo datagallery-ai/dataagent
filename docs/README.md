@@ -2,60 +2,30 @@
 
 This directory contains the public documentation source for the DataAgent GitHub Pages site. The site uses MkDocs Material.
 
-- Site home: [index.md](index.md)
-- English: [English docs](en/index.md)
-- 中文：[中文文档](zh/index.md)
+- Site home in [English](index.md) and [Chinese](zh/home.md)
+- Use and integration in [English](en/index.md) and [Chinese](zh/index.md)
+- [Developer Docs](development/index.md)
+- [Community](en/community/index.md) and [社区](zh/community/index.md)
 
-## Quick links
-
-| Goal | English | 中文 |
-| --- | --- | --- |
-| Product positioning | [Overview](en/overview.md) | [产品概览](zh/overview.md) |
-| Local demo | [Quick start](en/quick-start.md) | [快速开始](zh/quick-start.md) |
-| Capability scope | [Capabilities](en/capabilities.md) | [能力全览](zh/capabilities.md) |
-| Web workbench | [Web workbench guide](en/guides/web-workbench.md) | [Web 工作台指南](zh/guides/web-workbench.md) |
-| TUI | [TUI guide](en/guides/tui.md) | [TUI 指南](zh/guides/tui.md) |
-| Local files | [Where data comes from](en/guides/data-sources.md) | [数据从哪里来](zh/guides/data-sources.md) |
-| Supported inputs | [Supported inputs](en/reference/supported-datasources.md) | [支持的输入](zh/reference/supported-datasources.md) |
-| REST and configuration | [REST API](en/reference/rest-api.md), [Configuration](en/reference/configuration-api.md) | [REST API](zh/reference/rest-api.md), [配置](zh/reference/configuration-api.md) |
-| Agent runtime | [Agent Runtime reference](en/reference/agent-runtime.md) | [Agent Runtime 参考](zh/reference/agent-runtime.md) |
-| Architecture | [Architecture overview](en/architecture/overview.md) | [架构概览](zh/architecture/overview.md) |
-| Security | [Security](en/security.md) | [安全说明](zh/security.md) |
-
-## Two documentation trees
-
-| Tree | Reader | Put here | Leave out |
-| --- | --- | --- | --- |
-| `docs/en/`, `docs/zh/` | Someone deploying or trying Web and TUI, or calling the HTTP API | Product shape, deploy and first question, what each UI can do, the external request and response contract, local security expectations | Plugin schemas, SDK lifecycle, hook order, bootstrap steps, file modes, `dataagent/core` maintenance |
-| `docs/guides/`, `docs/reference/`, `docs/extensions/`, `docs/architecture/`, `docs/development/` | Someone changing configuration fields, extensions, or the runtime | Field table, Home layout, SDK, plugins, HTTP details used to change `dataagent/server/`, architecture and tests | `deploy.sh` lifecycle, bilingual product tour, Web page layout |
-
-The public configuration page keeps only the files a deployer edits and the minimum model. The field table is `docs/reference/configuration.md`.
-
-When a public page and a runtime page both describe an HTTP path or a deployer-facing default, change them together. They must not disagree.
+Maintain routes, response envelopes, and HTTP status codes in the bilingual REST references. Keep the AG-UI request and event contract in `docs/zh/reference/events.md` and the A2A contract in `docs/zh/reference/a2a.md`. Integration and architecture pages link to those contracts.
 
 ## Documentation scope
 
-`docs/` is the GitHub Pages site. Historical plans, PRDs, and source-sensitive notes do not belong here.
+The MkDocs build publishes both entry points on one site. Use and integration documents have matching source paths in `en/` and `zh/`. Developer setup, architecture, testing, and release documentation live in `development/`.
 
 ## Maintenance rules
 
 - Product and Python technical guides share this documentation tree; link to the relevant guide rather than duplicating it.
-- When adding an external-facing capability, update both `en/` and `zh/`.
+- When adding or changing an external-facing page, update its counterpart in the other language, including examples and referenced section anchors.
+- Document behavior that readers can use in the current checkout. Consult Git tags and history for earlier versions.
+- When moving a published page, check its output URL. The [MkDocs hook](../scripts/dev/docs_hooks.py) preserves established URLs for migrated pages.
 - Example credentials must use placeholder values such as `replace-with-your-key`.
 - Do not retain source-sensitive narrative.
 - After doc changes, run `npm run docs:build` and `npm run smoke:docs`.
 
 ## Local preview and GitHub Pages
 
-Local preview:
-
-```bash
-python -m venv .venv-docs
-source .venv-docs/bin/activate
-python -m pip install -r requirements-docs.txt
-npm run docs:dev
-npm run docs:build
-```
+See [local preview](development/setup.md#preview-docs) for the MkDocs environment and commands.
 
 After pushing to `main`, `.github/workflows/docs.yml` publishes the site to GitHub Pages:
 

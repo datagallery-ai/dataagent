@@ -1,33 +1,45 @@
-# DataAgent
+<h1 align="center">DataAgent</h1>
 
-基于 Python 和 Deep Agents 的本地数据 Agent，提供 Web、TUI、REST、A2A 和 Python SDK。主代理可以委派本地 nl2sql 等插件，按会话保存对话状态、结果文件和 Trace。
+<p align="center">
+  <strong>企业级 DataAgent</strong><br />
+  用自然语言分析数据，在会话里查看结果、生成的文件和执行记录。
+</p>
 
-[English](README.md) · [中文文档](docs/zh/README.md) · [快速开始](docs/zh/quick-start.md)
+<p align="center">
+  <a href="README.md">English</a> · <strong>简体中文</strong>
+</p>
 
-## 当前架构与能力
+<p align="center">
+  <a href="docs/zh/quick-start.md"><strong>快速开始</strong></a> ·
+  <a href="docs/zh/index.md"><strong>使用与集成</strong></a> ·
+  <a href="docs/development/index.md"><strong>开发者文档</strong></a> ·
+  <a href="CONTRIBUTING.md"><strong>参与贡献</strong></a>
+</p>
 
-```text
-Web → Next 同源转发 ─┐
-TUI → AG-UI / REST ─┼→ dataagent serve → 主代理 → 工具 / 本地子代理 / MCP
-其他 Agent → A2A ───┘                        └→ nl2sql → 已配置数据库
-Python SDK → 同一套配置准备与 Agent 装配（可跳过 HTTP）
-```
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2563eb" alt="Apache 2.0 许可证" /></a>
+  <a href="docs/development/setup.md"><img src="https://img.shields.io/badge/Python-3.11--3.12-3776ab?logo=python&amp;logoColor=white" alt="支持 Python 3.11 和 3.12" /></a>
+  <a href="docs/zh/guides/deploy-source.md"><img src="https://img.shields.io/badge/deployment-self--hosted-15803d" alt="支持自行部署" /></a>
+  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-be185d" alt="欢迎提交合并请求" /></a>
+  <br />
+  <a href="docs/zh/reference/rest-api.md"><img src="https://img.shields.io/badge/AG--UI-event%20stream-6f42c1" alt="AG-UI 事件流" /></a>
+  <a href="docs/zh/guides/tui.md"><img src="https://img.shields.io/badge/Ink-terminal%20UI-0f766e" alt="基于 Ink 的终端界面" /></a>
+</p>
 
-- **同一后端，多种入口**：Web/TUI 连接同一个 Python 控制面；A2A 1.0 通过 JSON-RPC 调用同一运行时。也可独立启动只提供 A2A 的进程。
-- **会话与产物**：服务端保存 Checkpoint、会话索引、Trace 和产物。A2A、Web、TUI 可续接同一会话；A2A 的内存 Task 在重启后不保留。
-- **插件与子代理**：通过配置启用插件、Skill、Hook、MCP 和编译型子代理。数据库查询能力来自已启用且配置完整的插件，不是控制面自带的数据源注册服务。
-- **配置驱动**：模型、服务地址、插件与输入目录来自 Home 配置和环境。Web 不提供模型 Profile 创建或测试。
-- **诊断与关联**：日志收敛到 `backend.log`、`web.log`、`tui.log`；A2A 请求号、任务号、运行号可关联日志和本地 Trace。
+<p align="center">
+  <a href="docs/assets/readme/gui-demo.gif"><img src="docs/assets/readme/gui-demo.gif" alt="DataAgent 浅色 Web 工作台演示" width="100%" /></a><br />
+  <sub>Web 工作台演示 · <a href="docs/zh/guides/web.md">Web 工作台指南</a></sub>
+</p>
 
-当前没有注册登录、网页模型管理、数据源注册、知识库管理、会话分支或 trace DAG 接口。旧页面残留入口不代表后端已经提供对应能力。完整范围见 [能力全览](docs/zh/capabilities.md)。
+## 核心能力
 
-## 🚀 正式态跑通
+- **私有化部署与多模型适配。** 在自己的电脑或服务器上运行 DataAgent，通过[服务端配置](docs/zh/guides/configuration.md)设置默认模型和各工具需要的模型。
+- **接入数据与业务上下文。** 通过[本地输入目录](docs/zh/guides/inputs.md)分析文件，启用 [NL2SQL](examples/nl2sql-entry.yaml)查询数据库，或按需连接外部[语义服务](docs/zh/guides/integrate/extensions/semantic-service.md)。
+- **复用产物与回查执行过程。** 恢复[会话](docs/zh/guides/sessions-and-outputs.md)继续追问或查找文件，通过[日志和 Trace](docs/development/architecture/observability.md)查看模型及工具调用。
 
-已有 wheel 和 TUI `.tgz` 时，按 [独立包部署](docs/zh/guides/dataagent-package.md) 安装和启动。从源码部署时，按下文操作或参考 [源码部署快速开始](docs/zh/quick-start.md)。
+## 快速开始
 
-需要 Node.js ≥22.12.0 和 uv，后端支持 Python 3.11 和 3.12。安装与运行应处于同一环境；Windows 与 WSL 不要共用 `node_modules`。本版本不提供 Docker / Compose 部署。
-
-### Linux 一键部署
+在 Linux 上准备 Git、Node.js 22.12+ 和 uv，再从源码启动：
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -35,126 +47,37 @@ cd datafoundry
 ./deploy.sh
 ```
 
-脚本准备依赖、配置与构建，并在后台启动 Web/API。部署阶段不要求填写模型密钥；对话前仍需在仓库根 `.env` 或 Home `.env` 填入可用模型，再重启服务。TUI 已构建但不会后台常驻，需另开终端运行 `./deploy.sh tui`。
+在项目的 `.env` 中填写 OpenAI 兼容模型的 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`，再运行 `./deploy.sh restart`。打开脚本打印的工作台地址（默认 `http://127.0.0.1:3000/data-tasks`），或运行 `./deploy.sh tui` 在终端开始提问。
 
-脚本不设置发行版或 CPU 架构白名单。需要安装 Node.js 时，自动选择 `apt-get`、`dnf` 或 `yum`，默认使用 NodeSource 仓库，也可通过 `DATAAGENT_NODE_PACKAGE_URL` 指定自定义安装包；安装环境不支持或依赖执行失败时直接报错。已有 Node.js ≥22.12.0 和 npm 时不要求包管理器。自定义下载源、工具预装、Python 解释器、包镜像及模型网关配置见 [自定义镜像部署](docs/zh/guides/mirror-deployment.md)。
+使用 `./deploy.sh status` 检查服务状态，使用 `./deploy.sh logs` 查看实时日志。
 
-```bash
-./deploy.sh status
-./deploy.sh doctor
-./deploy.sh logs
-./deploy.sh stop
-./deploy.sh start
-```
+[Windows 与 macOS 手动部署](docs/zh/guides/deploy-source.md) · [Server wheel 和 TUI 安装包](docs/zh/guides/deploy-packages.md)
 
-关闭终端或退出日志跟随不会停止受管服务，停止请用 `./deploy.sh stop`。重复部署会先停止受管服务再安装和构建；需要重新配置端口时使用 `./deploy.sh deploy --reconfigure`。
+## 一条数据任务如何跑完
 
-### 手动安装、构建和启动
+1. **定义任务。** 围绕服务端已配置的输入和工具，用自然语言描述想分析的问题。
+2. **执行分析。** Agent 调用可用工具分析数据，并把生成的文件保存到会话产物目录。
+3. **查看与追问。** 打开原会话查看结果、取回文件，或沿着已有对话继续提问。
 
-原生 Windows、macOS、其他 Linux，或需要手动配置时：
+## 选择使用入口
 
-安装前确认 Node.js ≥22.12.0 和 uv 已加入 `PATH`。受限网络还需先指定可用的 Python 3.11 或 3.12 解释器及下载源，按 [手动部署准备步骤](docs/zh/quick-start.md#manual-prerequisites) 设置进程环境变量，再执行下面的安装命令。
+**Web 工作台**适合日常分析和文件预览，**TUI** 适合在终端或 SSH 环境下操作。两者连接同一个 Server，都可以恢复其中的会话。需要把 Agent 接入自己的应用时，可使用 [REST 与 AG-UI](docs/zh/reference/rest-api.md)、[A2A](docs/zh/reference/a2a.md) 或 [Python SDK](docs/zh/guides/integrate/sdk.md)。
 
-```bash
-npm install --include=dev
-uv sync --no-dev --extra video
-cp .env.example .env
-```
+<p align="center">
+  <a href="docs/assets/readme/readme-tui.webp"><img src="docs/assets/readme/readme-tui.webp" alt="DataAgent TUI 在终端显示季度订单分析、写入 CSV 的工具记录和会话状态" width="100%" /></a><br />
+  <sub>在终端运行同一份订单分析 · <a href="docs/zh/guides/tui.md">TUI 指南</a></sub>
+</p>
 
-编辑仓库根 `.env`：
+## 文档
 
-模型地址需由后端所在机器访问；将示例地址和模型名替换为实际服务配置。
-
-```bash
-LLM_MODEL=your-model-name
-LLM_BASE_URL=https://your-openai-compatible-host/v1
-LLM_API_KEY=replace-with-your-key
-```
-
-```bash
-npm run build
-npm run start
-# 另开终端，可选
-npm run start:tui
-```
-
-直接打开 `http://127.0.0.1:3000/data-tasks`，无需注册或创建网页模型 Profile。先提问“用三句话说明你现在能做什么”；数据库问题要先启用并配置相应插件。
-
-`/healthz` 返回 200 表示控制面存活，`/ready` 返回 200 表示会话引擎配置加载成功；完整步骤见 [手动部署验证](docs/zh/quick-start.md#manual-verification)。
-
-## 配置与独立启动
-
-交付物是 Server wheel 和 TUI `.tgz`。出包和验收命令见[发布说明](docs/development/release.md)。安装、启动和编译型插件入口配置见[独立包部署](docs/zh/guides/dataagent-package.md)。
-
-Home 默认 `~/.dataagent`，可通过进程环境 `DATAAGENT_HOME` 指定。CLI 首次启动会初始化缺少的配置模板。
-
-| 文件/设置 | 作用 |
+| 想做什么 | 从这里开始 |
 | --- | --- |
-| `<Home>/config.yaml` | 产品配置，`schema_version: 4`，包含 `models`、`dataagent`、`plugins`、`server` 等 |
-| `<Home>/.env` | 配置中 `$env{NAME}` 的值；非空进程环境覆盖文件值 |
-| `--config` | 替代 Home 配置，不自动改读旁边的 `.env` |
-| `--env-file` | 显式替代 Home `.env`；需要时用于直接 Python CLI |
-| `server.host / port` | 后端默认 `127.0.0.1:8790`；Web 默认端口为 3000 |
+| 分析本地文件或查询数据库 | [本地输入目录](docs/zh/guides/inputs.md) · [NL2SQL 配置示例](examples/nl2sql-entry.yaml) |
+| 恢复对话或找回生成的文件 | [会话与产物](docs/zh/guides/sessions-and-outputs.md) |
+| 接入应用或扩展工具 | [REST 与 AG-UI](docs/zh/reference/rest-api.md) · [A2A](docs/zh/reference/a2a.md) · [Python SDK](docs/zh/guides/integrate/sdk.md) · [插件与 MCP](docs/zh/guides/integrate/extensions/overview.md) |
+| 配置模型、服务或排查问题 | [配置](docs/zh/reference/configuration-api.md) · [安全边界](docs/zh/concepts/security.md) · [故障排查](docs/zh/guides/troubleshooting.md) |
+| 开发 DataAgent 或从旧版迁移 | [开发者文档](docs/development/index.md) · [旧版 Python Runtime 与 CLI 迁移](docs/development/archive/main-legacy-migration.md) |
 
-按所需 extras 准备源码环境后，以下命令直接使用已有环境，不重新同步依赖；首次准备见 [分阶段安装](docs/zh/guides/mirror-deployment.md#staged-installation)。
+Server 默认监听 `127.0.0.1`。需要从其他机器访问时，请参考[安全说明](docs/zh/concepts/security.md)。
 
-```bash
-# 只启动后端；也提供 A2A 路由
-uv run --no-sync dataagent serve
-
-# 只启动 A2A。与 serve 二选一，同一 Home 不能并行启动两个后端
-uv run --no-sync dataagent serve-a2a
-```
-
-`serve` 提供 `/healthz`、`/ready`、`/api/v1/runs`、会话和产物接口。`serve-a2a` 不提供这些 REST/健康接口。SDK 可通过 `prepare_runtime`、`create_agent` 和 `ainvoke` 直接调用；其 checkpointer、异常处理和日志配置由调用方宿主管理。
-
-## A2A 调用
-
-服务提供 `GET /.well-known/agent-card.json` 与 `POST /a2a/jsonrpc`。请求必须带 `A2A-Version: 1.0`；支持默认等待结果和 `returnImmediately: true` 的异步任务查询，不支持 A2A 流式响应；[参数与调用方式](docs/reference/a2a.md#等待结果与异步任务) 见详细示例。
-
-```bash
-curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
-  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
-  -d '{"jsonrpc":"2.0","id":"request-1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"message-1","contextId":"thread-1","parts":[{"text":"用三句话说明你现在能做什么。"}]}}}'
-```
-
-设置 `DATAAGENT_A2A_AUTH_TOKEN` 后，请求还需携带 `Authorization: Bearer <token>`，Agent Card 仍可匿名读取。执行失败可能仍返回 HTTP 200，须检查 Task 状态和 `metadata.dataagent.error`，不能只看 HTTP 状态。协议与查询/取消约定见 [REST 与 A2A](docs/zh/reference/rest-api.md)。
-
-## 日志与问题定位
-
-`<Home>/runtime/logs/` 下只使用三个主文件：
-
-| 文件 | 内容 |
-| --- | --- |
-| `backend.log` | 后端、插件、模型、A2A、公共依赖准备及启停 |
-| `web.log` | Web 构建、服务端、代理及浏览器上报错误 |
-| `tui.log` | TUI 构建、连接、传输与交互 |
-
-每个文件按 5,000,000 字节轮转、保留 3 个备份。按 `X-Request-ID`、Task ID 和运行号关联记录；相关进程未写入时文件可能尚未创建。浏览器错误上报依赖 Web 可达，不保证离线保存。
-
-## 安全边界
-
-- 默认只监听本机。REST 没有访问令牌；A2A 的可选共享令牌仅保护 JSON-RPC，不构成用户登录或租户隔离。
-- 已知凭据在日志和 Trace 导出前脱敏，但对话、SQL、工具结果和 CSV 仍可能包含业务数据。
-- 工作区的只读约定和插件 SQL 规则不是操作系统沙箱。文件工具与 shell 使用后端进程权限；nl2sql 的 SQL 安全策略需要按配置启用。
-
-详情见 [安全说明](docs/zh/security.md) 和 [支持的输入](docs/zh/reference/supported-datasources.md)。
-
-## 文档与开发
-
-- [快速开始](docs/zh/quick-start.md)：部署、模型配置、启停与排查。
-- [架构概览](docs/zh/architecture/overview.md)：控制面、Web/TUI 与 A2A 的关系。
-- [配置](docs/zh/reference/configuration-api.md)、[API](docs/zh/reference/rest-api.md)：集成时的现行契约。
-- [贡献指南](CONTRIBUTING.md)。运行时、插件与 SDK 的技术文档位于仓库 `docs/`。
-- [v0.2.0 历史发布说明](docs/zh/releases/v0.2.0.md)：记录当时的产品设计与能力，不作为当前重构后的验收清单。
-
-```bash
-npm run test:deploy
-npm run test:web
-npm run test:tui
-make test
-```
-
-Apache-2.0，见 [LICENSE](LICENSE)。
-
-配置文件使用 YAML 1.2（`config.yaml`、`.plugin.yaml`、`.mcp.yaml`）。
+[参与贡献](CONTRIBUTING.md) · [社区与案例](docs/zh/community/index.md) · [Apache-2.0](LICENSE)
