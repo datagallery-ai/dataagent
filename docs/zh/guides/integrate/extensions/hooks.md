@@ -23,7 +23,9 @@ dataagent:
 
 只把文件放进 `hooks/` 不会注册。字段、分组与扁平声明格式见 [Hook 声明](../../../reference/extension-schema.md#agent-hooks)。`params` 每次调用都会复制，函数可从 `runtime.context` 读取宿主配置。
 
-## 函数签名 { #hook-signatures }
+<a name="hook-signatures"></a>
+
+## 函数签名
 
 | 事件 | 签名 | 返回 |
 | --- | --- | --- |

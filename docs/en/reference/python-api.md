@@ -10,7 +10,9 @@ Import `dataagent` after installation. Read `dataagent.__version__` for the pack
 
 Exports are defined by `__all__` in [dataagent](../../../dataagent/__init__.py), [host](../../../dataagent/host.py), and [lowlevel](../../../dataagent/lowlevel.py).
 
-## Public SDK { #public-sdk }
+<a name="public-sdk"></a>
+
+## Public SDK
 
 | Name | Purpose |
 | --- | --- |
@@ -34,7 +36,9 @@ Exports are defined by `__all__` in [dataagent](../../../dataagent/__init__.py),
 | `build_sql_service`, `check_engine_driver`, `check_read_only_sql`, `check_sql` | Data gateway services and validation |
 | `recall_database`, `RecallOptions`, `RecallError` | Async SQLite exploration and its options and errors |
 
-### `LaunchOptions` { #launch-options }
+<a name="launch-options"></a>
+
+### `LaunchOptions`
 
 | Field | Default | Meaning |
 | --- | --- | --- |
@@ -47,7 +51,9 @@ Exports are defined by `__all__` in [dataagent](../../../dataagent/__init__.py),
 
 YAML `dataagent.input_workspaces` provides defaults. Hosts can override at creation. See [host API](#host-api) and [environment precedence](cli-and-environment.md#environment-variables).
 
-### `create_agent` { #create-agent }
+<a name="create-agent"></a>
+
+### `create_agent`
 
 ```text
 create_agent(runtime, *, model=None, checkpointer=None, session=None,
@@ -64,7 +70,9 @@ create_agent(runtime, *, model=None, checkpointer=None, session=None,
 
 Creation checks entry, plugin declarations, MCP, hooks, and semantic client. Preflight reads declarations and instruction files. Plugin Python loads at graph build. Standard SDK use builds on first session use. An explicit host `session` is opened and built during creation. Unknown keywords cause `TypeError`. See [host arguments](#host-api).
 
-### `Agent` { #agent }
+<a name="agent"></a>
+
+### `Agent`
 
 | Member | Behavior |
 | --- | --- |
@@ -76,7 +84,9 @@ Different threads can run concurrently. Overlapping calls on one thread fail. `s
 
 Each session caches its own graph and context. Models are shared within the agent. The graph cache targets 32 entries and evicts the least recently used idle graphs. Active graphs can temporarily push the count above 32. The checkpointer owns history and each graph records turn traces.
 
-### `AgentContext` { #agent-context }
+<a name="agent-context"></a>
+
+### `AgentContext`
 
 Access through `runtime.context`.
 
@@ -89,7 +99,9 @@ Access through `runtime.context`.
 | `get_plugin_config(plugin_id)` | Copy of effective plugin config. Disabled plugins raise `ValueError` |
 | `get_plugin_state(plugin_id)` | Private in-memory dictionary for an enabled plugin within the session graph. Not checkpointed; plugin owns concurrency |
 
-## Host API { #host-api }
+<a name="host-api"></a>
+
+## Host API
 
 For a long-lived service exposing an agent:
 
@@ -116,7 +128,9 @@ Host use also includes:
 - `agent.as_agui(name="dataagent", **kwargs)` creates an adapter whose `run(input)` selects by `input.thread_id`. Use a new adapter per request.
 - `agent.graph_for(thread_id)` retrieves the native graph for an existing session, for example to call `aget_state(config)`. A missing session raises `ValueError`. `agent.graph` creates the default session on first access.
 
-## Low-level API { #lowlevel-api }
+<a name="lowlevel-api"></a>
+
+## Low-level API
 
 `build_graph` opens one session and returns its native `CompiledStateGraph`. The caller passes context on invocation and owns the semantic client lifecycle. Use `create_agent` for thread routing and multiple cached graphs.
 
@@ -142,7 +156,9 @@ build_graph(runtime, *, checkpointer=None, model=None, session=None,
 - `dataagent.entry` selects only that compiled entry.
 - Pass additional LangChain callbacks in `config["callbacks"]` or `graph.with_config(callbacks=[...])`.
 
-## A2A { #a2a-api }
+<a name="a2a-api"></a>
+
+## A2A
 
 Client classes import from `dataagent.extensions.a2a`. Server factories import from `dataagent.server.a2a`. Importing the SDK or A2A client does not load the server.
 

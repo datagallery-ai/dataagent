@@ -2,7 +2,9 @@
 
 当前交付两个独立制品：Server wheel 和 TUI npm 包。Web 从源码构建并以当前 checkout 中的产物运行。已拿到制品时按[独立包部署](../zh/guides/deploy-packages.md)安装。
 
-## 构建制品 { #build-artifacts }
+<a name="build-artifacts"></a>
+
+## 构建制品
 
 需要 Python 3.11 或 3.12、uv 和 Node.js ≥22.12.0。在仓库根目录运行：
 
@@ -27,7 +29,9 @@ uv build --wheel --clear --out-dir dist/server
 
 构建命令只生成文件，上传和分发由发布作业另行处理。记录对应的 Git 提交、版本和校验值，交付本次验收实际使用的文件。
 
-## 验收制品 { #verify-artifacts }
+<a name="verify-artifacts"></a>
+
+## 验收制品
 
 ```bash
 make test
@@ -46,7 +50,9 @@ npm run smoke:dataagent-package
 
 Smoke 使用本机模型替身。真实模型和数据库连接按交付环境另外验收。Python sdist、wheel 文件与安装资源可用[安装包测试](testing.md#package-tests)单独检查。
 
-## 兼容性检查 { #compatibility-review }
+<a name="compatibility-review"></a>
+
+## 兼容性检查
 
 - 修改公开配置时依据[产品配置](../zh/reference/configuration.md)、[扩展声明](../zh/reference/extension-schema.md)和 [MCP 配置](../zh/reference/mcp-configuration.md)检查版本与字段。
 - 修改图状态或私有状态键时，用升级前的会话数据验证仍能读取 Checkpoint 并按约定续接。会话索引、绑定、产物和 Trace 的归属见[状态与存储](architecture/state-and-storage.md)。

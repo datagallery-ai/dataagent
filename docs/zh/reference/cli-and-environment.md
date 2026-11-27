@@ -90,7 +90,9 @@ uv run --no-sync dataagent history-sql --config path/to/config.yaml
 | `--resume [threadId]` | 启动时恢复会话 |
 | `--runtime-url` | 连接这个地址，不启动后端。不能和上一行的启动参数一起用 |
 
-## 环境变量 { #environment-variables }
+<a name="environment-variables"></a>
+
+## 环境变量
 
 仓库根目录的 `.env.example` 列出 Server 和 TUI 可手动设置的运行配置。默认配置发起对话需要三项 `LLM_*`。Home `.env` 或 `--env-file` 适用于后端有效环境。独立启动时，Web、TUI 和下表标为进程环境的选项从对应的启动终端导出。
 

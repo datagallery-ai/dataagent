@@ -15,7 +15,9 @@
 
 连接已有控制面时，在服务端修改相应文件。通过 `./deploy.sh` 部署时，请按[源码部署](deploy-source.md)重启服务，使 `tui`、`status`、`doctor` 使用本次启动记录的 API 地址。
 
-## 优先级 { #优先级 }
+<a name="优先级"></a>
+
+## 优先级
 
 [配置字段参考的合并规则](../reference/configuration.md#configuration-merge)规定了产品配置与插件默认值的加载顺序，以及对象、列表和 Hook 的合并方式。
 

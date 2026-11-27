@@ -2,7 +2,9 @@
 
 Web、TUI 和第三方客户端使用 `POST /api/v1/runs` 提交对话。这里定义请求负载和响应流。路由、HTTP 错误和会话读取见 [REST API](rest-api.md)，可运行示例见 [AG-UI 接入](agent-runtime.md)。
 
-## 请求 { #request }
+<a name="request"></a>
+
+## 请求
 
 请求体为 JSON。普通对话只提交本轮的新消息，服务端根据 `threadId` 加载历史。已保存的 Checkpoint 优先用于续接，缺少保存点时读取该线程的最新图状态。
 
@@ -19,11 +21,15 @@ Web、TUI 和第三方客户端使用 `POST /api/v1/runs` 提交对话。这里�
 
 每个会话同时只接受一轮。活跃的 `runId` 在同一服务进程内必须唯一，即便请求的线程不同。服务拒绝重用会话最后一次记录的 `runId`，也拒绝使用已加载历史里的消息 ID 进行编辑或重放。继续对话时为运行和消息生成新 ID。
 
-## SSE 响应 { #sse-response }
+<a name="sse-response"></a>
+
+## SSE 响应
 
 接受请求后返回 HTTP 200 和 `text/event-stream`，并设置 `Cache-Control: no-cache` 与 `X-Accel-Buffering: no`。客户端从 SSE 的 `data:` 帧读取 JSON。流建立后，执行失败通过 `RUN_ERROR` 表达。流建立前的错误返回 [REST 错误响应](rest-api.md#http-errors)。
 
-## 正常结束 { #completed }
+<a name="completed"></a>
+
+## 正常结束
 
 正常完成时按以下顺序发送事件。
 
@@ -35,7 +41,9 @@ Web、TUI 和第三方客户端使用 `POST /api/v1/runs` 提交对话。这里�
 
 结束前会检查图没有未完成的 `next`。HITL 等待按下文结束本轮 HTTP 流。其他未完成节点以 `RUN_ERROR` 结束。
 
-## 等待用户回答 { #hitl }
+<a name="hitl"></a>
+
+## 等待用户回答
 
 HITL 暂停也用 `RUN_FINISHED` 结束本轮流，但 `metadata.status="waiting_for_input"`，
 表示等待回答。最终消息快照前的 `CUSTOM name="human_feedback"` 携带当前全部待回答项：
@@ -65,7 +73,9 @@ HITL 暂停也用 `RUN_FINISHED` 结束本轮流，但 `metadata.status="waiting
 
 刷新客户端或重启服务后，可从 `GET /api/v1/sessions/{threadId}` 的 `pendingInteractions` 恢复待回答项。用户思考期间没有活动 HTTP 流，不计入单轮执行超时。通过 A2A 发起的人工交互须在 [A2A](a2a.md#a2a-hitl) 中恢复。
 
-## 失败 { #errors }
+<a name="errors"></a>
+
+## 失败
 
 `RUN_ERROR.code` 取下表中的固定值。服务端脱敏 `message`，并限制其长度为 1500 个字符。
 
@@ -87,7 +97,9 @@ HITL 暂停也用 `RUN_FINISHED` 结束本轮流，但 `metadata.status="waiting
 
 缺少终止事件、超时、扩展以外的执行异常，也编码成 `RUN_ERROR`。超时使用 `dataagent.limits.timeout_seconds`，包住模型重试、退避和工具时间。
 
-## 客户端应如何处理 { #terminal-events }
+<a name="terminal-events"></a>
+
+## 客户端应如何处理
 
 | 终止 | 会话状态 | 客户端 |
 | --- | --- | --- |
@@ -99,7 +111,9 @@ HITL 暂停也用 `RUN_FINISHED` 结束本轮流，但 `metadata.status="waiting
 
 TUI 会显示完成、失败或 `Interrupted — continue this conversation` 等运行摘要。摘要不写回 Checkpoint。
 
-## 流的范围 { #stream-scope }
+<a name="stream-scope"></a>
+
+## 流的范围
 
 子代理运行包含在根运行中。服务保留适配器的原生进度事件，不转换成自定义事件：
 

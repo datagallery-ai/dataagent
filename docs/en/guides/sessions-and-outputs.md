@@ -20,7 +20,9 @@ Each Home has its own session index. For example:
 
 These are separate sessions. Resume a conversation with the Home and user that created it. Within a Home, the server resolves ownership by `threadId`. If another user owns the ID, resume as that user or start a new session. The SDK binds by user and thread together. The host manages state isolation if callers share a checkpointer.
 
-## Output directory { #output-directory }
+<a name="output-directory"></a>
+
+## Output directory
 
 For a new session, the first provided source wins:
 
@@ -60,7 +62,9 @@ Registration rejects identical paths, nested paths, and symbolic-link aliases th
 
 An empty `artifacts/` does not count as existing user content. See [state and storage](../../development/architecture/state-and-storage.md#session-binding) for registration and concurrency.
 
-## Common errors { #common-errors }
+<a name="common-errors"></a>
+
+## Common errors
 
 | Error | Resolution |
 | --- | --- |

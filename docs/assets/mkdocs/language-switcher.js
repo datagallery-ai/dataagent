@@ -121,6 +121,7 @@
   const zhTextByEnglish = new Map([
     ["Use and Integration", "使用与集成"],
     ["Quick start", "快速开始"],
+    ["SQLite tutorial", "SQLite 分析教程"],
     ["Deploy and configure", "部署与配置"],
     ["Source deployment", "源码部署"],
     ["Package deployment", "独立包部署"],
@@ -146,7 +147,7 @@
     ["AG-UI protocol", "AG-UI 协议"],
     ["Extension schema", "扩展声明"],
     ["MCP configuration", "MCP 配置"],
-    ["Concepts", "概念"],
+    ["Overview", "了解 DataAgent"],
     ["Product overview", "产品概览"],
     ["Capabilities", "能力全览"],
     ["Architecture overview", "架构概览"],

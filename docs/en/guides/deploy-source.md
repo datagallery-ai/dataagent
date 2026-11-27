@@ -1,6 +1,6 @@
 # Deploy from source
 
-This guide covers two ways to deploy from source. If you have the Server wheel or TUI npm package, follow [DataAgent package deployment](deploy-packages.md).
+This guide covers two ways to deploy DataAgent from [source on GitCode](https://gitcode.com/datagallery/dataagent). To build and install the Server wheel or TUI npm package, see [package deployment](deploy-packages.md#get-artifacts).
 
 | Path | Hosts | Entry |
 | --- | --- | --- |
@@ -25,8 +25,8 @@ Install and run the project in the same environment. On Windows, do not share `n
 `./deploy.sh` does not reject distributions or CPU architectures in advance. Node.js installation uses NodeSource by default, or the package specified by `DATAAGENT_NODE_PACKAGE_URL`: DEB packages through `apt-get`, or RPM packages through `dnf` / `yum`. If no supported package manager is available, it asks you to install Node.js manually. Incompatible dependencies, insufficient permissions, or installation failures stop with an error. See [deployment with custom mirrors](deploy-mirrors.md) for mirror and interpreter configuration. Manual npm is recommended on Windows / macOS.
 
 ```bash
-git clone https://github.com/datagallery-lab/datafoundry.git
-cd datafoundry
+git clone https://gitcode.com/datagallery/dataagent.git
+cd dataagent
 ./deploy.sh
 ```
 

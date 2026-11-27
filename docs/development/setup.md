@@ -2,7 +2,9 @@
 
 Python 支持 3.11 和 3.12，使用 uv 管理依赖。构建或调试 Web 和 TUI 还需要 Node.js ≥22.12.0 和 npm。环境版本与依赖组见 [pyproject.toml](../../pyproject.toml) 和 [package.json](../../package.json)。
 
-## 准备源码环境 { #prepare-source }
+<a name="prepare-source"></a>
+
+## 准备源码环境
 
 在仓库根目录运行：
 
@@ -22,7 +24,9 @@ npm install --include=dev
 
 完整发行制品由[发布流程](release.md)构建。
 
-## 调试后端 { #debug-backend }
+<a name="debug-backend"></a>
+
+## 调试后端
 
 用独立 Home 调试配置、会话和日志。启动前可在进程环境指定 `DATAAGENT_HOME`，也可显式选择 YAML 和环境文件：
 
@@ -41,7 +45,9 @@ uv run --no-sync dataagent serve --config /path/to/config.yaml --env-file /path/
 
 改动后按[测试指南](testing.md)选择验证。
 
-## 本地预览文档 { #preview-docs }
+<a name="preview-docs"></a>
+
+## 本地预览文档
 
 在仓库根目录用独立 Python 环境准备 MkDocs：
 

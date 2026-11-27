@@ -2,7 +2,9 @@
 
 Use `.mcp.yaml` to make external MCP tools available to DataAgent. Put shared connections in Home and plugin-specific connections at the plugin root. See [MCP configuration](../../../reference/mcp-configuration.md) for locations, transports, and fields.
 
-## Run the local stdio example { #local-stdio-example }
+<a name="local-stdio-example"></a>
+
+## Run the local stdio example
 
 From the repository root, prepare Python and a separate Home:
 
@@ -23,11 +25,15 @@ To test tool discovery and invocation with a temporary Home and no live model:
 uv run --no-sync pytest -q tests/test_mcp.py::test_documented_local_example_is_runnable
 ```
 
-## Connect a remote MCP server { #remote-mcp}
+<a name="remote-mcp"></a>
+
+## Connect a remote MCP server
 
 Merge the needed `mcpServers` entries from the [complete template](../../../../../examples/mcp/mcp.full.yaml). Supply the full HTTP(S) MCP URL and choose Streamable HTTP (`type: http`) or SSE (`type: sse`) as required. Declare authentication in `headers` and reference credentials as `$env{NAME}`. See [environment and paths](../../../reference/mcp-configuration.md#environment-and-paths).
 
-## Discovery, refresh, and invocation { #discovery-and-refresh}
+<a name="discovery-and-refresh"></a>
+
+## Discovery, refresh, and invocation
 
 Discovery runs before the conversation engine becomes ready. If it fails, `dataagent serve` keeps `/healthz` at 200 with `data.conversation.ready: false`. `/ready` and conversation routes return 503. Look for `MCP discovery failed` or `MCP discovery timed out` in `backend.log`, fix configuration or connectivity, then restart.
 
@@ -35,7 +41,9 @@ A ready server checks local extension changes before a new turn. MCP rediscovery
 
 Each tool call opens and closes its own MCP session. A stdio server starts for each call. Use files or an external service for state that must persist across calls.
 
-## Use MCP in the Python SDK { #python-sdk}
+<a name="python-sdk"></a>
+
+## Use MCP in the Python SDK
 
 Discover tools asynchronously and pass them as `mcp_tools` to `create_agent`. The [SDK guide](../sdk.md) shows how to obtain `runtime` with `prepare_runtime`.
 
@@ -47,7 +55,9 @@ agent = create_agent(runtime, mcp_tools=await load_mcp_tools(runtime))
 
 SDK hosts manage tool loading and updates explicitly. If MCP is configured and tools are omitted, agent creation reports the missing tools.
 
-## NL2SQL over MCP { #nl2sql-mcp}
+<a name="nl2sql-mcp"></a>
+
+## NL2SQL over MCP
 
 Use `plugins.config.nl2sql.database.engine: mcp` and `database.path` for an independent Streamable HTTP database connection. NL2SQL invokes its configured reader for queries and EXPLAIN. See the [NL2SQL plugin](../../../../../dataagent/plugins/nl2sql/README.md) for endpoints, reader settings, and responses.
 

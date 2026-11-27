@@ -4,7 +4,9 @@ Use a workspace to give DataAgent a local directory, or configure an extension f
 
 <a id="plugins"></a>
 
-## Supported inputs { #supported-inputs }
+<a name="supported-inputs"></a>
+
+## Supported inputs
 
 | Input | Configuration |
 | --- | --- |
@@ -18,7 +20,9 @@ Querying a database, warehouse, or spreadsheet requires an enabled plugin with t
 
 <a id="read-only-directories"></a>
 
-## Read-only workspaces { #read-only-workspaces }
+<a name="read-only-workspaces"></a>
+
+## Read-only workspaces
 
 To let the model use local files, write their directory into the selected YAML. Each directory must already exist and be readable and traversable by the server process.
 

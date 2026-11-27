@@ -2,11 +2,15 @@
 
 DataAgent reads host MCP connections from `.mcp.yaml` in Home and in enabled plugin roots. Files use strict YAML 1.2. See [MCP integration](../guides/integrate/extensions/mcp.md) for usage and [mcp.full.yaml](../../../examples/mcp/mcp.full.yaml) for all transports.
 
-## Top level { #top-level }
+<a name="top-level"></a>
+
+## Top level
 
 The only top-level field is required `mcpServers`. It maps names matching `[a-z][a-z0-9_-]{0,63}` to connections below. Use `{}` for an empty map. Remove an entry or disable its plugin to remove a connection. Product settings and plugin manifests have separate schemas.
 
-## stdio { #stdio }
+<a name="stdio"></a>
+
+## stdio
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -17,7 +21,9 @@ The only top-level field is required `mcpServers`. It maps names matching `[a-z]
 
 The child runs in the directory containing `.mcp.yaml`. Relative commands containing `/` resolve from that directory. Bare names use the launch environment. The executable and arguments are passed directly without shell splitting.
 
-## HTTP and SSE { #remote-transports }
+<a name="remote-transports"></a>
+
+## HTTP and SSE
 
 | Field | Type | Default | Meaning |
 | --- | --- | --- | --- |
@@ -27,13 +33,17 @@ The child runs in the directory containing `.mcp.yaml`. Relative commands contai
 
 Unknown fields and fields from another transport are rejected.
 
-## Environment and paths { #environment-and-paths }
+<a name="environment-and-paths"></a>
+
+## Environment and paths
 
 `$env{NAME}` expands after YAML parsing and before field validation. Use it in executable paths, environment values, and headers. Missing variables fail runtime preparation. Nonempty process values override the selected environment file, defaulting to Home `.env` unless `--env-file` is used. Plugin-local `.env` files are not loaded automatically. See [environment precedence](cli-and-environment.md#environment-variables).
 
 Merge the template entries you need into the actual `.mcp.yaml` and supply reachable endpoints and credentials before startup.
 
-## Tool naming and discovery failures { #tool-naming }
+<a name="tool-naming"></a>
+
+## Tool naming and discovery failures
 
 The service ID is `mcp__<scope>__<server>`. Home scope is `user`; plugins use the directory name. Duplicate service IDs fail runtime preparation. The registered tool name adds `__<original-tool-name>`, for example `mcp__user__math__add`. The upstream call still uses the original name.
 

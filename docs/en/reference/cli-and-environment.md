@@ -2,7 +2,9 @@
 
 Source commands below use the project's prepared environment without syncing it. See [staged installation](../guides/deploy-mirrors.md#staged-installation). With the wheel installed, run `dataagent` from its environment.
 
-## `dataagent serve` { #dataagent-serve }
+<a name="dataagent-serve"></a>
+
+## `dataagent serve`
 
 `dataagent.cli:main` and `python -m dataagent` invoke the same implementation. Web and TUI use this backend.
 
@@ -30,7 +32,9 @@ Missing, non-file, or malformed explicit YAML causes both servers to exit 1 befo
 | `--reload` | Watch `dataagent/` and restart for development. npm and deploy launchers omit it |
 | `--stdio-ready` | Hidden handshake for a backend spawned by TUI, used with process-only `DATAAGENT_INSTANCE_ID` |
 
-## `dataagent serve-a2a` { #dataagent-serve-a2a }
+<a name="dataagent-serve-a2a"></a>
+
+## `dataagent serve-a2a`
 
 Expose the same runtime as a standalone A2A 1.0 service. Configuration, user, and environment options work as in `serve`. YAML supplies inputs. Each `contextId` is its own session, so this command has no `--session`.
 
@@ -53,7 +57,9 @@ JSON-RPC uses `/a2a/jsonrpc` and requires `A2A-Version: 1.0`. Default access is 
 
 SDK `LaunchOptions` additionally accepts `cwd` and `init_home`. CLI startup initializes Home by default. The SDK defaults to `init_home=False`. YAML `dataagent.input_workspaces` supplies default inputs.
 
-## `dataagent history-sql` { #dataagent-history-sql }
+<a name="dataagent-history-sql"></a>
+
+## `dataagent history-sql`
 
 Download historical SQL from a configured semantic service for de-agent's `history_sql` corpus.
 
@@ -83,7 +89,9 @@ Installed `dataagent-cli` and `da` connect to a running Server. The source `npm 
 | `--resume [threadId]` | Resume at startup |
 | `--runtime-url` | Attach only. Incompatible with local spawn options |
 
-## Environment variables { #environment-variables }
+<a name="environment-variables"></a>
+
+## Environment variables
 
 See repository `.env.example`. Default model configuration needs the three `LLM_*` values. Use the relevant launch process for process-only settings.
 

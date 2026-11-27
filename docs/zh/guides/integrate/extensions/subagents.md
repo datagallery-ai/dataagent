@@ -53,7 +53,9 @@ system_prompt_file: prompts/general-purpose.md
 
 服务端 AG-UI 适配器使用 `subagent_visibility="attributed"`，子代理步骤归属到当前根运行，客户端可展示其过程；它们不会变成独立的用户回合。A2A 通过 Task 提供最终结果，可等待结束或先返回任务号再查询，不提供这条 AG-UI 事件流。
 
-## 入口模式 { #entry-mode }
+<a name="entry-mode"></a>
+
+## 入口模式
 
 `dataagent.entry` 设成某个编译型子代理的 `name` 时，装配不再创建 Deep Agents 根图，只把这个编译型入口包进同一层壳。每个编译型入口走同一层壳，宿主不按入口名重建插件图。
 

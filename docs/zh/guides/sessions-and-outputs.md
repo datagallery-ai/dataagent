@@ -22,7 +22,9 @@ Home 的 `runtime/` 保存会话索引、输入与产物绑定、Checkpoint、�
 
 服务端在同一 Home 中按 `threadId` 识别会话归属。同一 ID 已属于另一用户时，请用该用户恢复或新建会话。SDK 的目录绑定以用户和线程共同区分，使用同一个 checkpointer 时由调用方安排状态隔离。
 
-## 产物目录的位置 { #output-directory }
+<a name="output-directory"></a>
+
+## 产物目录的位置
 
 新会话按下表顺序选择产物目录，使用第一个有值的来源。
 
@@ -71,7 +73,9 @@ Home 的 `runtime/` 保存会话索引、输入与产物绑定、Checkpoint、�
 
 数据库登记和并发规则见[状态与存储](../../development/architecture/state-and-storage.md#session-binding)。
 
-## 常见报错 { #common-errors }
+<a name="common-errors"></a>
+
+## 常见报错
 
 | 报错 | 原因 | 处理 |
 | --- | --- | --- |

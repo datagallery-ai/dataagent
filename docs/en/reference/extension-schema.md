@@ -2,7 +2,9 @@
 
 Product settings, plugins, and subagents share these declarations. Models live in `dataagent.config.declarations`. Unknown fields are rejected.
 
-## Identifiers { #extension-identifiers }
+<a name="extension-identifiers"></a>
+
+## Identifiers
 
 | Use | Pattern |
 | --- | --- |
@@ -18,7 +20,9 @@ Product settings, plugins, and subagents share these declarations. Models live i
 
 `user` and `cli` are reserved plugin IDs. Root agent name `dataagent` is reserved for the root.
 
-## Plugin `.plugin.yaml` { #plugin-manifest }
+<a name="plugin-manifest"></a>
+
+## Plugin `.plugin.yaml`
 
 `schema_version` defaults to 3 and only accepts 3.
 
@@ -37,7 +41,9 @@ Product settings, plugins, and subagents share these declarations. Models live i
 
 Paths resolve within the plugin root. The entrypoint points to a Python file and the symbol must be a valid identifier. Tool scope defaults to `all`. Scope `subagents` keeps the tool in the registry for explicit subagent references, separate from root and inherited lists.
 
-## Hooks { #agent-hooks }
+<a name="agent-hooks"></a>
+
+## Hooks
 
 Grouped keys are `before_agent`, `after_agent`, `before_model`, `after_model`, `before_tool`, and `after_tool`.
 
@@ -50,7 +56,9 @@ Grouped keys are `before_agent`, `after_agent`, `before_model`, `after_model`, `
 
 Plugin and subagent hook paths resolve from the plugin root. Product hook paths resolve from the declaring file's directory. Both must remain in that root. Multi-layer product settings append hooks while retaining each declaration's directory. See [signatures](../guides/integrate/extensions/hooks.md#hook-signatures).
 
-## Subagent YAML { #subagent-declaration }
+<a name="subagent-declaration"></a>
+
+## Subagent YAML
 
 | Field | Constraint |
 | --- | --- |
@@ -69,17 +77,23 @@ Plugin and subagent hook paths resolve from the plugin root. Product hook paths 
 
 Native FilesystemMiddleware uses `filesystem_tools` independently of plugin `tools`. A compiled subagent owns its graph. Its declaration rejects `system_prompt_file`, `tools`, `skills`, nonempty hooks, `filesystem_tools`, `model`, and `temperature`. See [subagents](../guides/integrate/extensions/subagents.md).
 
-## Human feedback configuration { #hitl-configuration }
+<a name="hitl-configuration"></a>
+
+## Human feedback configuration
 
 When `hitl` is present, `enabled` defaults to `true`. Setting it false disables the plugin's HITL resources but still validates the structure. `instructions` is an optional relative path to nonempty Markdown. `policies` defaults to `[]`.
 
 Each policy has a source-unique `id` using the plugin pattern. Optional fields are `version` (default string `"1"`), `at` (one of the [hook phases](#agent-hooks), default `before_tool`), plugin-relative `handler: file.py:ClassName`, and JSON `params` (default `{}`). `matcher` is only for before/after-tool and matches the exact registered name. See [HITL guide](../guides/integrate/extensions/hitl.md).
 
-## Skill metadata { #skill-metadata }
+<a name="skill-metadata"></a>
+
+## Skill metadata
 
 `SKILL.md` starts with YAML frontmatter mapping with nonempty `name` and `description`. The decoded file limit is 10 × 2²⁰ characters. Names should match their directory and use up to 64 lowercase letters, digits, and hyphens, without leading, trailing, or repeated hyphens. Invalid forms warn but still load. Descriptions truncate at 1,024 characters. Optional fields include `license`, `compatibility`, `metadata`, and `allowed-tools`.
 
-## Compiled workflow hooks { #compiled-workflow-hook }
+<a name="compiled-workflow-hook"></a>
+
+## Compiled workflow hooks
 
 `plugins.config.<id>.run_hooks` accepts `before_run` and `after_run` arrays independently of agent hooks. Entries contain `entrypoint` and optional `params`. Paths are relative to the declaring plugin or user file even when configuring another plugin. Compiled subagents receive the registered handlers in `services.run_hooks` and call them at their own workflow boundaries. NL2SQL is the built-in consumer. Declaring hooks for a plugin without a compiled subagent fails assembly.
 

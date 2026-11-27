@@ -4,7 +4,9 @@ Find the files to edit and the minimum model settings for your first deployment.
 
 The control plane has no configuration REST API. The Web UI cannot change the model or the workspaces.
 
-## Files to edit { #files-to-edit }
+<a name="files-to-edit"></a>
+
+## Files to edit
 
 | File | Role |
 | --- | --- |

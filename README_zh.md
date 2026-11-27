@@ -13,7 +13,8 @@
   <a href="docs/zh/quick-start.md"><strong>快速开始</strong></a> ·
   <a href="docs/zh/index.md"><strong>使用与集成</strong></a> ·
   <a href="docs/development/index.md"><strong>开发者文档</strong></a> ·
-  <a href="CONTRIBUTING.md"><strong>参与贡献</strong></a>
+  <a href="CONTRIBUTING.md"><strong>参与贡献</strong></a> ·
+  <a href="https://datagallery.cn/docs"><strong>在线文档</strong></a>
 </p>
 
 <p align="center">
@@ -42,8 +43,8 @@
 在 Linux 上准备 Git、Node.js 22.12+ 和 uv，再从源码启动：
 
 ```bash
-git clone https://github.com/datagallery-lab/datafoundry.git
-cd datafoundry
+git clone https://gitcode.com/datagallery/dataagent.git
+cd dataagent
 ./deploy.sh
 ```
 
@@ -51,7 +52,7 @@ cd datafoundry
 
 使用 `./deploy.sh status` 检查服务状态，使用 `./deploy.sh logs` 查看实时日志。
 
-[Windows 与 macOS 手动部署](docs/zh/guides/deploy-source.md) · [Server wheel 和 TUI 安装包](docs/zh/guides/deploy-packages.md)
+[Windows 与 macOS 手动部署](docs/zh/guides/deploy-source.md) · [获取 Server wheel 和 TUI 安装包](docs/zh/guides/deploy-packages.md#get-artifacts)
 
 ## 一条数据任务如何跑完
 

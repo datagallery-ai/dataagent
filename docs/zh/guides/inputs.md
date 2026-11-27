@@ -2,7 +2,9 @@
 
 通过工作区给 DataAgent 提供本机目录，或按需配置扩展来接入其他输入。
 
-## 支持的输入 { #supported-inputs }
+<a name="supported-inputs"></a>
+
+## 支持的输入
 
 | 输入 | 怎么配置 |
 | --- | --- |
@@ -14,7 +16,9 @@
 
 查询数据库、数仓或表格文件需要启用相应插件，并在该插件的配置中声明数据。控制面没有数据源注册表，也不提供 `GET /api/v1/datasource-types`。网页和 TUI 按服务端配置访问数据。
 
-## 只读工作区 { #read-only-workspaces }
+<a name="read-only-workspaces"></a>
+
+## 只读工作区
 
 要让模型读取本机文件，把目录写进所选 YAML。目录必须已存在，并且服务进程可以读取和进入。
 

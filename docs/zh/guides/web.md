@@ -13,7 +13,9 @@ npm run start
 
 `npm run start` 启动 Web 并使用启动器选定地址上的本地 Server。该地址上没有控制面时会拉起后端。打开 [http://127.0.0.1:3000/data-tasks](http://127.0.0.1:3000/data-tasks)，或使用启动器打印的 Web 地址。要改变 Web 监听端口或地址，在 `--` 后传入 `--web-port` 或 `--web-host`。
 
-### 只启动 Web 并连接已有 Server { #connect-server }
+<a name="connect-server"></a>
+
+### 只启动 Web 并连接已有 Server
 
 构建 Web 后，可以只启动网页。已有 Server 的地址与 Home `config.yaml` 一致时，运行 `npm run start:web`。如果 Server 在其他地址，在运行 Web 的机器上指定 Server URL：
 
@@ -33,7 +35,9 @@ API_PROXY_TARGET=http://127.0.0.1:8791 npm run start:web
 
 模型、插件和会话输入目录由 Server 提供。需要修改设置时参阅[配置指南](../reference/configuration-api.md)。会话、文件预览和取消的契约见 [REST 参考](../reference/rest-api.md#sessions-and-runs)。
 
-## 排查 { #troubleshooting }
+<a name="troubleshooting"></a>
+
+## 排查
 
 - 页面打不开时，确认 Web 进程仍在运行，使用启动器打印的地址。
 - 代理请求返回 `502` 时，检查 Web 进程能否访问所配置的 Server。应直接在 Server 地址上请求 `/healthz` 和 `/ready`。`/ready` 返回 `503` 时，检查模型配置和后端日志。

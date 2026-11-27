@@ -2,7 +2,9 @@
 
 Web, TUI, and integrations submit turns via `POST /api/v1/runs`. See [REST API](rest-api.md) for routes and HTTP errors and [AG-UI integration](agent-runtime.md) for a runnable example.
 
-## Request { #request }
+<a name="request"></a>
+
+## Request
 
 Send JSON. A normal turn contains one new message. The server loads history for `threadId` from its recorded checkpoint or, if absent, the latest graph state on that thread.
 
@@ -19,11 +21,15 @@ Unknown top-level fields and client-supplied state, tools, or context are reject
 
 Only one turn may be active per session. Active run IDs are process-wide, including across threads. The last run ID on a session and message IDs from loaded history cannot be reused to edit or replay. Use new run and message IDs.
 
-## SSE response { #sse-response }
+<a name="sse-response"></a>
+
+## SSE response
 
 An accepted run returns HTTP 200 and `text/event-stream` with `Cache-Control: no-cache` and `X-Accel-Buffering: no`. Read JSON from SSE `data:` frames. Failures after opening the stream use `RUN_ERROR`. Earlier failures return the [REST error response](rest-api.md#http-errors).
 
-## Successful completion { #completed }
+<a name="completed"></a>
+
+## Successful completion
 
 1. `RUN_STARTED` with `threadId` and `runId`.
 2. Intermediate adapter events, such as text and tool calls.
@@ -33,7 +39,9 @@ An accepted run returns HTTP 200 and `text/event-stream` with `Cache-Control: no
 
 The server checks for pending graph `next` steps. Human feedback pauses end the HTTP stream as below. Other incomplete steps end with `RUN_ERROR`.
 
-## Wait for human feedback { #hitl }
+<a name="hitl"></a>
+
+## Wait for human feedback
 
 A pause ends the stream with `RUN_FINISHED` and `metadata.status="waiting_for_input"`. A `CUSTOM name="human_feedback"` event before the final snapshot carries the complete list of pending interactions:
 
@@ -61,7 +69,9 @@ Replace `<id>` with the received `interruptId`. Parallel interactions can be ans
 
 Reload pending items from `GET /api/v1/sessions/{threadId}` and its `pendingInteractions` after refresh or restart. No HTTP stream runs while the user decides, so this wait does not count against turn timeout. Interactions started by [A2A](a2a.md#a2a-hitl) must resume via A2A.
 
-## Errors { #errors }
+<a name="errors"></a>
+
+## Errors
 
 `RUN_ERROR.code` uses these values. The human-readable `message` is redacted and limited to 1,500 characters. Integrations should branch on the code. Server logs also include the exception class as `error=`.
 
@@ -79,7 +89,9 @@ Reload pending items from `GET /api/v1/sessions/{threadId}` and its `pendingInte
 
 The server sanitizes upstream `RUN_ERROR` messages, marks the session `error`, and maps unknown codes to `INTERNAL_ERROR`. Missing terminal events, timeouts, and other execution errors also become `RUN_ERROR`. The turn limit includes retries, backoff, and tools.
 
-## Handle termination { #terminal-events }
+<a name="terminal-events"></a>
+
+## Handle termination
 
 | Terminal result | Session status | Client handling |
 | --- | --- | --- |
@@ -91,7 +103,9 @@ The server sanitizes upstream `RUN_ERROR` messages, marks the session `error`, a
 
 TUI summaries such as `Interrupted — continue this conversation` are not written into checkpoints.
 
-## Stream scope { #stream-scope }
+<a name="stream-scope"></a>
+
+## Stream scope
 
 Subagent events are attributed to the root run.
 

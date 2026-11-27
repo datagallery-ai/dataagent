@@ -2,7 +2,9 @@
 
 运行时使用一个 Home。默认是 `~/.dataagent`，可通过进程环境的 `DATAAGENT_HOME` 选择其他位置。相对路径以启动时的工作目录解析。配置和环境文件的选择规则见[配置参考](../../zh/reference/configuration.md)与[环境变量](../../zh/reference/cli-and-environment.md#environment-variables)。
 
-## 目录布局 { #home-layout }
+<a name="home-layout"></a>
+
+## 目录布局
 
 ```text
 <home>/
@@ -28,7 +30,9 @@ Home 初始化创建缺少的 Home、`skills/`、`hooks/`、`plugins/`、`runtim
 
 Home 级 MCP 使用可选的 `.mcp.yaml`。已启用插件也可在各自根目录声明 MCP。Home `hooks/` 用于容纳配置通过 `entrypoint` 引用的文件。插件候选还包括包内 `dataagent/plugins/` 与显式 `plugins.paths`。资源定位和加载顺序见[启动](bootstrap.md)与[扩展生命周期](extension-lifecycle.md)。
 
-## 工作区与会话 { #workspaces-and-sessions }
+<a name="workspaces-and-sessions"></a>
+
+## 工作区与会话
 
 工作区是所选 YAML 的 `dataagent.input_workspaces` 指定的输入目录。目录须存在，并且进程能读取和进入。逻辑名称不会成为路径的一部分。使用步骤见[输入与工作区](../../zh/guides/inputs.md)，恢复会话时的绑定规则见[会话与产物](../../zh/guides/sessions-and-outputs.md)。
 

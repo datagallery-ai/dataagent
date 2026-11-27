@@ -2,13 +2,13 @@
 
 Start DataAgent on Linux and send your first question in the Web workbench. This path uses Git, npm, uv, and a reachable model service that provides an OpenAI-compatible API.
 
-For Windows or macOS, follow [manual source deployment](guides/deploy-source.md#1-prepare-tools-and-download-sources). If you have the Server wheel or TUI npm package, follow [package deployment](guides/deploy-packages.md).
+For Windows or macOS, follow [manual source deployment](guides/deploy-source.md#1-prepare-tools-and-download-sources). For the Server wheel and TUI npm package, see [package deployment and version information](guides/deploy-packages.md#get-artifacts).
 
 ## 1. Deploy on Linux
 
 ```bash
-git clone https://github.com/datagallery-lab/datafoundry.git
-cd datafoundry
+git clone https://gitcode.com/datagallery/dataagent.git
+cd dataagent
 ./deploy.sh
 ```
 
@@ -26,7 +26,9 @@ LLM_API_KEY=replace-with-your-key
 
 Apply the configuration with `./deploy.sh restart`. See [Configuration](reference/configuration-api.md) for the files and settings DataAgent reads.
 
-## 3. Run your first question { #run-your-first-question }
+<a name="run-your-first-question"></a>
+
+## 3. Run your first question
 
 Open the workbench URL printed by the script, usually [http://127.0.0.1:3000/data-tasks](http://127.0.0.1:3000/data-tasks), and send:
 
@@ -35,6 +37,8 @@ In three sentences, say what you can do right now.
 ```
 
 A streamed reply confirms the Web workbench can reach the Server and the model can respond. To try the same flow from a terminal, run `./deploy.sh tui` and follow the [TUI guide](guides/tui.md).
+
+Once the model responds, use the [SQLite tutorial](guides/sqlite-tutorial.md) to query sample orders and verify the resulting CSV.
 
 ## More deployment details
 

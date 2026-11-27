@@ -2,7 +2,9 @@
 
 通过 SDK 在 Python 进程里调用 DataAgent。先按[配置速查](../../reference/configuration-api.md)准备可用模型。默认读取 DataAgent Home 的 `config.yaml` 和 `.env`，也可用 `LaunchOptions(config=..., env_file=...)` 分别选择文件。环境变量取值顺序见[环境变量参考](../../reference/cli-and-environment.md#environment-variables)。
 
-## 调用 Agent { #without-file-logging }
+<a name="without-file-logging"></a>
+
+## 调用 Agent
 
 把示例保存为脚本。在源码环境中用 `uv run python /path/to/example.py` 运行，或在已安装 DataAgent 的环境里用 `python /path/to/example.py` 运行。
 
@@ -36,7 +38,9 @@ asyncio.run(main())
 
 要查看主代理委派 nl2sql 的效果，在所选配置中启用并配置 nl2sql，保持 `dataagent.entry` 未设置，然后用实际数据库问题替换示例里的消息。
 
-## 写入统一 backend.log { #backend-log }
+<a name="backend-log"></a>
+
+## 写入统一 backend.log
 
 SDK 使用宿主已有的 Python logging 配置。想沿用 DataAgent 服务的 JSON 日志，可在上面脚本的导入区加入 `from dataagent.host import configure_logging`，并在 `main()` 里紧接 `prepare_runtime(...)` 调用 `configure_logging(runtime)`。
 
@@ -44,7 +48,9 @@ SDK 使用宿主已有的 Python logging 配置。想沿用 DataAgent 服务的 
 
 `dataagent serve` 和 `serve-a2a` 在启动时初始化日志。SDK 的日志跟随准备出的 Home，启动器内部的 `DATAAGENT_LOG_CAPTURE` 由启动器管理。
 
-## 每个任务指定产物目录 { #task-outputs }
+<a name="task-outputs"></a>
+
+## 每个任务指定产物目录
 
 可以重用一个 Agent 运行多个任务。给任务分配独立的 `thread_id`，用 `output_dir` 指定最终目录。
 
@@ -74,7 +80,9 @@ asyncio.run(main())
 
 工具通过 `runtime.context.session.outputs` 取得当前会话的目录。这个目录里的文件和对话 Checkpoint 各自独立保存。
 
-## 提前结束事件流 { #close-stream }
+<a name="close-stream"></a>
+
+## 提前结束事件流
 
 用 `closing` 或 `aclosing` 管理流。收到所需事件就退出循环，退出上下文时关闭流并释放会话。
 
@@ -89,6 +97,8 @@ with closing(agent.stream(inputs, config)) as stream:
 
 异步调用用 `async with aclosing(agent.astream(inputs, config))` 和 `async for`。并发与会话占用规则见 [Agent API](../../reference/python-api.md#agent)。
 
-## 在工具中访问模型 { #tool-models }
+<a name="tool-models"></a>
+
+## 在工具中访问模型
 
 工具可通过 `ToolRuntime[AgentContext]` 调用 `runtime.context.get_model()`，或传已配置的别名。写法见[工具扩展指南](extensions/tools.md)。调用时传 `config=runtime.config`，让模型运行能关联到当前 Trace。工具内直接调用的模型走独立路径，Agent 循环的模型调用限额和中间件只作用于循环中的调用。
