@@ -1,14 +1,40 @@
 # Configuration guide
 
-Use this guide to change an existing configuration. For your first model, see [configuration quick reference](../reference/configuration-api.md). The [configuration fields](../reference/configuration.md) cover defaults and merge rules.
+Configure a new instance or change an existing one. Edit the model and workspace settings on the server. See the [configuration reference](../reference/configuration.md) for fields, defaults, and merge rules.
 
 Examples include the [minimal template](../../../config.example.yaml), [product settings with two hooks](../../../examples/config.yaml), and [nl2sql as the entry graph](../../../examples/nl2sql-entry.yaml). See the [examples README](../../../examples/README.md) for the files these configurations use.
 
+<a id="select-the-configuration-files"></a>
+
+<a name="files-to-edit"></a>
+
 ## Select the configuration files
 
-Check [which YAML and environment files are in use](../reference/configuration-api.md#files-to-edit). See [CLI and environment](../reference/cli-and-environment.md#environment-variables) for file selection, precedence, and scope.
+| File | Role |
+| --- | --- |
+| `<home>/config.yaml` | Product configuration. Home defaults to `~/.dataagent`. |
+| `<home>/.env` | Model name, base URL, and key. |
+| Repository `.env` | Source launchers such as `npm run start` and `./deploy.sh` load this file. |
 
-Edit the files on the server when connecting to an existing control plane. For a stack managed by `./deploy.sh`, restart as described in [source deployment](deploy-source.md). The `tui`, `status`, and `doctor` commands use the API address recorded at startup.
+Set `DATAAGENT_HOME` in the launch environment to change Home. Use `--config` and `--env-file` to select the YAML and environment files independently. For an existing control plane, edit the configuration on that server. See [environment precedence](../reference/cli-and-environment.md#environment-variables).
+
+<a name="minimum-model"></a>
+
+## Configure the first model
+
+The minimal YAML below uses the default model ID, `primary`. Put the three `LLM_*` values in your selected environment file.
+
+```yaml
+schema_version: 4
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+```
+
+See [listen settings](../reference/configuration.md#server-settings) if you need a different address. Restart the control plane and [verify a model response](../quick-start.md#run-your-first-question).
 
 <a name="precedence"></a>
 
@@ -84,9 +110,7 @@ See [sessions and outputs](sessions-and-outputs.md) for identity, ownership, exc
 
 **Connect a semantic service.** Add a `semantic` object. See [semantic service](integrate/extensions/semantic-service.md) for client use, authentication, and TLS. Without the object, the runtime creates no client.
 
-**Use a compiled subagent as the entry graph.** Set `dataagent.entry` to a compiled subagent from an enabled plugin and restart. The Deep Agents root is used when the entry is omitted. The runnable [nl2sql entry example](../../../examples/nl2sql-entry.yaml) configures `nl2sql`, a model, a SQLite database, and a semantic service.
-
-A higher configuration layer replaces the lower entry value. Hooks, call limits, workspaces, Skills, tools, MCP tools, plugin system prompts, and other subagents remain in configuration without being assembled into that graph. `limits.timeout_seconds` still bounds host execution. See [entry mode](integrate/extensions/subagents.md#entry-mode).
+**Select a compiled entry graph.** Follow [entry mode](integrate/extensions/subagents.md#entry-mode) to set `dataagent.entry` and verify which graph runs.
 
 ## Settings in other files
 

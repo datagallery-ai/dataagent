@@ -17,7 +17,7 @@ cp examples/mcp/.mcp.yaml examples/mcp/math_server.py "$DATAAGENT_HOME/"
 
 The [example configuration](../../../../../examples/mcp/.mcp.yaml) uses `MCP_PYTHON` to start its neighboring [math_server.py](../../../../../examples/mcp/math_server.py). In an existing Home, merge just the `math` entry into `mcpServers` and put the script next to the configuration. Check for an existing entry or script before copying.
 
-Configure a model for that Home with the [configuration quick reference](../../../reference/configuration-api.md), then run the [built TUI](../../tui.md) in the same terminal against its Server. Ask `Use mcp__user__math__add to add 12 and 30.` The result should be 42. If another Server owns the default port, configure a different listen address for this Home and attach to it. See [CLI reference](../../../reference/cli-and-environment.md#dataagent-serve).
+Configure a model for that Home with the [configuration quick reference](../../configuration.md), then run the [built TUI](../../tui.md) in the same terminal against its Server. Ask `Use mcp__user__math__add to add 12 and 30.` The result should be 42. If another Server owns the default port, configure a different listen address for this Home and attach to it. See [CLI reference](../../../reference/cli-and-environment.md#dataagent-serve).
 
 To test tool discovery and invocation with a temporary Home and no live model:
 

@@ -1,4 +1,4 @@
-# 场景案例
+# 提交案例
 
 想先跑通一个完整案例，可以从 [SQLite 分析教程](../guides/sqlite-tutorial.md) 开始，查询样例订单并验证生成的 CSV。
 

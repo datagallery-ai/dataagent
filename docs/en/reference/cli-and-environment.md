@@ -104,7 +104,7 @@ See repository `.env.example`. Default model configuration needs the three `LLM_
 | `API_PROXY_TARGET` | Web launcher | In Web-only mode explicit `--config` supplies Server addresses with defaults for missing fields. Otherwise use this variable, Home YAML, then default, in that order. The Web bind uses `--web-host` and `--web-port` |
 | `LLM_MODEL`, `LLM_BASE_URL`, `LLM_API_KEY` | Config `$env{...}` references | Template variable names. Other names work if configured |
 | `DATAAGENT_OTLP_TRACES_ENDPOINT` | Backend process | Full real-time OTLP/HTTP trace URL. Unset means local trace files only |
-| `DATAAGENT_OTLP_HEADERS` | Backend process | Comma-separated `key=value` export headers |
+| `DATAAGENT_OTLP_HEADERS` | Backend process | Comma-separated `key=value` export headers. See [trace export](../guides/trace-export.md) for receiver configuration and verification. |
 | `DATAAGENT_A2A_AUTH_TOKEN` | Backend effective environment | A2A Bearer token for both servers. Redacted from logs |
 | `DATAAGENT_WEB_ORIGIN` | Web process | Allowed browser error-reporting origin, such as `https://data.example.com`. Separate from the backend proxy target |
 | `DATAAGENT_HISTORY_SQL_CORPUS` | Backend process | Absolute SQL corpus path, ahead of `history_sql.corpus_path` |

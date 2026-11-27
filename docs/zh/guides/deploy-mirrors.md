@@ -68,13 +68,13 @@ npm run build
 
 第二步使用已导出的变量或 uv 配置。只需要基础运行依赖时可省略 `--extra video`；需要 Spark/Hive 和视频时选择 `--extra all` 并准备相应外部环境。已有环境执行同步也会移除未选中的依赖。
 
-然后按 [配置说明](../quick-start.md) 在仓库根目录创建并填写 `.env`，启动时显式选择这份文件：
+然后按[手动部署的模型配置](deploy-source-manual.md#manual-model)在仓库根目录填写 `.env`，启动时显式选择这份文件。
 
 ```bash
 uv run --no-sync --env-file .env dataagent serve
 ```
 
-这里由 uv 将仓库根 `.env` 注入进程环境。若改用 Home `.env` 或进程环境提供模型配置，省略 `--env-file .env`。需要替换 Home 环境文件时，将 `--env-file` 放在 `dataagent serve` 之后。只提供 A2A 时将 `serve` 换成 `serve-a2a`；仅运行后端可跳过 npm 安装和前端构建。`serve-a2a` 没有 REST 健康、会话和产物接口。需要前端时，连接已有后端的命令见 [Web/TUI 连接](deploy-source.md#connect-source-frontends)。
+这里由 uv 将仓库根 `.env` 注入进程环境。若改用 Home `.env` 或进程环境提供模型配置，省略 `--env-file .env`。需要替换 Home 环境文件时，将 `--env-file` 放在 `dataagent serve` 之后。只提供 A2A 时将 `serve` 换成 `serve-a2a`；仅运行后端可跳过 npm 安装和前端构建。`serve-a2a` 没有 REST 健康、会话和产物接口。需要前端时，见 [Web 连接](web.md#connect-server)或 [TUI 连接](tui.md#connect-server)。
 
 ## 模型与检查
 

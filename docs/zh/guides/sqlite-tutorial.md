@@ -10,7 +10,7 @@
 uv sync --python 3.12
 ```
 
-可以复用[快速开始](../quick-start.md)中的仓库根目录 `.env`。文件需要包含 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。如果模型变量已经在当前进程环境中设置，运行命令时可省略 `--env-file .env`。字段含义见[配置速查](../reference/configuration-api.md)。
+可以复用[快速开始](../quick-start.md)中的仓库根目录 `.env`。文件需要包含 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。如果模型变量已经在当前进程环境中设置，运行命令时可省略 `--env-file .env`。字段含义见[配置速查](configuration.md)。
 
 ## 执行任务
 

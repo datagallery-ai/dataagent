@@ -105,7 +105,7 @@ uv run --no-sync dataagent history-sql --config path/to/config.yaml
 | `API_PROXY_TARGET` | Web 启动环境 | 单独启动 Web 时，显式 `--config` 只使用该配置文件，缺省的监听值用默认值。未传 `--config` 时，Server 地址依次取 `API_PROXY_TARGET`、Home `config.yaml`、默认地址。`--web-host` 和 `--web-port` 设置 Web 自身的监听地址 |
 | `LLM_MODEL`、`LLM_BASE_URL`、`LLM_API_KEY` | 配置里的 `$env{...}` | 模板和示例使用的三个名字。配置里写成别的 `$env{...}` 时，以那个引用为准 |
 | `DATAAGENT_OTLP_TRACES_ENDPOINT` | 后端进程环境 | 实时 OTLP/HTTP traces 的完整 URL。未设置则只写本地 trace 文件 |
-| `DATAAGENT_OTLP_HEADERS` | 后端进程环境 | 实时导出的请求头，逗号分隔的 `key=value` |
+| `DATAAGENT_OTLP_HEADERS` | 后端进程环境 | 实时导出的请求头，逗号分隔的 `key=value`。接收器配置和测试方法见[Trace 导出](../guides/trace-export.md)。 |
 | `DATAAGENT_A2A_AUTH_TOKEN` | 后端有效环境 | A2A JSON-RPC 的 Bearer 令牌。`serve` 和 `serve-a2a` 都读。进入日志脱敏 |
 | `DATAAGENT_WEB_ORIGIN` | Web 进程环境 | 浏览器错误上报允许的 Origin，例如 `https://data.example.com`。代理、域名或通配地址部署时指定；不用于配置 Next 到后端的转发 |
 | `DATAAGENT_HISTORY_SQL_CORPUS` | 后端进程环境 | 历史 SQL 语料目录，绝对路径。优先于 `history_sql.corpus_path` |

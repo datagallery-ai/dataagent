@@ -10,7 +10,7 @@ Run the commands from the root of the DataAgent source checkout. You need Python
 uv sync --python 3.12
 ```
 
-Reuse the repository-root `.env` from the [quick start](../quick-start.md). It needs `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY`. If those model variables are already set in your shell environment, you can omit `--env-file .env`. See [Configuration](../reference/configuration-api.md) for the field definitions.
+Reuse the repository-root `.env` from the [quick start](../quick-start.md). It needs `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY`. If those model variables are already set in your shell environment, you can omit `--env-file .env`. See [Configuration](configuration.md) for the field definitions.
 
 ## Run the task
 

@@ -2,7 +2,9 @@
 
 Start DataAgent on Linux and send your first question in the Web workbench. This path uses Git, npm, uv, and a reachable model service that provides an OpenAI-compatible API.
 
-For Windows or macOS, follow [manual source deployment](guides/deploy-source.md#1-prepare-tools-and-download-sources). For the Server wheel and TUI npm package, see [package deployment and version information](guides/deploy-packages.md#get-artifacts).
+For Windows or macOS, follow [manual source deployment](guides/deploy-source-manual.md#manual-prerequisites). For the Server wheel and TUI npm package, see [package deployment and version information](guides/deploy-packages.md#get-artifacts).
+
+For WSL 2, check the [resource recommendations](guides/deploy-source.md#wsl2-sizing) before deploying.
 
 ## 1. Deploy on Linux
 
@@ -12,7 +14,7 @@ cd dataagent
 ./deploy.sh
 ```
 
-Follow the prompts. On success, the script prints the workbench URL and leaves Web and Server running in the background. See [source deployment](guides/deploy-source.md) for prerequisites and lifecycle commands.
+Follow the prompts. On success, the script prints the workbench URL and leaves Web and Server running in the background. See [Linux one-click deployment](guides/deploy-source-linux.md) for prerequisites and lifecycle commands.
 
 ## 2. Configure your model
 
@@ -24,7 +26,7 @@ LLM_BASE_URL=https://your-openai-compatible-host/v1
 LLM_API_KEY=replace-with-your-key
 ```
 
-Apply the configuration with `./deploy.sh restart`. See [Configuration](reference/configuration-api.md) for the files and settings DataAgent reads.
+Apply the configuration with `./deploy.sh restart`. See [Configuration](guides/configuration.md) for the files and settings DataAgent reads.
 
 <a name="run-your-first-question"></a>
 
@@ -42,8 +44,8 @@ Once the model responds, use the [SQLite tutorial](guides/sqlite-tutorial.md) to
 
 ## More deployment details
 
-- <a id="1-prepare-tools-and-download-sources"></a>[Prepare tools and download sources](guides/deploy-source.md#1-prepare-tools-and-download-sources)
-- <a id="3-configure-the-model-service"></a>[Configure the model for manual deployment](guides/deploy-source.md#3-configure-the-model-service)
-- <a id="5-verify-health-and-model-calls"></a>[Verify health and model calls](guides/deploy-source.md#5-verify-health-and-model-calls)
-- <a id="connect-source-frontends"></a>[Connect source frontends to an existing Server](guides/deploy-source.md#connect-source-frontends)
-- [Troubleshoot source deployment](guides/deploy-source.md#troubleshooting)
+- <a name="1-prepare-tools-and-download-sources"></a>[Prepare tools and download sources](guides/deploy-source-manual.md#manual-prerequisites)
+- <a name="3-configure-the-model-service"></a>[Configure the model for manual deployment](guides/deploy-source-manual.md#manual-model)
+- <a name="5-verify-health-and-model-calls"></a>[Verify health and model calls](guides/deploy-source-manual.md#manual-verification)
+- <a name="connect-source-frontends"></a>Connect [Web](guides/web.md#connect-server) or [TUI](guides/tui.md#connect-server) to an existing Server
+- [Troubleshoot source deployment](guides/troubleshooting.md)

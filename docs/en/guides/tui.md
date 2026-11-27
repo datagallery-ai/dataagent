@@ -4,7 +4,7 @@ This guide is for terminal users, remote server users, and developers. After rea
 
 ## How to start
 
-After installing the TUI npm package, use `dataagent-cli --runtime-url <Server URL>` or `da --runtime-url <Server URL>` to connect to a running Server. See [DataAgent package deployment](deploy-packages.md#connect-tui).
+After [installing the TUI npm package](deploy-packages.md#connect-tui), see [connect to an existing Server](#connect-server).
 
 When started from source, the TUI connects to `/api/v1/runs` at the address from `config.yaml` and starts `dataagent serve` if nothing is listening there.
 
@@ -12,7 +12,7 @@ When started from source, the TUI connects to `/api/v1/runs` at the address from
 npm run start:tui
 ```
 
-The address comes from Home `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. A control plane started with `npm run start -- --config` on another file's port is not discovered; if the Home address is free, this command starts a second backend from Home. Attach to the running one with `--runtime-url`. `--runtime-url` only attaches. Its host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
+The address comes from Home `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`. When a control plane is already listening there, the same command attaches and does not start a second backend. A control plane started with `npm run start -- --config` on another file's port is not discovered; if the Home address is free, this command starts a second backend from Home. To use the running Server, [specify its address](#connect-server).
 
 `./deploy.sh tui` attaches to an existing backend. It uses `--runtime-url` first, then the saved API address from the last managed start, then the Home configuration. For example, run `./deploy.sh tui --runtime-url http://127.0.0.1:8791`.
 
@@ -39,6 +39,20 @@ View CLI flags:
 ```bash
 npm run start:tui -- --help
 ```
+
+<a name="connect-server"></a>
+
+### Connect to an existing Server
+
+For a source-only TUI build, install npm dependencies and build the terminal client from the repository root. Replace the example URL with a Server address the client can reach.
+
+```bash
+npm install --include=dev
+npm run build:tui
+npm run start:tui -- --runtime-url http://127.0.0.1:8790
+```
+
+For an installed npm package, use `dataagent-cli --runtime-url <Server URL>` or its alias `da --runtime-url <Server URL>`. In either build, `--runtime-url` attaches to an existing Server. The address can be a remote IP or loopback URL. Wildcard hosts `0.0.0.0` and `::` resolve to loopback. The Server stays up when you exit.
 
 ## Main Screen
 
@@ -113,9 +127,8 @@ Use the Web workbench for full visual demos. Use the TUI to verify agent runtime
 
 ## Troubleshooting
 
-- Cannot connect: run `npm run start:tui`. It uses Home `config.yaml` `server.host` and `server.port`, default `http://127.0.0.1:8790`, and starts a backend when nothing is listening there. For a control plane already started with another `--config`, pass `--runtime-url`. For a stack managed by `./deploy.sh`, run `./deploy.sh tui`; it uses the API address recorded at start.
-- Attach without starting: pass `--runtime-url`. The host may be `server.host`, a loopback address, or another IP. `0.0.0.0` and `::` connect through loopback.
-- Model not responding: check `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` in the running backend's environment or selected env file.
+- If the TUI cannot connect, check its [Server address](#connect-server) and follow [connection diagnostics](troubleshooting.md#connections).
+- If the TUI connects but the model does not respond, see [model diagnostics](troubleshooting.md#models).
 - `Shift+Enter` submits in iTerm2: bind it to “Send Escape Sequence” with `[13;2u` or use `Ctrl+J`. Check input method candidate windows in your terminal.
 - Color or connection diagnostics: set `NO_COLOR=1` in the TUI environment to turn off color. The TUI writes logs to `runtime/logs/tui.log` in the client's DataAgent Home.
 - Session restore fails: confirm `GET /api/v1/sessions` on the stream origin (`http://<server.host>:<server.port>`) answers. The TUI sends that request with no authentication.

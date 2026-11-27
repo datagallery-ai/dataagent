@@ -1,6 +1,6 @@
 # 配置操作
 
-这里介绍修改已有配置的方法。首次设置模型请看[配置速查](../reference/configuration-api.md)。字段、默认值和合并规则见[配置字段参考](../reference/configuration.md)。
+在这里完成首次配置或调整已有实例。控制面不提供配置 REST，模型和工作区在服务端文件中配置。字段、默认值和合并规则见[配置字段参考](../reference/configuration.md)。
 
 示例文件：
 
@@ -9,11 +9,35 @@
 - nl2sql 作为整张图：[examples/nl2sql-entry.yaml](../../../examples/nl2sql-entry.yaml)
 - 示例字段怎么配合文件：[examples/README.md](../../../examples/README.md)
 
+<a id="files-to-edit"></a>
+
 ## 选择配置文件
 
-先按[配置速查](../reference/configuration-api.md#files-to-edit)确认正在使用哪份 YAML 和环境文件。[命令与环境变量](../reference/cli-and-environment.md#environment-variables)列出了文件选择、覆盖优先级和环境变量的作用范围。
+| 文件 | 用途 |
+| --- | --- |
+| `<home>/config.yaml` | 产品配置。默认 Home 是 `~/.dataagent` |
+| `<home>/.env` | 模型名、地址和密钥 |
+| 仓库根目录 `.env` | 源码启动器 `npm run start` 或 `./deploy.sh` 会读取它 |
 
-连接已有控制面时，在服务端修改相应文件。通过 `./deploy.sh` 部署时，请按[源码部署](deploy-source.md)重启服务，使 `tui`、`status`、`doctor` 使用本次启动记录的 API 地址。
+在启动进程的环境中设置 `DATAAGENT_HOME` 可切换 Home。用 `--config` 和 `--env-file` 分别选择 YAML 和环境文件。连接已有控制面时，在对应的 Server 上改配置。详见[环境变量来源和覆盖顺序](../reference/cli-and-environment.md#environment-variables)。
+
+<a name="minimum-model"></a>
+
+## 首次配置模型
+
+以下是使用默认模型 ID `primary` 的最小 YAML。将三个 `LLM_*` 的实际值写入选择的环境文件。
+
+```yaml
+schema_version: 4
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+```
+
+如需改监听地址，查看[监听字段](../reference/configuration.md#server-settings)。改动后重启控制面，再按[快速开始](../quick-start.md#first-question)验证一次真实回复。
 
 <a name="优先级"></a>
 
@@ -91,9 +115,7 @@ dataagent:
 
 **接入语义服务。** 增加 `semantic` 对象。客户端用法、认证和 TLS 见 [语义服务](integrate/extensions/semantic-service.md)。字段见配置参考。未配置 `semantic` 时，运行时不创建客户端。
 
-**把编译型子代理当作整张图。** 在 `dataagent.entry` 写已启用插件里的编译型子代理名，然后重启。省略 `entry` 仍是 Deep Agents 根。可运行示例是 [nl2sql-entry.yaml](../../../examples/nl2sql-entry.yaml)：`entry` 为 `nl2sql`，并带上模型、sqlite 库和语义服务地址。
-
-高层配置里的 `entry` 替换低层。Hook、调用上限、工作区、Skill、工具、MCP 工具、插件系统提示和其他子代理留在配置里，不装进这张图。`limits.timeout_seconds` 仍约束宿主执行阶段。限制见 [入口模式](integrate/extensions/subagents.md#entry-mode)。
+**选择编译型入口。** 按[入口模式](integrate/extensions/subagents.md#entry-mode)设置 `dataagent.entry` 并验证实际生效的入口。
 
 ## 写在其他文件里的设置
 

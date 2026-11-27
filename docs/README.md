@@ -15,6 +15,9 @@ The DataGallery website renders both entry points from the same source tree. Use
 
 ## Maintenance rules
 
+- Guides own executable tasks. Reference pages own public contracts, field constraints, defaults, and errors. Development pages own runtime implementation and verification.
+- Keep the old page and section targets when splitting or consolidating published content. Link readers to the section that now owns the explanation.
+
 - Product and Python technical guides share this documentation tree; link to the relevant guide rather than duplicating it.
 - When adding or changing an external-facing page, update its counterpart in the other language, including examples and referenced section anchors.
 - Document behavior that readers can use in the current checkout. Consult Git tags and history for earlier versions.

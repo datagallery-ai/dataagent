@@ -44,6 +44,8 @@ flowchart TB
   Ext --> Decl
 ```
 
+[pyproject.toml](../../../pyproject.toml) 定义 Python 发行包 `datagallery-dataagent`。源码位于 `dataagent/`，导入名和 CLI 均为 `dataagent`。包内包含运行时、HTTP/A2A 服务、SDK、Home 模板和内置插件。
+
 | 模块 | 职责 |
 | --- | --- |
 | `config/declarations.py` | 描述插件、Hook 和 MCP 的数据形状 |
@@ -68,6 +70,6 @@ flowchart TB
 - [执行](execution.md)说明宿主如何装配会话图，以及标准图与编译型入口的区别。
 - [扩展生命周期](extension-lifecycle.md)记录插件编译、缓存和刷新如何协作。
 - [Home 与工作区](home-layout.md)和[状态与存储](state-and-storage.md)说明目录、会话绑定和 Checkpoint。
-- [上下文](context-management.md)、[可观测性](observability.md)和[安全边界](security-boundaries.md)说明运行时如何管理消息、诊断记录与访问。
+- [上下文](context-management.md)、[运行日志](observability.md)、[执行 Trace](execution-traces.md)和[安全边界](security-boundaries.md)说明运行时如何管理消息、诊断记录与访问。
 
 客户端连接方式见[使用者架构概览](../../zh/concepts/architecture.md)，core 的维护约定见[内置 core](../core-maintenance.md)。

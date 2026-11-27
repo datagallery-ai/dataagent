@@ -1,6 +1,6 @@
 # Python SDK
 
-Use DataAgent from a Python process. Configure a usable model with the [configuration quick reference](../../reference/configuration-api.md). The SDK reads `config.yaml` and `.env` from DataAgent Home by default. Use `LaunchOptions(config=..., env_file=...)` to choose them separately. See [environment precedence](../../reference/cli-and-environment.md#environment-variables).
+Use DataAgent from a Python process. Configure a usable model with the [configuration quick reference](../configuration.md). The SDK reads `config.yaml` and `.env` from DataAgent Home by default. Use `LaunchOptions(config=..., env_file=...)` to choose them separately. See [environment precedence](../../reference/cli-and-environment.md#environment-variables).
 
 <a name="without-file-logging"></a>
 
@@ -101,4 +101,4 @@ For async streams, use `async with aclosing(agent.astream(inputs, config))` and 
 
 ## Access models from tools
 
-With `ToolRuntime[AgentContext]`, call `runtime.context.get_model()` or pass a configured alias. Pass `config=runtime.config` so the current trace can include the model run. Direct model calls inside tools are separate from the agent loop and its limits and middleware. See [tool extensions](extensions/tools.md).
+To select a model or call the semantic client inside a tool, see the [tool guide](extensions/tools.md#tool-runtime-clients).

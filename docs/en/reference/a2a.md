@@ -1,4 +1,8 @@
-# A2A
+# A2A reference
+
+<a name="a2a"></a>
+
+For a runnable discovery, send, and poll sequence, see the [A2A integration guide](../guides/integrate/a2a.md).
 
 Both `dataagent serve` and `dataagent serve-a2a` expose A2A 1.0. Discover the Agent Card anonymously at `GET /.well-known/agent-card.json`. Send, poll, or cancel tasks with JSON-RPC 2.0 at `POST /a2a/jsonrpc` and set `A2A-Version: 1.0`.
 
@@ -10,24 +14,7 @@ Regular `serve` also exposes [REST](rest-api.md). Card discovery works before th
 
 ## Send a message
 
-```bash
-curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
-  -H 'Content-Type: application/json' \
-  -H 'A2A-Version: 1.0' \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": "1",
-    "method": "SendMessage",
-    "params": {
-      "message": {
-        "role": "ROLE_USER",
-        "messageId": "message-1",
-        "contextId": "thread-1",
-        "parts": [{"text": "hello"}]
-      }
-    }
-  }'
-```
+Use `SendMessage` to submit a turn. See the [working request](../guides/integrate/a2a.md#send-message).
 
 <a name="request-parameters"></a>
 
@@ -65,22 +52,7 @@ Default access is anonymous. Both server commands use `DATAAGENT_A2A_AUTH_TOKEN`
 
 With a token, every JSON-RPC method requires HTTP Bearer. The public Agent Card describes `securitySchemes` and `securityRequirements`. The token does not cover REST, AG-UI, health, or output routes and provides no caller identity or tenant isolation.
 
-Set the token in the server terminal:
-
-```bash
-export DATAAGENT_A2A_AUTH_TOKEN='replace-with-a-long-random-token'
-uv run dataagent serve
-```
-
-Set the same value separately in the client terminal. Loading server `.env` does not affect other terminals.
-
-```bash
-export DATAAGENT_A2A_AUTH_TOKEN='replace-with-a-long-random-token'
-curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
-  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
-  -H "Authorization: Bearer $DATAAGENT_A2A_AUTH_TOKEN" \
-  -d '{"jsonrpc":"2.0","id":"list-1","method":"ListTasks","params":{}}'
-```
+See the [connection guide](../guides/integrate/a2a.md#connect) for configuring and sending the token.
 
 Missing or invalid credentials return HTTP 401 with `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Invalid or missing Bearer token."}}` before model execution. See [Bearer validation](../../../dataagent/server/a2a/server.py).
 
@@ -156,32 +128,9 @@ Outer RPC `id` is separate from `params.id`. Stopping polling or disconnecting d
 
 Both modes use nonstreaming `SendMessage`. Omit `returnImmediately` or set it false to wait for completion or input. Set true to receive the ID early, then poll with `GetTask` and cancel if needed. `SendStreamingMessage` and `SubscribeToTask` return `-32004`; push notifications return `-32003`.
 
-```json
-{
-  "jsonrpc": "2.0", "id": "submit-1", "method": "SendMessage",
-  "params": {
-    "message": {
-      "role": "ROLE_USER", "messageId": "async-message-1",
-      "contextId": "async-thread-1", "parts": [{"text": "Analyze the configured data."}]
-    },
-    "configuration": {"returnImmediately": true}
-  }
-}
-```
+A short task may already be complete in the first response. See the [send and poll examples](../guides/integrate/a2a.md#send-message).
 
-A short task may already complete in the first response. Example of an early response:
-
-```json
-{"jsonrpc":"2.0","id":"submit-1","result":{"task":{"id":"22222222-2222-4222-8222-222222222222","contextId":"async-thread-1","status":{"state":"TASK_STATE_SUBMITTED"}}}}
-```
-
-Poll with the same version and authentication headers:
-
-```json
-{"jsonrpc":"2.0","id":"poll-1","method":"GetTask","params":{"id":"22222222-2222-4222-8222-222222222222"}}
-```
-
-You can see `TASK_STATE_SUBMITTED`, `TASK_STATE_WORKING`, or `TASK_STATE_INPUT_REQUIRED`. Terminal states are `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, and `TASK_STATE_REJECTED`. Read artifacts on success and metadata on failure. See [server tests](../../../tests/test_a2a_server.py) and [diagnostic tests](../../../tests/test_a2a_observability.py). Execution does not guarantee retries, deduplication, or idempotency. Check task state before retrying work with side effects.
+You can see `TASK_STATE_SUBMITTED`, `TASK_STATE_WORKING`, or `TASK_STATE_INPUT_REQUIRED`. Terminal states are `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, and `TASK_STATE_REJECTED`. Read artifacts on success and metadata on failure. Execution does not guarantee retries, deduplication, or idempotency. Check task state before retrying work with side effects.
 
 <a name="a2a-hitl"></a>
 
@@ -242,13 +191,7 @@ If approval `action_requests[].args` contains such numbers, the entire argument 
 - Cancellation returns after session settlement. Canceling a waiting Task marks the session interrupted and keeps the checkpoint for inspection. A canceled or terminal Task cannot resume. Use a new context for fresh work.
 - The default in-memory TaskStore loses waiting Tasks on restart even though checkpoints persist. Use a new context to run again. The default outbound client sends text only.
 
-See [HITL tests](../../../tests/test_a2a_hitl.py) for both server modes, polling, repeat pauses, native tool approvals, and cancellation. This test needs no live model or semantic service:
-
-```bash
-uv run --no-sync pytest tests/test_a2a_hitl.py -q
-```
-
-For manual feedback testing, enable the `data-qa` plugin and ask the root to invoke `data-qa__request_human_feedback`. Reply using the actual interrupt. Native `interrupt_on` tool approval in tests is provided by the test assembly.
+See the [developer verification procedure](../../development/testing.md#a2a-testing) for testing both server modes, polling, repeated pauses, approvals, and cancellation.
 
 <a name="inbound-and-subagents"></a>
 
@@ -262,30 +205,6 @@ Task completion means agent execution finished. An ordinary nl2sql business fail
 
 ## Call other agents
 
-Configure remote agents in the caller's YAML. Each becomes `a2a__<id>`. The description can tell the caller when to use it and what to send.
+Each configured remote becomes an `a2a__<id>` tool. The tool forwards text and keeps a separate remote context for each local thread. Configure the service root, token, and timeout using the [outbound configuration fields](configuration.md#a2a). See the [configuration example](../guides/integrate/a2a.md#outbound).
 
-```yaml
-a2a:
-  remote_agents:
-    - id: sales
-      url: http://127.0.0.1:9999
-      description: >
-        Call when the user needs sales metrics by time, region, or product.
-        Specify the metric, time range, and filters in the message.
-```
-
-Supply the service root URL. See [configuration](configuration.md#a2a) for tokens and timeouts. Local threads keep separate remote context IDs.
-
-`A2ACaller.send` awaits a turn result or a prompt and has no `returnImmediately` argument. It retains context from either a Message or Task response. A waiting Task yields text prefixed with `INPUT_REQUIRED`, and the next call on that local thread carries its task ID. The tool sends text, so use [direct JSON-RPC](#a2a-hitl) for structured resume. Failed, canceled, or rejected Tasks raise `A2ACallError`.
-
-The error's local code is `TOOL_ERROR`, with optional `remote_code`, `request_id`, `task_id`, `context_id`, and `root_run_id`. With older servers, task and context remain available from protocol fields even when diagnostic metadata is absent. Successful `A2AResult` can also include request and run IDs. Calls without `thread_id` share the caller's own context.
-
-```python
-from dataagent.extensions.a2a import A2ACaller
-
-async def ask():
-    caller = A2ACaller("http://127.0.0.1:9999")
-    first = await caller.send("hello")
-    second = await caller.send("continue")
-    return first.text, second.text
-```
+The tool waits for a result or an input prompt. It returns a waiting task's text prefixed with `INPUT_REQUIRED` and sends that Task ID on the next call in the same thread. Use [direct JSON-RPC](#a2a-hitl) to send structured feedback. The [Python API](python-api.md#a2a-api) documents the underlying caller, result fields, and errors.

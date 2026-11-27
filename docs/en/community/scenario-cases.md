@@ -1,4 +1,6 @@
-# Scenario cases
+<a id="scenario-cases"></a>
+
+# Submit a scenario
 
 Start with the [SQLite tutorial](../guides/sqlite-tutorial.md) to query sample orders and verify the resulting CSV.
 

@@ -35,6 +35,8 @@ tools:
 
 模型用 `common__summarize_numbers` 调用此工具。普通函数由宿主包装成工具；导出 `BaseTool` 时，宿主复用其参数 schema 并以全名注册。字段和作用域见[插件清单](../../../reference/extension-schema.md#plugin-manifest)，完整数值校验示例见 [statistics.py](../../../../../examples/plugins/common/tools/statistics.py)。
 
+<a id="tool-runtime-clients"></a>
+
 ## 访问模型和语义客户端
 
 需要另一个已配置模型时，增加 `ToolRuntime` 参数。不要在工具里读 `.env`。
@@ -52,6 +54,8 @@ async def summarize(text: str, runtime: ToolRuntime[AgentContext]) -> str:
 `get_model("fast")` 读取 `models.fast`。未知别名失败。客户端在当前 Agent 内复用。
 
 语义服务配置存在时，`runtime.context.semantic_client` 是宿主或 SDK 拥有的 `SemanticServiceClient`。未配置时它是 `None`。用法见 [语义服务](semantic-service.md)。完整示例见 [llm-utils](../../../../../examples/plugins/llm-utils/README.md)。
+
+把 `runtime.config` 传给模型以沿用调用上下文。普通工具直接发起的模型调用与 Agent 循环分开，不作为独立模型 span 导出。详见[执行 Trace](../../../../development/architecture/execution-traces.md#trace-data-boundaries)。
 
 ## 运行限制
 

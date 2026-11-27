@@ -101,7 +101,7 @@ The server sanitizes upstream `RUN_ERROR` messages, marks the session `error`, a
 | `RUN_ERROR` with `CANCELLED` | `interrupted` | Show as stopped. Continue from the saved checkpoint or latest thread state |
 | Connection closes without a terminal event | Unfinished session becomes `interrupted` | Reconnect and read session details before submitting another message |
 
-TUI summaries such as `Interrupted — continue this conversation` are not written into checkpoints.
+Terminal event durations and client summaries are not written into checkpoints.
 
 <a name="stream-scope"></a>
 
@@ -119,6 +119,4 @@ Root text, tool, reasoning, and step events and adapter/tool `CUSTOM` events pas
 
 Subagent text, internal tools, and state do not enter the parent conversation stream. Errors are redacted. Fetch files through the [output endpoints](rest-api.md#outputs). `after_model` runs after model calls rather than per token.
 
-Python supplies the subagent events above. `@ag-ui/core 0.0.57` lacks its lifecycle types, so TUI handles them at the parser boundary. Before CopilotKit validates browser events, Web wraps `SUBAGENT_*` into a `CUSTOM` event named `subagent` and qualifies the step name by run ID while displaying the original name. Step events keep the SDK schema. When subagent events arrive before `TOOL_CALL_START`, clients correlate by parent tool ID.
-
-TUI shows the active subagent, stage, and elapsed time. `Ctrl+O` opens received steps, reruns, and error reasons. Web shows delegation and wait time on the tool chip, progress and redacted errors on the progress line, and a waiting indicator after 30 seconds without progress. The task console lists step timings. Client-monotonic elapsed time and waiting indicators do not establish server health or failure. Progress history is in-memory for the current session and is not replayed from checkpoints. The parent tool result remains available after refresh.
+Subagent progress can arrive before the outer `TOOL_CALL_START`. Correlate by `parentToolCallId` rather than arrival order. Checkpoint restore does not replay historical progress. See the [implementation notes](../../development/reference/rest-api.md#client-progress) for client adapters.

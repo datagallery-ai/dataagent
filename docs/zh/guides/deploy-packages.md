@@ -26,7 +26,7 @@ sha256sum dist/server/*.whl dist/tui/*.tgz
 | `datagallery_dataagent-0.2.0-py3-none-any.whl` | 安装 Python Server、CLI、SDK 和内置插件 | Python 3.11 或 3.12，uv 或 pip |
 | `datagallery-tui-0.2.0.tgz` | 安装终端客户端，连接已经运行的 Server | Node.js ≥22.12.0 和 npm |
 
-用实际交付的文件名替换下方示例。Web 使用源码构建的前端。安装会解析包里声明的依赖，需要可用索引或预先准备的离线依赖。需要构建产物时看[发布说明](../../development/release.md)。需要 Web 时，按[源码前端连接已有 Server](deploy-source.md#connect-source-frontends)准备。
+用实际交付的文件名替换下方示例。Web 使用源码构建的前端。安装会解析包里声明的依赖，需要可用索引或预先准备的离线依赖。需要构建产物时看[发布说明](../../development/release.md)。需要 Web 时，见 [Web 连接已有 Server](web.md#connect-server)。
 
 ## 1. 安装并启动 Server
 
@@ -52,7 +52,7 @@ Windows PowerShell 用 `$env:NAME="value"` 设置环境变量。安装和启动�
 
 Server 前台运行，按 Ctrl+C 停止。首次启动在 `~/.dataagent` 创建缺少的配置模板，可在启动前通过 `DATAAGENT_HOME` 指定其他 Home。默认读取 Home 的 `config.yaml` 和 `.env`，也可用 `--config` 选择另一份完整 YAML，用 `--env-file` 选择另一份环境文件。显式选定的 YAML 和环境文件分别替代对应的 Home 文件。包部署目录下的普通 `.env` 需要通过 `--env-file` 显式指定。
 
-默认监听 `127.0.0.1:8790`，修改 YAML 中的 `server.host`、`server.port` 后重启。跨机器连接时，把 `server.host` 设为 Server 上可达的监听地址，客户端使用 Server 的可达地址。对外监听前请核对[网络与权限边界](../concepts/security.md)。输入目录和启动参数见[配置速查](../reference/configuration-api.md)和 [CLI 参考](../reference/cli-and-environment.md)。
+默认监听 `127.0.0.1:8790`，修改 YAML 中的 `server.host`、`server.port` 后重启。跨机器连接时，把 `server.host` 设为 Server 上可达的监听地址，客户端使用 Server 的可达地址。对外监听前请核对[网络与权限边界](../concepts/security.md)。输入目录和启动参数见[配置速查](configuration.md)和 [CLI 参考](../reference/cli-and-environment.md)。
 
 另开终端检查：
 
@@ -63,7 +63,10 @@ curl -fsS http://127.0.0.1:8790/ready
 
 `/healthz` 返回 200 表示进程存活。`/ready` 返回 200 表示会话引擎已加载配置。模型未配置时，`/ready` 返回 503。随后从 TUI 提问，确认模型能返回流式回复。Server 日志位于其 Home 的 `runtime/logs/backend.log`。
 
-<a id="connect-tui"></a>
+<a name="2-tui"></a>
+<a name="2-安装并启动-tui"></a>
+
+<a name="connect-tui"></a>
 
 ## 2. 安装并启动 TUI
 
@@ -74,48 +77,22 @@ npm install -g ./datagallery-tui-0.2.0.tgz
 dataagent-cli --runtime-url http://127.0.0.1:8790
 ```
 
-`da` 是同一入口的简写。安装后两个命令都从终端运行。若客户端和 Server 分开部署，将示例中的 `127.0.0.1:8790` 换成客户端能访问的 Server 地址。启动参数 `--resume` 或 `--resume <threadId>` 可恢复已有会话。退出 TUI 后 Server 继续运行，连接诊断记录在客户端 Home 的 `runtime/logs/tui.log`。
+`da` 是同一入口的简写。安装后两个命令都从终端运行。若客户端和 Server 分开部署，将示例中的 `127.0.0.1:8790` 换成客户端能访问的 Server 地址。退出 TUI 后 Server 继续运行。会话恢复和连接诊断见 [TUI 指南](tui.md)。
 
-<a id="compiled-entry"></a>
+<a name="3"></a>
+<a name="3-使用编译型插件入口-可选"></a>
+
+<a name="compiled-entry"></a>
 
 ## 3. 使用编译型插件入口（可选）
 
-常规启动使用默认 Agent。要让某个编译型子代理接管会话，在 Server YAML 中设置 `dataagent.entry`，填入已启用插件的子代理 `name`。例如，内置 nl2sql 的子代理名是 `nl2sql`，它自己的声明将 `entrypoint` 指向包内的 `subagents/nl2sql.py:build_subagent`。部署者选择 `entry: nl2sql` 即可。
-
-以下是 SQLite 场景的完整 `nl2sql.yaml` 示例。默认模型环境变量沿用上文，另需设置 `NL2SQL_DATABASE_PATH` 为已有 SQLite 文件的绝对路径，设置 `SEMANTIC_BASE_URL` 为可达的语义服务地址。
-
-```yaml
-schema_version: 4
-dataagent:
-  model: primary
-  entry: nl2sql
-models:
-  primary:
-    provider: openai
-    name: $env{LLM_MODEL}
-    base_url: $env{LLM_BASE_URL}
-    api_key: $env{LLM_API_KEY}
-plugins:
-  enabled: [nl2sql]
-  config:
-    nl2sql:
-      model: primary
-      database:
-        db_id: mydb
-        dialect: sqlite
-        engine: sqlite
-        path: $env{NL2SQL_DATABASE_PATH}
-semantic:
-  base_url: $env{SEMANTIC_BASE_URL}
-```
+需要让已启用的编译型子代理接管会话时，先按[入口模式](integrate/extensions/subagents.md#entry-mode)准备完整 YAML。使用已安装的 Server 读取该文件。
 
 ```bash
-.venv/bin/dataagent serve --config ./nl2sql.yaml
+.venv/bin/dataagent serve --config /path/to/config.yaml
 ```
 
-使用相同的 TUI 命令连接。修改 `dataagent.entry` 后重启 Server，并开启新会话，避免沿用不同入口图的会话状态。健康检查通过后，仍需实际发起一次该入口处理的请求。
-
-适配自有插件时，将插件放到 Server Home 的 `plugins/` 下。在插件的子代理声明里用 `kind: compiled`，并将 `entrypoint` 写成相对插件目录的 `file.py:symbol`。该符号应实现 `factory(params, services)` 并返回 Runnable。把插件 ID 加到 `plugins.enabled`，再把子代理的 `name` 写到 `dataagent.entry`。[编译型子代理和入口模式](integrate/extensions/subagents.md#entry-mode)
+按[上面的 TUI 连接方式](#connect-tui)提问，验证请求确实进入所选工作流。改入口后重启 Server 并创建新会话。想先用最小 SQLite 数据库验证编译型入口，可运行 [SQLite 到 CSV 教程](sqlite-tutorial.md)。
 
 <a name="optional-dependencies"></a>
 

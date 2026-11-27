@@ -1,4 +1,6 @@
-# Agent Runtime
+<a id="agent-runtime"></a>
+
+# AG-UI 接入
 
 向 DataAgent 发送一轮对话并读取 AG-UI 事件流。先按[快速开始](../quick-start.md)启动控制面，确认 `GET /ready` 返回 200。以下示例使用默认地址 `http://127.0.0.1:8790`。
 

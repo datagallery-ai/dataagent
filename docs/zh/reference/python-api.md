@@ -166,14 +166,14 @@ build_graph(runtime, *, checkpointer=None, model=None, session=None,
 
 ## A2A
 
-客户端接口 `A2ACaller`、`A2AResult` 和 `A2ACallError` 从 `dataagent.extensions.a2a` 导入。协议请求与调用示例见 [A2A](a2a.md#outbound)。服务端工厂从 `dataagent.server.a2a` 导入。导入 SDK 或 A2A 客户端不会加载服务端。
+客户端接口 `A2ACaller`、`A2AResult` 和 `A2ACallError` 从 `dataagent.extensions.a2a` 导入。协议行为见 [A2A 参考](a2a.md#outbound)。服务端工厂从 `dataagent.server.a2a` 导入。导入 SDK 或 A2A 客户端不会加载服务端。
 
 | 名称 | 给谁 | 作用 |
 | --- | --- | --- |
-| `A2ACaller(base_url, *, auth_token=None, timeout=180)` | 调用方 | 调用另一个 A2A 1.0 Agent。`await send(text, *, thread_id=None)` 返回 `A2AResult` |
+| `A2ACaller(base_url, *, auth_token=None, timeout=180, context_id=None, http_client=None)` | 调用方 | 调用另一个 A2A 1.0 Agent。`await send(text, *, thread_id=None)` 返回 `A2AResult` |
 | `A2AResult` | 调用方 | 结果：`text`、`context_id`、`task_id`、`state`，以及可选的 `request_id`、`root_run_id` |
 | `A2ACallError` | 调用方 | 远端任务失败、取消或拒绝；本地 `error_code` 为 `TOOL_ERROR`，可选的 `remote_code`、`request_id`、`task_id`、`context_id`、`root_run_id` 用于远端诊断 |
 | `create_a2a_server(runtime, *, host, port, auth_token=None, model=None, task_store=None, executor=None)` | 宿主 | 创建独立的 Starlette 应用。可替换模型、任务存储或执行器 |
 | `run_a2a_server(runtime, *, host, port, auth_token=None)` | 宿主 | 用 uvicorn 运行上面的应用。命令行入口是 `dataagent serve-a2a` |
 
-配置里的 `a2a.remote_agents` 会自动变成名为 `a2a__<id>` 的工具，不需要调用 Python 接口。约定见 [A2A](a2a.md)。
+客户端从 Message 或 Task 响应中保留远端会话。不传 `thread_id` 时沿用调用实例的默认会话，可以用 `context_id` 初始化它。显式传入的 `http_client` 仍由调用方关闭。该接口发送文本并等待响应。结构化人工反馈通过[直接 JSON-RPC](a2a.md#a2a-hitl)提交。远端没有 DataAgent 诊断 metadata 时，任务与会话 ID 仍取自协议结果。将远端注册为 Agent 工具的步骤见[接入指南](../guides/integrate/a2a.md#outbound)。

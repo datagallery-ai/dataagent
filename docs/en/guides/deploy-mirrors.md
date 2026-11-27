@@ -63,13 +63,13 @@ npm run build
 
 The second command uses the exported settings or uv configuration. Omit `--extra video` for the base runtime. Use `--extra all` for Spark/Hive and video after preparing the required external environment. Synchronizing an existing environment also removes unselected dependencies.
 
-Create and fill in the repository root `.env` using the [configuration instructions](deploy-source.md#3-configure-the-model-service), then select that file explicitly when starting the prepared source backend:
+Create and fill in the repository root `.env` using the [manual model configuration](deploy-source-manual.md#manual-model), then select that file explicitly when starting the prepared source backend:
 
 ```bash
 uv run --no-sync --env-file .env dataagent serve
 ```
 
-Here uv loads the root `.env` into the process environment. If model configuration is provided through Home `.env` or process variables, omit `--env-file .env`. To replace Home's environment file, pass `--env-file` after `dataagent serve`. For A2A only, replace `serve` with `serve-a2a`. Backend-only installations can skip npm installation and frontend builds. `serve-a2a` has no REST health, session, or artifact endpoints. To connect frontends to an existing backend, see [Web/TUI connections](deploy-source.md#connect-source-frontends).
+Here uv loads the root `.env` into the process environment. If model configuration is provided through Home `.env` or process variables, omit `--env-file .env`. To replace Home's environment file, pass `--env-file` after `dataagent serve`. For A2A only, replace `serve` with `serve-a2a`. Backend-only installations can skip npm installation and frontend builds. `serve-a2a` has no REST health, session, or artifact endpoints. To connect to an existing backend, see [Web connections](web.md#connect-server) or [TUI connections](tui.md#connect-server).
 
 ## Model gateway and validation
 

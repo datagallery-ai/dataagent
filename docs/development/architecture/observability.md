@@ -1,6 +1,6 @@
 # 可观测性
 
-宿主运行可通过后端日志、AG-UI 事件流和会话 Trace 诊断。会话持久数据见[状态与存储](state-and-storage.md)。A2A Task 标识与宿主轮次的对应关系见[调用关联](#a2a-correlation)。
+这里说明运行日志的结构、记录边界和协议 ID 如何关联。遇到故障时，从[故障排查](../../zh/guides/troubleshooting.md)选择日志和检查步骤。会话持久数据见[状态与存储](state-and-storage.md)。
 
 ## 日志
 
@@ -55,39 +55,9 @@
 
 ## Trace
 
-`build_graph` 绑定 `LocalLangChainTracer`。LangChain 回调经 LangSmith SDK 的 OTEL 模式写入独立的 `TracerProvider`。默认导出到本地文件。可通过构造参数或进程环境中的 `DATAAGENT_OTLP_TRACES_ENDPOINT`（完整 traces URL）和 `DATAAGENT_OTLP_HEADERS` 启用实时 OTLP/HTTP 导出，本地文件仍在根运行结束时写入。`OTEL_EXPORTER_OTLP_*` 与 `LANGSMITH_TRACING` 不改变这两处。
+启用追踪时，Agent 根执行结束后尝试写入本地 OTLP JSON。文件路径、字段、终止时的数据完整性和请求 ID 的对应关系见[执行 Trace](execution-traces.md)。运行结果和业务数据分开核对。
 
-根运行完成、失败或被正常取消时，写入：
-
-```text
-<home>/runtime/users/<user>/sessions/<thread>/traces/<run_id>.json
-```
-
-文件是标准 OTLP JSON：`resourceSpans`、`scopeSpans`、`spans`，十六进制 ID，纳秒时间戳。模式 `0600`。文件名和 trace id 使用根运行 UUID（OTLP 去掉连字符）。
-
-Span 覆盖 Agent、子代理、模型、工具和中间件耗时。Agent、模型和工具的输入输出属性可能含系统提示、历史和完整工具结果。中间件里的活动对象不会原样导出。token 事件不保留。
-
-取消或超时可能使原生模型结束回调缺失。本地 tracer 在异常根执行收尾时，补齐本条 trace 中未结束且允许导出的模型记录，沿用原生 ID、输入、模型信息和父子关系，并标明 `interrupted locally`。结束时间采用根执行结束时间，表示本地等待截止点；未返回的模型输出和 Token 用量保持未知，不代表上游计算已经停止。已结束记录不覆盖，普通工具内部模型仍不导出。补收尾失败记录脱敏后的 `TRACE_SAVE_ERROR`，继续保存根 trace。
-
-关联字段：
-
-| 属性 | 含义 |
-| --- | --- |
-| `langsmith.metadata.dataagent_run_id` | 原生运行 ID |
-| `langsmith.metadata.dataagent_parent_run_id` | 父运行 |
-| `langsmith.metadata.dataagent_root_run_id` | 宿主轮次号；AG-UI 使用输入 `runId`，A2A 由服务端生成 |
-| `langsmith.metadata.dataagent_request_id` | A2A 创建请求号，与该次 `X-Request-ID` 一致 |
-| `langsmith.metadata.dataagent_a2a_task_id` | A2A Task ID |
-| `langsmith.metadata.dataagent_a2a_message_id` | A2A 输入 Message ID |
-| `langsmith.metadata.thread_id` | 会话 |
-
-导出发生在根运行结束回调：排空队列、刷 provider、只提交这一条 trace。并发调用共用导出器，文件分开。进程被强杀时可能没有文件。保存失败记 `TRACE_SAVE_ERROR`，不改变 Agent 结果。
-
-Trace 文件名使用原生根运行号，不是宿主 `root_run_id`；二者通过 metadata 和 A2A trace 保存日志关联。图已成功而 checkpoint 保存失败时，图 trace 可以成功，但 A2A Task 会失败，诊断阶段为 `checkpoint_settle`。
-
-`tracing_context(enabled=False)` 可以关掉这次追踪。调用方另附的远程 tracer 由调用方负责。
-
-已知密钥和常见 API key、Bearer 模式会脱敏。业务数据仍在文件里。没有自动清理策略。
+要把 Trace 发送给 Collector 或评测平台，见[实时导出](../../zh/guides/trace-export.md)和[用 Trace 做评测](../../zh/guides/trace-evaluation.md)。
 
 ## 流上的标识
 

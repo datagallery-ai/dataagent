@@ -164,10 +164,10 @@ Client classes import from `dataagent.extensions.a2a`. Server factories import f
 
 | Name | Purpose |
 | --- | --- |
-| `A2ACaller(base_url, *, auth_token=None, timeout=180)` | Call an A2A 1.0 agent. `await send(text, *, thread_id=None)` returns `A2AResult` |
+| `A2ACaller(base_url, *, auth_token=None, timeout=180, context_id=None, http_client=None)` | Call an A2A 1.0 agent. `await send(text, *, thread_id=None)` returns `A2AResult` |
 | `A2AResult` | `text`, `context_id`, `task_id`, `state`, plus optional `request_id` and `root_run_id` |
 | `A2ACallError` | Remote failure, cancellation, or rejection. Local code `TOOL_ERROR`; optional remote and correlation fields `remote_code`, `request_id`, `task_id`, `context_id`, `root_run_id` |
 | `create_a2a_server(runtime, *, host, port, auth_token=None, model=None, task_store=None, executor=None)` | Build a standalone Starlette app with replaceable model, TaskStore, or executor |
 | `run_a2a_server(runtime, *, host, port, auth_token=None)` | Run it in uvicorn, as with `dataagent serve-a2a` |
 
-Configured `a2a.remote_agents` become `a2a__<id>` tools. See the [outbound contract](a2a.md#outbound).
+The caller retains remote context from either a Message or Task response. Calls without `thread_id` share its default context, which can be initialized with `context_id`. A caller-supplied `http_client` stays open. The caller sends text and waits for the response. Use [direct JSON-RPC](a2a.md#a2a-hitl) for structured human feedback. If a peer omits DataAgent diagnostic metadata, task and context IDs still come from the protocol result. To register a remote as an agent tool, follow the [integration guide](../guides/integrate/a2a.md#outbound).

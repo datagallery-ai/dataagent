@@ -35,11 +35,10 @@ uv build --wheel --clear --out-dir dist/server
 
 ```bash
 make test
-uv run --no-sync ruff check .
 npm run smoke:dataagent-package
 ```
 
-`make test` 的测试层级与凭据使用说明见[测试指南](testing.md)。[制品 smoke](../../scripts/smoke-dataagent-package.mjs) 使用已构建的 Web，并在仓库外安装本次 Server wheel 和 TUI tgz。它检查 CLI、内置资源、SDK、HTTP 和 A2A，并通过本地模型替身验证 Web 代理、TUI 连接与流式结果。
+先按[测试指南](testing.md)完成 Ruff 检查与格式检查。测试层级和凭据使用也由该页说明。[制品 smoke](../../scripts/smoke-dataagent-package.mjs) 使用已构建的 Web，并在仓库外安装本次 Server wheel 和 TUI tgz。它检查 CLI、内置资源、SDK、HTTP 和 A2A，并通过本地模型替身验证 Web 代理、TUI 连接与流式结果。
 
 | 场景 | 预期 |
 | --- | --- |

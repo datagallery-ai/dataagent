@@ -109,7 +109,7 @@ HITL 暂停也用 `RUN_FINISHED` 结束本轮流，但 `metadata.status="waiting
 | `RUN_ERROR`，`code` 为 `CANCELLED` | `interrupted` | 显式取消。按“已停止”显示，不按失败显示。有 Checkpoint 就从它继续，否则读该线程最新图状态。不新开线程 |
 | 连接断开，客户端没收到终止事件 | 尚未完成的会话记为 `interrupted` | 重连后读取会话详情确认结果，再决定是否发送下一条消息 |
 
-TUI 会显示完成、失败或 `Interrupted — continue this conversation` 等运行摘要。摘要不写回 Checkpoint。
+终态事件里的耗时和客户端显示的运行摘要不写回 Checkpoint。
 
 <a name="stream-scope"></a>
 
@@ -127,6 +127,4 @@ TUI 会显示完成、失败或 `Interrupted — continue this conversation` 等
 
 子代理文本、内部工具和状态事件不进入父对话流。最终消息快照仍取自根图。子代理错误消息与根错误一样经过脱敏。产物通过[会话产物接口](rest-api.md#outputs)读取。`after_model` 在每次模型调用返回后于服务内执行，不对应逐 token 的 AG-UI 事件。
 
-当前 Python 依赖已提供上述子代理事件；`@ag-ui/core 0.0.57` 尚未声明生命周期类型。TUI 在解析边界补齐其原生格式。网页里的 CopilotKit 客户端会丢掉未知类型，并把步骤名当成全局唯一，因此浏览器在校验前把 `SUBAGENT_*` 收成名为 `subagent` 的 `CUSTOM` 事件，并把子步骤名改成 `子运行 ID/原步骤名`，展示时仍用原来的 `stepName`。步骤事件本身继续使用 SDK 的 schema。非流式模型下，子代理事件可能早于外层 `TOOL_CALL_START`，客户端按父工具 ID 合并，不依赖到达顺序猜测父任务。
-
-TUI 在任务下显示当前子代理、阶段和耗时；`Ctrl+O` 可查看已收到的步骤、重复执行记录和子代理错误原因。网页聊天在工具芯片上标出委托对象和已等待秒数，并在进度行写出当前子代理、阶段和 `SUBAGENT_ERROR` 的脱敏原因；30 秒没有新进度时显示等待提示。任务控制台的工具详情列出每步耗时。耗时由客户端单调时钟计量。等待提示不代表服务仍存活，也不代表任务失败。步骤历史只保留于当前会话，恢复 Checkpoint 不重放历史进度。父工具结果仍是刷新后能看到的持久记录。
+子代理进度可能早于外层 `TOOL_CALL_START`。客户端按 `parentToolCallId` 关联，不依赖到达顺序。历史进度不由 Checkpoint 重放。客户端适配见[实现索引](../../development/reference/rest-api.md#client-progress)。

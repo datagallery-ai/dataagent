@@ -15,6 +15,6 @@ Web 和 TUI 都向 `POST /api/v1/runs` 提交对话请求并消费 AG-UI 事件�
 
 ## 配置和数据放在哪
 
-控制面从配置读取模型、插件和默认输入目录。DataAgent Home 保存本地配置、扩展和运行状态。新会话绑定输入目录和产物位置，恢复时沿用原绑定。产物默认存放在 Home 下，也可指定其他位置。[配置](../reference/configuration-api.md) · [输入目录](../guides/inputs.md) · [会话与产物](../guides/sessions-and-outputs.md)
+控制面从配置读取模型、插件和默认输入目录。DataAgent Home 保存本地配置、扩展和运行状态。新会话绑定输入目录和产物位置，恢复时沿用原绑定。产物默认存放在 Home 下，也可指定其他位置。[配置](../guides/configuration.md) · [输入目录](../guides/inputs.md) · [会话与产物](../guides/sessions-and-outputs.md)
 
 网络访问、凭据和文件权限见[安全说明](security.md)。源码模块和装配顺序见[开发者架构](../../development/architecture/overview.md)。
