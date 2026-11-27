@@ -4,7 +4,7 @@
 
 ## 启动方式
 
-已安装 TUI npm 包时，用 `dataagent-cli --runtime-url <Server 地址>` 或 `da --runtime-url <Server 地址>` 连接已启动的 Server。安装步骤见 [DataAgent 包部署](deploy-packages.md#connect-tui)。
+已安装 [TUI npm 包](deploy-packages.md#connect-tui)时，直接看[连接已有 Server](#connect-server)。
 
 从源码启动时，TUI 按 `config.yaml` 连接 `/api/v1/runs`。该地址上没有控制面时会拉起 `dataagent serve`。
 
@@ -12,7 +12,7 @@
 npm run start:tui
 ```
 
-地址来自 Home `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`npm run start -- --config` 绑到另一份文件的端口时，不带参数的 TUI 不会跟着走；Home 那个地址空着，就会按 Home 再起一个后端。要连已经起来的那一个，用 `--runtime-url`。`--runtime-url` 只连接、不拉起。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
+地址来自 Home `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`。这个地址上已经有控制面时，同一条命令直接连上，不再启动第二个后端。`npm run start -- --config` 绑到另一份文件的端口时，不带参数的 TUI 不会跟着走；Home 那个地址空着，就会按 Home 再起一个后端。要连接已启动的 Server，请[显式指定地址](#connect-server)。
 
 `./deploy.sh tui` 连接已有后端，地址优先取 `--runtime-url`，其次是最近一次托管启动记录的 API 地址，再其次是 Home 配置。例如 `./deploy.sh tui --runtime-url http://127.0.0.1:8791`。
 
@@ -39,6 +39,20 @@ npm run start:tui -- --resume thread-001
 ```bash
 npm run start:tui -- --help
 ```
+
+<a name="connect-server"></a>
+
+### 连接已有 Server
+
+只需源码版 TUI 时，在源码仓库根目录准备 npm 依赖并构建终端客户端。将示例中的 URL 改成从客户端可达的 Server 地址。
+
+```bash
+npm install --include=dev
+npm run build:tui
+npm run start:tui -- --runtime-url http://127.0.0.1:8790
+```
+
+已通过 npm 包安装时，改用 `dataagent-cli --runtime-url <Server 地址>` 或 `da --runtime-url <Server 地址>`。两条命令使用同一入口。源码与安装包的 `--runtime-url` 都会连接已有 Server。地址可用远端 IP 或回环地址，`0.0.0.0` 和 `::` 会转换为回环地址。退出后 Server 继续运行。
 
 ## 主界面
 
@@ -113,9 +127,8 @@ TUI 把自然语言输入发到控制面的 `/api/v1/runs`，与 Web 共用会�
 
 ## 排查
 
-- 无法连接：直接 `npm run start:tui`。它连 Home `config.yaml` 的 `server.host` 和 `server.port`，默认 `http://127.0.0.1:8790`；那里没有控制面时会拉起一个。已经用另一份 `--config` 启动的控制面，用 `--runtime-url` 连接。`./deploy.sh` 管的栈用 `./deploy.sh tui`，它走启动时记下的 API 地址。
-- 只想连接、不要拉起：用 `--runtime-url`。主机可以是 Home 的 `server.host`、回环地址或其他 IP。`0.0.0.0` 和 `::` 会改走回环地址。
-- 模型无响应：检查正在运行的后端所用进程环境或环境文件里的 `LLM_MODEL`、`LLM_BASE_URL` 和 `LLM_API_KEY`。
+- TUI 无法连接时，先检查[连接地址](#connect-server)，再查看[连接诊断](troubleshooting.md#connections)。
+- TUI 已连接但模型无响应时，见[模型诊断](troubleshooting.md#models)。
 - iTerm2 中 `Shift+Enter` 触发发送：绑定为「Send Escape Sequence」，填入 `[13;2u`，或改用 `Ctrl+J`。输入法候选窗需在实际使用的终端中检查。
 - 颜色和连接诊断：在 TUI 进程环境中设置 `NO_COLOR=1` 可关闭颜色。界面日志在客户端 DataAgent Home 的 `runtime/logs/tui.log`。
 - 会话无法恢复：确认流地址所在源（`http://<server.host>:<server.port>`）上的 `GET /api/v1/sessions` 可访问。TUI 调用该接口时不带登录凭证。

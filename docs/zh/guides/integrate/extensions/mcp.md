@@ -17,7 +17,7 @@ cp examples/mcp/.mcp.yaml examples/mcp/math_server.py "$DATAAGENT_HOME/"
 
 [示例配置](../../../../../examples/mcp/.mcp.yaml)使用 `MCP_PYTHON` 启动同目录的 [math_server.py](../../../../../examples/mcp/math_server.py)。在已有 Home 中使用时，只把 `math` 条目合并进现有 `mcpServers`，并把脚本放在该配置文件旁边。启用同名服务或复制脚本前，先检查是否已有相应配置或文件。
 
-要在 TUI 中试用，先按[配置速查](../../../reference/configuration-api.md)为本次 Home 提供模型环境变量。在同一终端使用[已构建的源码 TUI](../../tui.md)启动或连接使用该 Home 的 Server，然后输入 `Use mcp__user__math__add to add 12 and 30.`。工具应返回 42。默认端口已有其他 Server 时，按 [CLI 参考](../../../reference/cli-and-environment.md#dataagent-serve)调整本次 Home 的监听配置，再连接对应实例。
+要在 TUI 中试用，先按[配置速查](../../configuration.md)为本次 Home 提供模型环境变量。在同一终端使用[已构建的源码 TUI](../../tui.md)启动或连接使用该 Home 的 Server，然后输入 `Use mcp__user__math__add to add 12 and 30.`。工具应返回 42。默认端口已有其他 Server 时，按 [CLI 参考](../../../reference/cli-and-environment.md#dataagent-serve)调整本次 Home 的监听配置，再连接对应实例。
 
 只想验证示例的工具发现和调用时，可以从仓库根运行以下测试。测试使用临时 Home 和本地 stdio 服务，无需配置真实模型：
 

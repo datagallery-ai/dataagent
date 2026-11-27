@@ -1,4 +1,6 @@
-# Python SDK and extensions
+<a id="python-sdk-and-extensions"></a>
+
+# Choose an integration path
 
 Run DataAgent in a Python application or extend an existing agent with tools and workflows.
 
@@ -9,6 +11,6 @@ Run DataAgent in a Python application or extend an existing agent with tools and
 | Choose and write a plugin, tool, Skill, Hook, or subagent | [Extension guides](extensions/overview.md) and [extension schema](../../reference/extension-schema.md) |
 | Connect an external MCP server | [MCP integration](extensions/mcp.md) and [configuration reference](../../reference/mcp-configuration.md) |
 | Configure models, workspaces, and sessions | [Configuration guide](../configuration.md) and [sessions and outputs](../sessions-and-outputs.md) |
-| Call DataAgent from another process | [REST](../../reference/rest-api.md), [AG-UI](../../reference/agent-runtime.md), or [A2A](../../reference/a2a.md) |
+| Call DataAgent from another process | [REST](../../reference/rest-api.md), [AG-UI](../../reference/agent-runtime.md), or [A2A](a2a.md) |
 
 The [examples](../../../../examples/README.md) include runnable configurations, plugins, and a local MCP server. For changes to the runtime source, see the [developer docs](../../../development/index.md).

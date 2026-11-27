@@ -1,4 +1,6 @@
-# A2A
+# A2A 参考
+
+发现、发送消息和查询任务的可运行示例见 [A2A 接入指南](../guides/integrate/a2a.md)。
 
 `dataagent serve` 和 `dataagent serve-a2a` 都将 Agent 暴露为 A2A 1.0 服务。发现接口发布 Agent Card，调用统一使用 JSON-RPC 2.0。
 
@@ -15,24 +17,7 @@ Agent Card 只发布 JSONRPC 绑定，声明 `capabilities.streaming: false`。�
 
 ## 发一条消息
 
-```bash
-curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
-  -H 'Content-Type: application/json' \
-  -H 'A2A-Version: 1.0' \
-  -d '{
-    "jsonrpc": "2.0",
-    "id": "1",
-    "method": "SendMessage",
-    "params": {
-      "message": {
-        "role": "ROLE_USER",
-        "messageId": "message-1",
-        "contextId": "thread-1",
-        "parts": [{"text": "hello"}]
-      }
-    }
-  }'
-```
+使用 `SendMessage` 提交一轮对话。见[可运行的请求](../guides/integrate/a2a.md#send-message)。
 
 <a name="request-parameters"></a>
 
@@ -77,24 +62,9 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
 | `serve` 的 REST/AG-UI/健康/产物接口 | 此令牌不保护这些接口 |
 | 调用方身份 | 同一个共享令牌，不提供个人登录、任务所有权隔离或租户隔离 |
 
-例如先在**服务端**环境设置令牌再启动服务：
+令牌的设置和发送方式见[接入指南](../guides/integrate/a2a.md#connect)。
 
-```bash
-export DATAAGENT_A2A_AUTH_TOKEN='replace-with-a-long-random-token'
-uv run dataagent serve
-```
-
-调用终端单独设置相同值，再发送带认证头的请求：
-
-```bash
-export DATAAGENT_A2A_AUTH_TOKEN='replace-with-a-long-random-token'
-curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
-  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
-  -H "Authorization: Bearer $DATAAGENT_A2A_AUTH_TOKEN" \
-  -d '{"jsonrpc":"2.0","id":"list-1","method":"ListTasks","params":{}}'
-```
-
-缺少或错误令牌返回 HTTP 401，正文为 `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Invalid or missing Bearer token."}}`，不进入模型执行。未配置令牌时可省略 Authorization。后端读取 `.env` 不会替其他终端设置变量。实现见 [Bearer 校验](../../../dataagent/server/a2a/server.py)。
+缺少或错误令牌返回 HTTP 401，正文为 `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Invalid or missing Bearer token."}}`，不进入模型执行。未配置令牌时可省略 Authorization。实现见 [Bearer 校验](../../../dataagent/server/a2a/server.py)。
 
 <a name="request-diagnostics"></a>
 
@@ -175,34 +145,11 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 | 同步等待结果 | 省略或 `false` | HTTP 请求等到本轮结束或需要人工输入，Task 在 `result.task`；检查其实际状态 |
 | 异步任务 | `true` | 先取得 `result.task.id`，后台继续执行；用 `GetTask` 轮询到终态，必要时 `CancelTask` |
 
-`SendStreamingMessage` 和 `SubscribeToTask` 返回 JSON-RPC 错误 `-32004`，Push 通知返回 `-32003`。客户端可用以下请求提交异步任务：
+`SendStreamingMessage` 和 `SubscribeToTask` 返回 JSON-RPC 错误 `-32004`，Push 通知返回 `-32003`。
 
-```json
-{
-  "jsonrpc": "2.0", "id": "submit-1", "method": "SendMessage",
-  "params": {
-    "message": {
-      "role": "ROLE_USER", "messageId": "async-message-1",
-      "contextId": "async-thread-1", "parts": [{"text": "请分析已配置的数据。"}]
-    },
-    "configuration": {"returnImmediately": true}
-  }
-}
-```
+首次返回时，较短的任务可能已经完成。发送和查询示例见[接入指南](../guides/integrate/a2a.md#send-message)。
 
-早期返回示例只展示定位字段；短任务也可能返回时已完成，不能要求第一次必定为 WORKING：
-
-```json
-{"jsonrpc":"2.0","id":"submit-1","result":{"task":{"id":"22222222-2222-4222-8222-222222222222","contextId":"async-thread-1","status":{"state":"TASK_STATE_SUBMITTED"}}}}
-```
-
-查询该任务，仍使用版本头及按需认证头：
-
-```json
-{"jsonrpc":"2.0","id":"poll-1","method":"GetTask","params":{"id":"22222222-2222-4222-8222-222222222222"}}
-```
-
-查询时可能读到 `TASK_STATE_SUBMITTED`、`TASK_STATE_WORKING` 或等待答复的 `TASK_STATE_INPUT_REQUIRED`。客户端按完整枚举识别终态 `TASK_STATE_COMPLETED`、`TASK_STATE_FAILED`、`TASK_STATE_CANCELED` 和 `TASK_STATE_REJECTED`。完成后读 artifacts，失败时读 metadata。协议形状和异步取消可参照 [A2A 服务测试](../../../tests/test_a2a_server.py)与[任务诊断测试](../../../tests/test_a2a_observability.py)。
+查询时可能读到 `TASK_STATE_SUBMITTED`、`TASK_STATE_WORKING` 或等待答复的 `TASK_STATE_INPUT_REQUIRED`。客户端按完整枚举识别终态 `TASK_STATE_COMPLETED`、`TASK_STATE_FAILED`、`TASK_STATE_CANCELED` 和 `TASK_STATE_REJECTED`。完成后读 artifacts，失败时读 metadata。
 
 本服务没有执行去重、自动重试或幂等承诺；超时后不要直接重发可能产生副作用的任务。
 
@@ -271,15 +218,7 @@ A2A 适配 LangGraph 原生 `interrupt()` / `Command(resume=...)`，不要求流
 - 使用默认进程内 TaskStore 时，重启会丢失原 Task。等待中的 checkpoint 仍保留。要再次执行业务，请使用新的 `contextId`。
 - 入站恢复由此 JSON-RPC 原 Task 路径处理。默认客户端的[出站调用](#outbound)只发送文本。
 
-可控模型下的完整协议验证见 [test_a2a_hitl.py](../../../tests/test_a2a_hitl.py)：覆盖两个服务入口、同步/非阻塞、中断查询、人工答复、多次中断、原生工具批准/拒绝及取消。
-
-在仓库根目录运行最小闭环，无需真实模型或语义服务：
-
-```bash
-uv run --no-sync pytest tests/test_a2a_hitl.py -q
-```
-
-手动联调可先在现有模型配置中启用 `data-qa` 插件，请主代理调用 `data-qa__request_human_feedback`；收到实际中断后按上述格式回复。工具审批用例由测试装配启用原生 `interrupt_on`，本次没有新增产品审批规则配置。
+两个服务入口、轮询、重复中断、审批和取消的验证方法见[开发者测试](../../development/testing.md#a2a-testing)。
 
 <a name="inbound-and-subagents"></a>
 
@@ -293,34 +232,6 @@ A2A 请求默认进入主代理。主代理可通过 `task` 委派已启用的�
 
 ## 调用其他 Agent
 
-在调用方的 `config.yaml` 里声明远端 agent。装配时每个远端成为名为 `a2a__<id>` 的工具，`description` 会作为工具描述提供给调用方 Agent。可以写明什么时候调用，以及需要在消息里带哪些条件。
+每个已配置的远端都注册为 `a2a__<id>` 工具。工具发送文本，并为每条本地线程保留独立的远端会话。服务根地址、令牌和超时见[出站配置字段](configuration.md#a2a)与[配置示例](../guides/integrate/a2a.md#outbound)。
 
-```yaml
-a2a:
-  remote_agents:
-    - id: sales
-      url: http://127.0.0.1:9999
-      description: >
-        用户需要按时间、区域或产品查询销售指标时调用。
-        在 message 中写明指标、时间范围和筛选条件。
-```
-
-`url` 填服务根地址，例如 `http://127.0.0.1:9999`。超时、`auth_token` 和其他字段见 [A2A 配置](configuration.md#a2a)。
-
-同一个工具可以被多个本地线程共用。远端 `contextId` 按本地 `thread_id` 分开保存，所以两条本地会话不会写进同一段远端对话。
-
-`A2ACaller.send` 是异步 Python 调用，等待对方返回本轮结果或人工输入请求。它没有暴露协议的 `returnImmediately` 参数。对方可返回 Task 或 Message，两种响应的 `contextId` 都会保留。当 Task 需要人工输入时，远端工具以 `INPUT_REQUIRED` 开头返回正文，下一次同一本地线程调用会携带原 `taskId`。出站工具只能发文本，恢复 DataAgent 的结构化中断须直接使用[上面的 JSON-RPC 请求](#a2a-hitl)。失败、取消或拒绝的 Task 会抛出 `A2ACallError`。
-
-`A2ACallError` 提供可选的 `remote_code`、`request_id`、`task_id`、`context_id` 和 `root_run_id`。本地 `error_code` 仍是 `TOOL_ERROR`。旧服务没有诊断 metadata 时仍可调用，远端错误码、请求号和宿主轮次号为空，任务号与会话号仍从协议字段读取；成功的 `A2AResult` 也提供可选的请求号和宿主轮次号。
-
-直接调用时，不传 `thread_id` 的 `A2ACaller.send` 共用这一条 caller 自己的 context。
-
-```python
-from dataagent.extensions.a2a import A2ACaller
-
-async def ask():
-    caller = A2ACaller("http://127.0.0.1:9999")
-    first = await caller.send("hello")
-    second = await caller.send("continue")
-    return first.text, second.text
-```
+工具等待当轮结果或人工输入提示。等待输入时，工具返回以 `INPUT_REQUIRED` 开头的文本，并在同一线程的下一次调用中携带原任务 ID。结构化人工反馈需使用[直接 JSON-RPC](#a2a-hitl)。Python 调用、结果字段和异常见 [Python API](python-api.md#a2a-api)。

@@ -1,32 +1,17 @@
 # HITLHandler 与 HITLMiddleware
 
-两者与交互数据类型集中在 `dataagent/extensions/hitl.py`：
+模型需要澄清需求，或策略需要在指定阶段暂停运行时，可以请求人工反馈。`HITLHandler` 决定何时提问、问什么以及如何使用回答。`HITLMiddleware` 保存待处理的交互、暂停运行图，并在收到回答后恢复。使用异步 `ainvoke` 或 `astream` 运行。
 
-- `HITLHandler` 描述业务行为，可以按需重写三个方法。
-- `HITLMiddleware` 负责准备交互、保存 checkpoint、interrupt、收集回答和恢复执行。
+本页介绍通用机制。内置 SQL 与 IR 的交互策略见 [de-agent 人工反馈](de-agent-hitl.md)。
 
-当前支持异步 `ainvoke/astream`，以及以下六个 `at` 阶段：
+<a id="_1" name="_1"></a>
+<a id="启用和交互提示词" name="启用和交互提示词"></a>
 
-| 阶段 | 时机 |
-| --- | --- |
-| `before_agent` | 本次 agent 执行开始、首次模型调用前 |
-| `before_model` | 每次模型调用前 |
-| `after_model` | 每次模型返回后、执行计划中的工具前 |
-| `before_tool` | 单个工具执行前，包括 `task` 子代理入口 |
-| `after_tool` | 单个工具已返回，结果提交到父图之前 |
-| `after_agent` | agent 沿结束路径返回前 |
-
-模型循环不重复执行 before_agent；after_agent 返回 replan 时可以重新进入模型循环，
-并在再次结束时接受复审。当前仍提供显式 Python 装配接口；
-插件 `.plugin.yaml` 中的 hitl 会自动安装到父 agent，支持 instructions 自主提问。
-HITL 配置统一声明在插件 `.plugin.yaml` 的 hitl 字段，guard 不从主配置的
-plugins.config 读取交互参数。自动应答和交互超时尚未接入。
-
-Web 与 TUI 已支持通过 HTTP 暂停和恢复：Web 展示问题、候选项和文本输入；TUI
-显示问题后，将下一次手动输入作为回答，排队中的任务会继续等待。刷新 Web 或通过
-TUI `/resume <threadId>` 可恢复待回答项。策略内部信息保留在 Checkpoint。公开字段、提交回答和处理暂停事件见 [AG-UI 人工交互契约](../../../reference/events.md#hitl)。
+<a name="enable-and-supply-instructions"></a>
 
 ## 启用和交互提示词
+
+插件 `.plugin.yaml` 中的 `hitl` 声明为默认根 Agent 启用人工反馈。
 
 ```yaml
 hitl:
@@ -35,41 +20,38 @@ hitl:
   policies: []
 ```
 
-开关和字段的默认值见[人工交互配置参考](../../../reference/extension-schema.md#hitl-configuration)。关闭某个来源后，它的 handler 和 instructions 不加载，其他启用插件的人工交互仍然可用。
+插件编译器读取相对于插件根目录的 Markdown 文件，将内容加到根 Agent 的系统提示词中。文件为空、缺失或超出插件根目录时装配失败。省略 `instructions` 也可以运行策略。关闭该插件的 HITL 会跳过它的提示词和 handler，其他已启用来源仍可使用。字段和默认值见[人工交互配置参考](../../../reference/extension-schema.md#hitl-configuration)。
 
-`instructions` 为相对插件目录的 Markdown 文件路径，不是内联提示词。启用后读取
-并注入父 agent 的系统提示词，空文件、缺失文件或越界路径均报错。省略时仍可使用
-policies，也可以由其他提示词指导模型自主调用工具。多个启用来源共用一把工具：
+已启用插件共用 `request_human_feedback` 工具。提示词可以引导模型自主调用。下面的参数用于请用户选择去重主键。
 
-```python
-request_human_feedback(
-    question="活跃用户按哪个标识去重？",
-    reason="需求中未指定标识字段",
-    options=["user_id", "device_id"],
-)
+```json
+{
+  "question": "活跃用户按哪个标识去重？",
+  "reason": "需求未指定标识字段。",
+  "options": ["user_id", "device_id"]
+}
 ```
 
-工具通过原生 interrupt 等待非空文本，恢复后以原始回答作为成功 ToolMessage 返回
-模型，不自动确认或修改 IR。同一轮若还提出其他工具调用，只保留第一条反馈调用，
-其余调用丢弃，待用户回答后由模型重新规划。自主提问不再额外触发同轮的确定性
-after_model guard，也不会递归进入 before_tool/after_tool HITL。
+工具等待非空文本，并以成功的 `ToolMessage` 返回原始回答。如果模型同一次响应还提出其他工具调用，只执行第一条反馈调用。收到回答后，模型重新规划。该次模型响应跳过确定性的 `after_model` 策略，反馈工具自身的调用跳过 `before_tool` 和 `after_tool` 策略。
 
-旧版 human_feedback_conditions、Initial/Mid/Final 阶段与相关交互纪律已整理到
-[de-agent HITL instructions](../../../../../dataagent/plugins/de-agent/prompts/hitl.md)，旧工具名称
-已保留，参数说明统一为当前的 question/reason/options。
+<a id="_2" name="_2"></a>
+<a id="三个方法及默认实现" name="三个方法及默认实现"></a>
+
+<a name="handler-methods"></a>
 
 ## 三个方法及默认实现
 
 | 方法 | 返回类型 | 默认行为 |
 | --- | --- | --- |
-| `trigger_policy(context, *, params)` | `TriggerDecision` | 每次匹配的工具调用都触发 |
-| `interaction_builder(context, *, params)` | `InteractionRequest` | 使用 params.question/options，否则生成通用问题 |
-| `resume_handler(context, *, params)` | `ResumeDecision` | 将用户回答返回模型重新推理，不修改业务状态 |
+| `trigger_policy(context, *, params)` | `TriggerDecision` | 每次匹配的阶段或工具调用都会触发提问 |
+| `interaction_builder(context, *, params)` | `InteractionRequest` | 使用 `params.question` 和 `params.options`，缺少问题时使用通用问题 |
+| `resume_handler(context, *, params)` | `ResumeDecision` | 将回答作为反馈交给模型重新规划，业务状态保持原值 |
 
-方法可使用 `def` 或 `async def`。例如只定制问题：
+按需用 `def` 或 `async def` 重写方法。将以下类保存到插件的 `hitl/clarification.py`，用于自定义一个固定的澄清问题。
 
 ```python
 from dataagent import HITLHandler, InteractionRequest
+
 
 class ClarificationHandler(HITLHandler):
     def interaction_builder(self, context, *, params):
@@ -79,15 +61,25 @@ class ClarificationHandler(HITLHandler):
         )
 ```
 
-`context.event` 表示阶段。`context` 还提供当前工具调用 `tool_call`、策略完整 ID `policy_id`、业务 `state`、
-`runtime`、trigger 返回的 `decision`、交互 `interaction` 和用户 `answer`。
-后两个字段仅在相应阶段可用；`state` 是深拷贝，直接修改不会提交到图。
-agent/model 阶段的 `tool_call` 为 None；after_tool 额外提供原生 `tool_result`
-（ToolMessage 或 Command），其 `state` 预览包含工具返回的业务更新和结果消息。
-业务服务可从原生 `runtime.context` 获取，业务状态应使用 detached `context.state`。
-handler 实例可被多个工具并发使用，不要在 `self` 上保存某次交互的可变状态。
+| 阶段 | 时机 |
+| --- | --- |
+| `before_agent` | 一次执行开始时，在首次模型调用前运行一次 |
+| `before_model` | 每次模型调用前 |
+| `after_model` | 模型响应后、执行计划中的工具前 |
+| `before_tool` | 单个工具执行前，包括 `task` |
+| `after_tool` | 单个工具返回后，父图提交结果前 |
+| `after_agent` | 沿结束路径返回前。重新规划可以进入模型循环，再次接受复审 |
+
+`HITLContext` 提供阶段 `event`、完整的 `policy_id`、分离的 `state` 和原生 `runtime`。从 `runtime.context` 读取宿主服务。工具阶段还提供 `tool_call`，`after_tool` 的 `tool_result` 保存原生结果，状态预览含工具的业务更新。问题构建方法收到触发判定 `decision`，恢复方法还能读取交互 `interaction` 与回答 `answer`。handler 实例会被共享，应显式返回状态更新。
+
+<a id="yaml" name="yaml"></a>
+<a id="yaml-及显式装配" name="yaml-及显式装配"></a>
+
+<a name="manifest-and-explicit-assembly"></a>
 
 ## YAML 及显式装配
+
+插件清单注册前面定义的类，并指定执行阶段。
 
 ```yaml
 hitl:
@@ -100,7 +92,9 @@ hitl:
     params: {}
 ```
 
-通过 `dataagent.create_agent` 使用已启用的插件时，由插件编译器自动加载。直接组装原生 Deep Agents 图时，可以读取同一个 `.plugin.yaml` 的 `hitl` 部分，并显式传入中间件。下面的 `model`、`tools` 和 `subagents` 由调用方提供。
+`handler` 相对于插件根目录，指向可无参构造的 `HITLHandler` 子类。省略时使用基类。若要匹配特定子代理，声明 `matcher: task`，再在 `trigger_policy` 中检查 `subagent_type`。编译器用插件 ID 作为命名空间。`my-plugin/clarification` 这样的完整策略 ID 必须唯一。
+
+DataAgent 将已启用插件的策略汇集到默认根图上的一个中间件。自行装配 Deep Agents 图时，由调用方提供模型、工具、子代理和 checkpointer。示例使用内存 checkpointer。
 
 ```python
 from pathlib import Path
@@ -123,153 +117,72 @@ graph = create_deep_agent(
 )
 ```
 
-`handler` 是相对 `root` 的 `file.py:ClassName`，引用 `HITLHandler` 的无参构造子类。
-省略 `handler` 使用基类；固定问题也可直接写在 `params.question/options` 中。
-要检查特定子代理，`matcher` 填 `task`，再在 `trigger_policy` 里检查工具参数 `subagent_type`。其他匹配规则见[人工交互配置参考](../../../reference/extension-schema.md#hitl-configuration)。
+显式装配时，需要由调用方把提示词传给图。标准装配时插件编译器会读取清单中的 `instructions`。如果要跨进程重启恢复，请使用持久化 checkpointer。
 
-`namespace` 与策略 `id` 组成完整 ID，例如 `main/clarification`、`de-agent/ir_gate`。
-同一 middleware 中完整 ID 必须唯一。插件编译器以插件 ID 作为命名空间，汇集已启用的显式策略。
+<a id="_3" name="_3"></a>
+<a id="回答与恢复" name="回答与恢复"></a>
+
+<a name="answer-and-resume"></a>
 
 ## 回答与恢复
+
+- **Web。** 输入文字或选择显示的选项。重新打开会话可以取回待回答的问题。
+- **TUI。** 下一次手动输入用于回答当前问题，排队的输入继续等待。通过 `/resume <threadId>` 重新打开会话。
+- **HTTP 和 A2A。** 将答案和待处理的 interrupt ID 交给原请求入口。请求格式和相应宿主的重启行为见 [AG-UI 人工交互契约](../../../reference/events.md#hitl)或 [A2A 人工交互契约](../../../reference/a2a.md#a2a-hitl)。
+- **嵌入式运行图。** 读取 interrupt，在同一线程上提交 `Command(resume=...)`。
 
 ```python
 from langgraph.types import Command
 
-config = {"configurable": {"thread_id": "ir-example"}}
-result = await graph.ainvoke({"messages": [("user", "生成活跃用户统计 SQL")]}, config)
-pending = result["__interrupt__"][0]
-print(pending.value["message"])
-result = await graph.ainvoke(Command(resume={pending.id: "user_id"}), config)
+config = {"configurable": {"thread_id": "clarification-example"}}
+result = await graph.ainvoke(
+    {"messages": [("user", "请将活跃用户统计交给子代理处理")]},
+    config,
+)
+for pending in result.get("__interrupt__", ()):
+    print(pending.value["message"])
+# 收到回答后提交。如果有多条待回答项，使用与回答对应的 ID。
+if result.get("__interrupt__"):
+    pending = result["__interrupt__"][0]
+    result = await graph.ainvoke(Command(resume={pending.id: "user_id"}), config)
 ```
 
-middleware 目前接受非空文本回答；空白或结构化对象会再次等待并提供
-`validation_error`。`options` 仅供展示，业务候选值校验由子类在 `resume_handler`
-中决定，例如无法确认时返回 `replan` 请求继续澄清。本阶段没有 `response_handler`。
+回答使用非空文本。空白或结构化回答会再次暂停并返回 `validation_error`。选项是提示，业务校验在 `resume_handler` 中完成。多个并行工具可以分别暂停，提交时按 interrupt ID 匹配回答。中间件会等待调用方输入，当前没有自动回答和交互超时。
+
+<a name="resume-actions"></a>
+
+### 恢复动作与状态更新
 
 | 阶段 | `continue` | `replan` | `reject` |
 | --- | --- | --- | --- |
-| before_agent / before_model | 携带反馈进入后续模型流程 | 携带反馈进入后续模型流程，不自循环 | 转入结束路径，返回拒绝说明 |
-| after_model | 保留本轮计划，继续执行或结束 | 跳过本轮全部工具，回到模型 | 跳过本轮全部工具，转入结束路径 |
-| before_tool | 全部命中策略通过后执行原工具 | 跳过原工具，将反馈返回模型 | 拒绝原调用，将原因返回模型 |
-| after_tool | 保留真实工具结果，沿原流程继续 | 保留真实结果，将反馈返回模型 | 拒绝结果，将原因返回模型；不会撤销执行 |
-| after_agent | 沿结束路径返回结果 | 携带反馈重新进入模型循环 | 返回拒绝说明，沿结束路径结束 |
+| before_agent / before_model | 携带反馈进入后续模型流程 | 携带反馈继续且不自循环 | 转入结束路径并给出原因 |
+| after_model | 保留当前计划 | 跳过计划中的工具并返回模型 | 跳过计划中的工具并转入结束路径 |
+| before_tool | 所有匹配策略通过后执行 | 跳过本次调用并将反馈交给模型 | 拒绝本次调用并将原因交给模型 |
+| after_tool | 保留实际结果 | 保留实际结果并将反馈交给模型 | 调用已执行，将拒绝原因交给模型 |
+| after_agent | 正常结束 | 携带反馈重新进入模型循环 | 带着拒绝原因结束 |
 
-工具阶段的 reject 不结束整个会话；需要持久禁止再次执行的业务规则，应在 trigger
-或执行检查中另行体现。状态阶段转入结束路径后仍会经过原生 after_agent 链。
-after_model 跳过计划时会生成对应的 error ToolMessage，确保模型消息中的调用都有结果，
-不会留下未完成的 tool_call。before_tool 的调用参数始终保留，不自动改写。
-return_direct 工具在 continue 时保留原生直接返回行为，在 replan/reject 时转回模型。
+拒绝单次工具调用后，会话仍可继续。需要持续执行的业务限制应放进触发器或执行检查。状态阶段进入结束路径后仍会经过原生 `after_agent`。跳过计划时为相应工具调用 ID 生成错误 `ToolMessage`。before-tool 阶段保留原调用参数。`return_direct` 工具在 `continue` 时直接返回，在 `replan` 或 `reject` 时转回模型。默认触发器可能在重新规划后再次提问。只问一次需要重写触发器。
 
-默认 trigger 每次都会触发；默认 replan 后如果再次到达同一阶段，会再次提问。
-只问一次或 IR 确认后放行，应重写 `trigger_policy`。
-
-本阶段需要提交业务状态时，由 `resume_handler` 返回更新：
+要写入业务状态，可在 `ResumeDecision` 中返回更新。示例将回答保存为 `selected_key`。
 
 ```python
 return ResumeDecision(
     action="continue",
-    state_update={"ir": confirmed_ir},
+    state_update={"selected_key": context.answer},
 )
 ```
 
-宿主必须在 state schema 中声明对应字段。before_tool 将更新提供给原工具的
-`ToolRuntime.state`，工具及其 after_tool 交互完成后与结果一起提交。返回 replan/reject 时也会提交
-显式提供的业务更新。若 handler 抛异常，其对 detached state 的修改不会提交。
-状态合并顺序为 before_tool 更新、工具更新、after_tool 更新。普通字段采用最后一次
-更新，带 reducer 的字段按声明的 reducer 依次处理；工具和后续 handler 的状态预览
-遵循同样规则。提交保留原始增量，不将预览后的完整值再次送入 reducer。单次工具
-涉及同一 reducer 字段的多次更新时，middleware 返回原生 Command 列表，保留更新
-顺序及唯一的工具结果消息。
+在状态 schema 中声明该字段。中间件会合并各 handler 兼容的 `state_schema` 字段。before-tool 更新在工具的 `ToolRuntime.state` 中可见。若工具实际执行，更新按 before-tool、工具、after-tool 的顺序提交，字段定义了 reducer 时按该规则合并。返回 `replan` 或 `reject` 时也会提交显式更新。直接修改分离的 state 不会提交。
 
-## IR 子代理示例与恢复范围
+<a name="recovery"></a>
 
-### 结束前的两个 guard
+### Checkpoint 与恢复
 
-`hitl/completion_guards.py` 提供两个 after_model handler，已注册到 de-agent 的
-`.plugin.yaml`，共用 checkpoint 中的私有 completion_guards 状态：
+待回答交互会保存策略 ID、版本、阶段、问题和参数。存在待回答项时，保留原策略 ID、阶段和版本。工具执行完毕后从 after-tool 阶段恢复会复用已完成的结果。handler 可能重放，执行中断的工具可能重试，所以有外部副作用时要做到幂等。持久化 prepare/execute 任务、reducer 和重放测试见[人工反馈的执行与恢复](../../../../development/architecture/execution.md#hitl-recovery)。
 
-- `TextQuestionGuard`：声明 policy 即启用，检测最终文本最后一行的明确提问，
-  将完整文本（最多 2000 字符）作为问题，每轮用户输入最多触发两次。
-- `HumanFeedbackGuard`：最终确认，声明 policy 即启用，每轮用户输入只触发一次。
-  策略 params.conditions 支持字符串或列表，补充最终确认清单。
+<a id="ir" name="ir"></a>
+<a id="guard" name="guard"></a>
+<a id="ir-子代理示例与恢复范围" name="ir-子代理示例与恢复范围"></a>
+<a id="结束前的两个-guard" name="结束前的两个-guard"></a>
 
-de-agent 已声明这两个 policy，不需要额外的 auto_resolve 或 final_confirmation 开关。
-删除对应 policy 可关闭该 guard，插件的 hitl.enabled=false 则关闭该插件全部 HITL。
-
-三个 guard 的交互参数都放在 `.plugin.yaml` 对应 policy 的 params 中。
-例如修改 TextQuestionGuard 的提问次数（下例只展示该 policy）：
-
-```yaml
-hitl:
-  enabled: true
-  instructions: prompts/hitl.md
-  policies:
-  - id: text_question_guard
-    at: after_model
-    handler: hitl/completion_guards.py:TextQuestionGuard
-    params:
-      text_question_max_fires: 2
-```
-
-policy 只负责是否启用交互，不会自动安装应答器；需调用方消费 interrupt 并回答。
-总开关仍是插件声明 hitl.enabled。两个 guard 都跳过带有效或
-无效工具调用的模型消息；回答后返回模型重新推理。计数在 resume 时写入，重放不会
-重复累加，middleware 生成的反馈不会误判成新用户轮次。原始回答也会被 IR session
-收集器按稳定 ID 收集，避免把模型引导话术当成业务事实。
-
-真实 DataTaskIR 策略现位于 [IRQuestionGuard](../../../../../dataagent/plugins/de-agent/hitl/ir_question_guard.py)，
-策略声明见 [.plugin.yaml](../../../../../dataagent/plugins/de-agent/.plugin.yaml) 的 hitl 字段。原 examples/hitl 的简化
-ir_gate 已移除，避免把自然语言回答直接当成已确认 IR。
-
-IRQuestionGuard 同样以 policy 声明控制启用，不再读取 enable_ir_hitl。
-data_task_ir.enabled 仍是 IR 功能本身的开关；未开启 IR 时，没有口径可供检查，guard
-不会触发。关键字段范围、未决问题、降级状态与提问预算等业务判断仍然保留。
-
-de-agent 的 `.plugin.yaml` 已集中列出全部 HITL 参数及默认值：
-
-| Policy | params 字段 | 默认值 |
-| --- | --- | --- |
-| text_question_guard | text_question_max_fires | 2 |
-| ir_question_guard | budget | 8 |
-| ir_question_guard | hitl_question_guard_max_fires | 2 |
-| ir_question_guard | hitl_max_same_fingerprint_asks | 2 |
-| ir_question_guard | hitl_max_same_field_asks | 2 |
-| ir_question_guard | hitl_blocking_fields | identity、sources、time_context、output_features |
-| ir_question_guard | consumerTools | de-agent__check_and_repair_sql；另内置识别 task 的 nl2sql 子代理 |
-| human_feedback_guard | conditions | []，可选的最终确认清单 |
-
-原 config.json 中 plugins.config.de-agent.hitl 的参数，以及 data_task_ir 下的
-HITL 字段不再读取；自定义值应移到对应 policy 的 params。data_task_ir.enabled、
-model 等 IR 业务参数仍保留在 config.yaml。
-
-插件编译器自动加载 handler，使用插件 ID 作为策略命名空间。handler 可通过
-state_schema 声明业务状态；middleware 自动合并这些字段，IRQuestionGuard 已声明
-IRQuestionState。显式装配仍可使用 HITLMiddleware.from_config。多个插件的策略合并
-为一个父级 HITLMiddleware，同名局部策略因命名空间不同而互不冲突。
-默认用一条 after_model 策略覆盖消费者调用前和最终完成前，检查关键字段
-unresolved + question；这与旧 guard 一样拦截整轮计划，避免并行消费者重复提问。
-handler 也支持 before_tool，适用于明确保证消费者串行的宿主。回答以任务级 ir_clarification 保存，现有 IR session 收集器按
-稳定 ID 去重并重新提取，不依赖 HITL 审计历史。回答后仍未决的字段不再追问，按
-confirmed-only 消费并记录交付缺口。预算目前统计该任务的 IR 交互，不是跨所有策略的全局预算。
-
-默认限制沿用旧 guard 的 2 次 fire、2 次指纹和字段上限；总 IR 预算为 8，可通过
-策略 params.budget 配置。任务 ID 改变后重新计数。
-- 到达每个阶段时，按配置顺序准备该阶段所有命中的策略，冻结问题、参数和策略版本。
-  全部返回 continue 才沿原流程继续；后续 resume_handler 可看到前面策略的业务更新。
-- 问题通过 durable prepare task 保存；SQLite 重建恢复时不重新运行 trigger/builder。
-  原策略删除、阶段迁移或版本改变会拒绝恢复，不会静默放行；兼容版本由开发者手动维护。
-- 恢复时 handler 可能被重放，因此必须无副作用或自行幂等。
-- 仅目标工具暂停，其他并行工具仍可执行；多个等待项可以按 interrupt ID 分别恢复。
-- 私有 `hitl_history` 按交互 ID 合并，通过 `graph.aget_state(config)` 查询，
-  `source="external"` 表示回复从 resume 接口提交，不假定一定来自真人。
-- 工具通过 durable execute task 缓存已完成结果，after_tool 等待恢复时也不会重复执行
-  已完成的调用。执行中崩溃仍可能重试外部
-  操作，需要业务幂等；并行业务状态更新仍需宿主自行声明合适的 reducer。
-- 当前支持普通工具结果，以及本图的 `Command(update=dict)`；父图 Command、
-  Command 列表和自动修改原工具参数尚未支持。
-
-验证命令：
-
-```bash
-uv run pytest tests/test_hitl.py tests/test_hitl_stages.py -q
-```
+原 IR 与恢复章节的内容见 [de-agent 策略](de-agent-hitl.md#completion-guards)与[通用恢复契约](#recovery)。

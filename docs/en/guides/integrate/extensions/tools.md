@@ -35,6 +35,8 @@ tools:
 
 The model calls `common__summarize_numbers`. The host wraps ordinary functions. For a `BaseTool`, it reuses the schema and registers the tool under the fully qualified name. See [plugin manifest](../../../reference/extension-schema.md#plugin-manifest) and the [complete validation example](../../../../../examples/plugins/common/tools/statistics.py).
 
+<a id="tool-runtime-clients"></a>
+
 ## Access models and the semantic client
 
 Use `ToolRuntime` for other configured models. Read model configuration through the runtime rather than loading `.env` in the tool.
@@ -52,6 +54,8 @@ async def summarize(text: str, runtime: ToolRuntime[AgentContext]) -> str:
 `get_model("fast")` selects `models.fast`. An invalid alias fails. Clients are reused within the current agent.
 
 When configured, `runtime.context.semantic_client` is the host- or SDK-owned `SemanticServiceClient`. Otherwise it is `None`. See [semantic service](semantic-service.md) and the [llm-utils example](../../../../../examples/plugins/llm-utils/README.md).
+
+Pass `runtime.config` to carry the call context. Direct model calls inside ordinary tools run separately from the Agent loop and are not exported as independent model spans. See [trace data boundaries](../../../../development/architecture/execution-traces.md#trace-data-boundaries).
 
 ## Execution limits
 

@@ -1,21 +1,23 @@
 # 状态与存储
 
-[Home 目录树](home-layout.md#home-layout)展示了各文件的位置。服务端与 SDK 按下表分配状态的所有权。
+[Home 目录树](home-layout.md#home-layout)列出配置、扩展及运行文件的位置。恢复会话、定位产物和分析执行过程时，需要读取不同的数据。
 
-| 状态 | 默认位置 | 谁管理 |
+| 要解决的问题 | 数据在哪里 | 数据包含什么 |
 | --- | --- | --- |
-| 消息与图状态 | `<home>/runtime/checkpoints.sqlite` | 服务内 LangGraph SQLite checkpointer。SDK 由调用方提供 checkpointer |
-| 会话索引 | `sessions.sqlite` 的 `sessions` 表 | REST 与 A2A 共用的 `Sessions` |
-| 输入与产物绑定 | `sessions.sqlite` 的 `session_bindings` 表 | `dataagent.bootstrap.paths`，服务端与 SDK 共用 |
-| 产物与上下文卸载 | 默认 `<home>/outputs/<user>/<thread>/` | Agent 文件工具、shell 与宿主 |
-| Trace | `runtime/users/<user>/sessions/<thread>/traces/<run_id>.json` | 会话图的本地导出器 |
-| 后端与界面日志 | `runtime/logs/` | 对应的服务、客户端或启动器，轮转规则见[可观测性](observability.md) |
+| 恢复一轮对话或等待中的人工反馈 | 服务端 `runtime/checkpoints.sqlite` | LangGraph 的消息、图状态和待执行位置。恢复时优先使用会话索引记录的 Checkpoint |
+| 列出某个用户拥有的会话 | `runtime/sessions.sqlite` 的 `sessions` 表 | 标题、时间、最新状态、最后的运行号和 Checkpoint ID |
+| 知道一个会话可以从哪里读、应把结果写到哪里 | 同一数据库的 `session_bindings` 表 | 会话创建时绑定的输入目录列表和最终产物目录 |
+| 查看报告或图表 | 实际产物目录，默认 `<home>/outputs/<user>/<thread>/` | Agent 生成的业务文件，也包含被消息引用的卸载内容 |
+| 分析某一轮调用的顺序、耗时与错误 | 每个会话的 `traces/` 目录 | [根执行的 OTLP JSON](execution-traces.md#local-files)，按调用关联模型、工具和子代理 |
+| 分析启动、连接或接口错误 | `runtime/logs/` | 后端、网页和终端各自的[运行日志](observability.md) |
+
+Trace 记录一轮实际执行时产生的观测数据。恢复执行使用 Checkpoint、会话绑定和依赖的业务文件。归档或迁移时，应保留原来的绑定路径以及 Checkpoint 引用的产物。只备份 Trace 或会话列表无法恢复图状态。
 
 <a name="session-index"></a>
 
 ## 会话索引
 
-`sessions` 主键是 `(user_id, thread_id)`，并额外要求同一 Home 内的 `thread_id` 唯一。标题取用户文本压缩空白后的前 100 个字符。SDK 使用同一份绑定表，但不读写服务端会话索引。多个调用方共享 checkpointer 时，由宿主管理状态隔离。
+`sessions` 主键是 `(user_id, thread_id)`，并额外要求同一 Home 内的 `thread_id` 唯一。`submitted_runs` 按 `(thread_id, run_id)` 另行登记已提交的轮次，用于拒绝重复提交。标题取用户文本压缩空白后的前 100 个字符。SDK 使用同一份绑定表，但不读写服务端会话索引。多个调用方共享 checkpointer 时，由宿主管理状态隔离。
 
 开始一轮时写入 `running`，正常完成写入 `completed`，失败写入 `error`，取消或连接断开写入 `interrupted`。进程启动会把残留的 `running` 改为 `interrupted`。失败或取消的轮次在已有可保存的消息时更新 Checkpoint，尚未产生消息时保留原位置。
 

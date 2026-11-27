@@ -1,6 +1,6 @@
 # Python SDK
 
-通过 SDK 在 Python 进程里调用 DataAgent。先按[配置速查](../../reference/configuration-api.md)准备可用模型。默认读取 DataAgent Home 的 `config.yaml` 和 `.env`，也可用 `LaunchOptions(config=..., env_file=...)` 分别选择文件。环境变量取值顺序见[环境变量参考](../../reference/cli-and-environment.md#environment-variables)。
+通过 SDK 在 Python 进程里调用 DataAgent。先按[配置速查](../configuration.md)准备可用模型。默认读取 DataAgent Home 的 `config.yaml` 和 `.env`，也可用 `LaunchOptions(config=..., env_file=...)` 分别选择文件。环境变量取值顺序见[环境变量参考](../../reference/cli-and-environment.md#environment-variables)。
 
 <a name="without-file-logging"></a>
 
@@ -101,4 +101,4 @@ with closing(agent.stream(inputs, config)) as stream:
 
 ## 在工具中访问模型
 
-工具可通过 `ToolRuntime[AgentContext]` 调用 `runtime.context.get_model()`，或传已配置的别名。写法见[工具扩展指南](extensions/tools.md)。调用时传 `config=runtime.config`，让模型运行能关联到当前 Trace。工具内直接调用的模型走独立路径，Agent 循环的模型调用限额和中间件只作用于循环中的调用。
+在工具里选择模型或调用语义客户端，见[工具指南](extensions/tools.md#tool-runtime-clients)。

@@ -5,7 +5,7 @@
 | 场景 | 命令 |
 | --- | --- |
 | 运行一个 Python 测试文件 | `uv run --no-sync pytest -q tests/test_api.py` |
-| 检查 Python 代码 | `uv run --no-sync ruff check .` |
+| 检查 Python 代码 | `uv run --no-sync ruff check .`、`uv run --no-sync ruff format --check .` |
 | 运行单元测试 | `make ut`，或用 `SCOPE=dataagent,api` 选择组件 |
 | 运行串行系统测试 | `make st`，会先构建 TUI |
 | 运行两个测试层级 | `make test`，覆盖 Python、API、Web、TUI、部署及 YAML |
@@ -46,6 +46,22 @@ uv run --no-project python scripts/run_product_tests.py --tier test --scope data
 
 `test_a2a_e2e.py` 归入产品脚本的串行系统测试。它验证真实 `serve-a2a` 进程、TCP、默认匿名访问、模型错误分类、日志落盘，以及重启后旧 Task 不存在但会话历史仍可续接。外部 HTTPS 和网关仍需在实际部署环境验收。
 
+<a name="a2a-testing"></a>
+
+## A2A 协议验证
+
+在仓库根目录运行可控模型测试，无需访问真实模型或语义服务：
+
+```bash
+uv run --no-sync pytest -q tests/test_a2a_server.py tests/test_a2a_client.py tests/test_a2a_observability.py tests/test_a2a_hitl.py
+```
+
+- 服务和客户端测试覆盖 Agent Card、Bearer 令牌、会话归属和出站会话保持。
+- 诊断测试覆盖非阻塞任务的查询和取消，以及请求号、任务号和 Trace 的对应关系。
+- HITL 测试覆盖两个服务入口、同步与非阻塞调用、恢复和重复中断、原生工具审批和取消。
+
+手工联调时，在可用的模型配置中启用 `data-qa` 插件，请主 Agent 调用 `data-qa__request_human_feedback`。用实际收到的 Task ID、会话 ID 和暂停 ID 按 [A2A HITL 契约](../zh/reference/a2a.md#a2a-hitl)提交答复。工具审批由自动化测试装配原生 `interrupt_on` 验证。
+
 <a name="a2a-nl2sql"></a>
 
 ## A2A 与 nl2sql 的联合验收
@@ -80,7 +96,7 @@ uv run --no-sync pytest tests/test_a2a_live.py -m live -q
 
 临时 Home 的模型配置只保存 `$env{DATAAGENT_A2A_LIVE_API_KEY}` 引用。每个用例在 pytest 临时目录生成 `a2a-live-report.json`、`backend.stderr.log` 和已有的 Home 日志、检查点、trace，并检查产物没有真实密钥。报告保留 ID 和诊断路径，方便复查。除上游鉴权失败用例要求 401 外，包括取消、超时在内的真实网关请求均要求最终返回 200，避免延迟掩盖无效凭据。
 
-用例要求错误根 span、模型子 span、错误详情、ID 关联和检查点齐全，报告中的 `modelSpanPresent` 必须为真。中断模型记录保留原生 ID、父子关系和开始时间，错误说明包含 `interrupted locally`。模型结果与 Token 用量按实际响应记录。主动取消和超时都可能表现为根 `CancelledError`，用任务中的 `metadata.dataagent.error.code`（`CANCELLED` / `TIMEOUT`）及日志区分。导出规则见[可观测性](architecture/observability.md)。
+用例要求错误根 span、模型子 span、错误详情、ID 关联和检查点齐全，报告中的 `modelSpanPresent` 必须为真。中断模型记录保留原生 ID、父子关系和开始时间，错误说明包含 `interrupted locally`。模型结果与 Token 用量按实际响应记录。主动取消和超时都可能表现为根 `CancelledError`，用任务中的 `metadata.dataagent.error.code`（`CANCELLED` / `TIMEOUT`）及日志区分。导出规则见[执行 Trace](architecture/execution-traces.md)。
 
 产品通路：
 

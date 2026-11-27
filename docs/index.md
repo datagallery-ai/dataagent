@@ -11,7 +11,7 @@ hide:
 
 # DataAgent
 
-A local Data Agent workbench for multi-step analysis. Use Web or TUI to ask questions, connect configured plugins and semantic services, and review conversation history, outputs, and traces.
+An enterprise DataAgent workbench. See the [product overview](en/concepts/overview.md) or choose a documentation entry below.
 
 </section>
 
@@ -24,17 +24,17 @@ A local Data Agent workbench for multi-step analysis. Use Web or TUI to ask ques
 
 <div class="df-proof" markdown>
 ### Semantic Accuracy
-Schema, metrics, field relationships, and datasource context are resolved before SQL is written, reducing guessed tables, wrong joins, and definition drift.
+See how [data inputs](en/guides/inputs.md) and the [semantic service](en/guides/integrate/extensions/semantic-service.md) supply business context.
 </div>
 
 <div class="df-proof" markdown>
 ### Data access and execution
-Input workspaces give the Agent read-only guidance. File tools and shell run with the Server process's operating-system permissions. NL2SQL safety rules depend on plugin configuration. See [security](en/concepts/security.md).
+See the [security notes](en/concepts/security.md) for credentials, read-only inputs, and process permissions.
 </div>
 
 <div class="df-proof" markdown>
 ### Data-task Runtime
-Multi-step analysis converges through schema inspection, tool policy, event streams, artifacts, and replayable history across Web, TUI, and API.
+See the [architecture overview](en/concepts/architecture.md) for clients, services, and sessions.
 </div>
 
 </section>

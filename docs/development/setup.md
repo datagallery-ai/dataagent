@@ -13,7 +13,7 @@ uv sync --python 3.12
 npm install --include=dev
 ```
 
-`uv sync` 默认安装 pytest 和 Ruff 等开发依赖。只修改 Python 时可先跳过 npm 步骤。运行依赖与可选 extra 见[独立包部署](../zh/guides/deploy-packages.md#optional-dependencies)。调用模型前按[配置速查](../zh/reference/configuration-api.md)准备配置。
+`uv sync` 默认安装 pytest 和 Ruff 等开发依赖。只修改 Python 时可先跳过 npm 步骤。运行依赖与可选 extra 见[独立包部署](../zh/guides/deploy-packages.md#optional-dependencies)。调用模型前按[配置速查](../zh/guides/configuration.md)准备配置。
 
 | 要调试的入口 | 从源码运行 |
 | --- | --- |

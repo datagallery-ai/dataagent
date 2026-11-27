@@ -1,4 +1,6 @@
-# Agent Runtime
+<a id="agent-runtime"></a>
+
+# AG-UI integration
 
 Send a conversation turn to DataAgent and read its AG-UI event stream. Start the control plane using the [quick start](../quick-start.md) and check that `GET /ready` returns 200. The examples use the default address, `http://127.0.0.1:8790`.
 

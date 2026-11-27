@@ -15,6 +15,6 @@ Web and TUI both send conversation requests to `POST /api/v1/runs` and consume t
 
 ## Where configuration and data live
 
-The control plane reads its model, plugins, and default input directories from configuration. DataAgent Home holds local configuration, extensions, and runtime state. A new session binds its input directories and output location, which it keeps when resumed. Outputs are stored under Home by default or in a configured location. [Configuration](../reference/configuration-api.md) · [Input directories](../guides/inputs.md) · [Sessions and outputs](../guides/sessions-and-outputs.md)
+The control plane reads its model, plugins, and default input directories from configuration. DataAgent Home holds local configuration, extensions, and runtime state. A new session binds its input directories and output location, which it keeps when resumed. Outputs are stored under Home by default or in a configured location. [Configuration](../guides/configuration.md) · [Input directories](../guides/inputs.md) · [Sessions and outputs](../guides/sessions-and-outputs.md)
 
 For connection, credential, and file-permission boundaries, see the [security notes](security.md). For source modules and assembly order, see the [developer architecture](../../development/architecture/overview.md).

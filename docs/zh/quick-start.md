@@ -2,7 +2,9 @@
 
 在 Linux 上启动 DataAgent 并从 Web 工作台完成第一次提问。需要 Git、npm、uv，以及部署环境可以访问的 OpenAI 兼容模型服务。
 
-Windows 或 macOS 用户可按[手动源码部署](guides/deploy-source.md#manual-prerequisites)准备。Server wheel 和 TUI npm 包的获取方式、版本说明和安装步骤见[独立包部署](guides/deploy-packages.md#get-artifacts)。
+Windows 或 macOS 用户可按[手动源码部署](guides/deploy-source-manual.md#manual-prerequisites)准备。Server wheel 和 TUI npm 包的获取方式、版本说明和安装步骤见[独立包部署](guides/deploy-packages.md#get-artifacts)。
+
+在 WSL 2 中部署前，先查看[资源建议](guides/deploy-source.md#wsl2-sizing)。
 
 ## 1. 在 Linux 部署
 
@@ -12,7 +14,7 @@ cd dataagent
 ./deploy.sh
 ```
 
-按终端提示操作。部署成功后，脚本会打印工作台地址，Web 和 Server 在后台继续运行。环境要求和启停命令见[源码部署](guides/deploy-source.md)。
+按终端提示操作。部署成功后，脚本会打印工作台地址，Web 和 Server 在后台继续运行。环境要求和启停命令见[Linux 一键部署](guides/deploy-source-linux.md)。
 
 ## 2. 配置模型
 
@@ -24,7 +26,7 @@ LLM_BASE_URL=https://your-openai-compatible-host/v1
 LLM_API_KEY=replace-with-your-key
 ```
 
-运行 `./deploy.sh restart` 使配置生效。配置文件和字段说明见[配置](reference/configuration-api.md)。
+运行 `./deploy.sh restart` 使配置生效。配置文件和字段说明见[配置](guides/configuration.md)。
 
 <a name="first-question"></a>
 
@@ -42,7 +44,7 @@ LLM_API_KEY=replace-with-your-key
 
 ## 部署详情
 
-- <a id="manual-prerequisites"></a>[准备工具和下载源](guides/deploy-source.md#manual-prerequisites)
-- <a id="manual-verification"></a>[验证健康与模型调用](guides/deploy-source.md#manual-verification)
-- <a id="connect-source-frontends"></a>[源码前端连接已有 Server](guides/deploy-source.md#connect-source-frontends)
-- [排查源码部署](guides/deploy-source.md#deployment-troubleshooting)
+- <a name="manual-prerequisites"></a>[准备工具和下载源](guides/deploy-source-manual.md#manual-prerequisites)
+- <a name="manual-verification"></a>[验证健康与模型调用](guides/deploy-source-manual.md#manual-verification)
+- <a name="connect-source-frontends"></a>连接已有 Server 的 [Web](guides/web.md#connect-server)或 [TUI](guides/tui.md#connect-server)
+- [排查源码部署](guides/troubleshooting.md)

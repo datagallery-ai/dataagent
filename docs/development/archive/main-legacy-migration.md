@@ -1,6 +1,6 @@
 # main_legacy 到 main 的配置与使用迁移对照
 
-本文对照 [`main_legacy@7b2abeff`][legacy] 的 Python Runtime 和 Python 终端 CLI，以及 [`main@2903da39`][current] 的 Python Runtime 和 TUI。[旧版 Python CLI][legacy-cli] 在终端进程内直接运行 Agent。新版可以在 Python 进程内使用 [SDK](../../zh/guides/integrate/sdk.md)，或用 [TUI](../../zh/guides/tui.md) 连接 `dataagent serve`。
+本文对照 [`main_legacy@7b2abeff`][legacy] 的 Python Runtime 和 Python 终端 CLI，以及 [`main@2903da39`][current] 的 Python Runtime 和 TUI。下文的 `main` 始终指这个固定对照版本。现行安装和配置见[部署](../../zh/guides/deploy-source.md)与[配置操作](../../zh/guides/configuration.md)。[旧版 Python CLI][legacy-cli] 在终端进程内直接运行 Agent。新版可以在 Python 进程内使用 [SDK](../../zh/guides/integrate/sdk.md)，或用 [TUI](../../zh/guides/tui.md) 连接 `dataagent serve`。
 
 ## 全局配置对照
 
@@ -196,7 +196,7 @@ plugins:
 | `SUITE.include: [data_engineering]` 以及随 Suite 合并的工具与 Hook | 启用 `de-agent`。它的 [插件清单](../../../dataagent/plugins/de-agent/.plugin.yaml) 自动依赖 `nl2sql`，部署参数放在 `plugins.config.de-agent`。清单的 [默认配置](../../../dataagent/plugins/de-agent/config.yaml) 已提供 de-agent 需要的 NL2SQL Hive SQL 生成链和工作流 Hook |
 | `MODEL.chat_model`、`SEMANTIC_LAYER.timeout/verify_ssl` | 统一模型别名。改用非 `primary` 别名时一起核对 `dataagent.model`、`plugins.config.de-agent.model` 和 `plugins.config.nl2sql.model`。语义客户端改用根 `semantic.timeout_seconds`、`semantic.tls.verify_server` 以及对应证书字段 |
 | `DATABASE.db_id: [ … ]` | 将表名校验允许列表迁到 `plugins.config.de-agent.allowed_databases`。它与独立 NL2SQL 查数使用的一个 `database.db_id` 不同 |
-| `DATA_TASK_IR` 业务选项、`enable_human_feedback`、`enable_ir_hitl` 和自动回答 | 仍支持的 IR 业务选项放 `plugins.config.de-agent.data_task_ir`，如 `semantic_check_policy`、`enable_ir_caliber_review`。HITL 由插件的 `hitl.policies` 注册、`params` 参数化，可在 TUI 中回答，或由 Python 调用方处理 interrupt。旧自动答复及开关不直接迁移。见 [HITL 指南](../../zh/guides/integrate/extensions/hitl.md) |
+| `DATA_TASK_IR` 业务选项、`enable_human_feedback`、`enable_ir_hitl` 和自动回答 | 仍支持的 IR 业务选项放 `plugins.config.de-agent.data_task_ir`，如 `semantic_check_policy`、`enable_ir_caliber_review`。HITL 由插件的 `hitl.policies` 注册、`params` 参数化，可在 TUI 中回答，或由 Python 调用方处理 interrupt。旧自动答复及开关不直接迁移。见 [de-agent 人工交互迁移](../../zh/guides/integrate/extensions/de-agent-hitl.md#migrate-legacy-settings) |
 | `HISTORY_SQL.enabled`、旧交付守卫 | 历史 SQL 对应 `plugins.config.de-agent.history_sql.enabled`，可用 [history-sql 命令](../../zh/reference/cli-and-environment.md#dataagent-history-sql)准备语料。成对交付用 `plugins.config.de-agent.delivery.require_sql_pair`，任务预算用同组的 `task_wall_budget_seconds` 和 `max_model_calls`；按场景启用 |
 | 试算或数据验证 | 验收 SQL 文件时保持 `dataops.enabled: false`。需要真实数据验证时另配 DataOps 并明确批准执行范围，再调用当前的 `dataops_validate_data` 工具 |
 

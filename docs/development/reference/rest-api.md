@@ -17,3 +17,11 @@
 - 健康、身份、能力与取消路由在 [product.py](../../../dataagent/server/product.py)，JSON 信封及错误转换在 [envelopes.py](../../../dataagent/server/envelopes.py)。
 - 会话、REST 运行和事件流在 [app.py](../../../dataagent/server/app.py)。文件列表和预览在 [outputs.py](../../../dataagent/server/outputs.py)。
 - 接口验证见 [产品路由](../../../tests/test_product_api.py)、[会话与运行](../../../tests/test_api.py)、[人工反馈](../../../tests/test_api_hitl.py)及[产物](../../../tests/test_outputs.py)测试。
+
+<a name="client-progress"></a>
+
+## 客户端进度适配
+
+TUI 在解析边界识别子代理生命周期事件。Web 在 CopilotKit 校验前把 `SUBAGENT_*` 包装为名为 `subagent` 的 `CUSTOM`，并按子运行 ID 限定步骤名；界面继续展示原始的 `stepName`。协议字段及父工具关联规则见 [AG-UI 流的范围](../../zh/reference/events.md#stream-scope)。
+
+Web 和 TUI 在客户端计量活动耗时。Web 的等待提示只反映一段时间未收到新进度，进度记录保存在当前界面，不由 Checkpoint 重放。恢复后可读取已保存的父工具结果。用户操作见 [TUI](../../zh/guides/tui.md)和 [Web 工作台](../../zh/guides/web.md)。

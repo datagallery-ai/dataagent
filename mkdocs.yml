@@ -15,8 +15,11 @@ not_in_nav: |
   /index.md
   development/*.md
   en/reference/supported-datasources.md
+  en/reference/configuration-api.md
+  en/community/contact-us.md
+  en/community/contributing.md
+  en/community/collaboration-policy.md
   en/guides/compatibility/
-  en/guides/integrate/extensions/
   zh/*.md
   zh/**/*.md
 
@@ -84,28 +87,42 @@ nav:
       - Quick start: en/quick-start.md
       - SQLite tutorial: en/guides/sqlite-tutorial.md
       - Deploy and configure:
-          - Source deployment: en/guides/deploy-source.md
+          - Source deployment:
+              - Choose a source deployment path: en/guides/deploy-source.md
+              - Managed Linux deployment: en/guides/deploy-source-linux.md
+              - Manual source deployment: en/guides/deploy-source-manual.md
           - Package deployment: en/guides/deploy-packages.md
           - Custom mirrors: en/guides/deploy-mirrors.md
-          - Configuration: en/reference/configuration-api.md
-          - Advanced configuration: en/guides/configuration.md
-          - Troubleshooting: en/guides/troubleshooting.md
+          - Configuration: en/guides/configuration.md
       - Work with DataAgent:
           - Web workbench: en/guides/web.md
           - TUI: en/guides/tui.md
           - Data inputs: en/guides/inputs.md
           - Sessions and outputs: en/guides/sessions-and-outputs.md
+      - Operations:
+          - Troubleshooting: en/guides/troubleshooting.md
+          - Trace export: en/guides/trace-export.md
+          - Trace evaluation: en/guides/trace-evaluation.md
       - Integrate and extend:
-          - Python SDK and extensions: en/guides/integrate/index.md
+          - en/guides/integrate/index.md
           - AG-UI integration: en/reference/agent-runtime.md
+          - A2A integration: en/guides/integrate/a2a.md
           - Python SDK: en/guides/integrate/sdk.md
-          - Extensions: en/guides/integrate/extensions/overview.md
-          - Plugins: en/guides/integrate/extensions/plugins.md
-          - MCP integration: en/guides/integrate/extensions/mcp.md
+          - Extension guides:
+              - Choose an extension: en/guides/integrate/extensions/overview.md
+              - Plugins: en/guides/integrate/extensions/plugins.md
+              - Skills: en/guides/integrate/extensions/skills.md
+              - Tools: en/guides/integrate/extensions/tools.md
+              - Hooks: en/guides/integrate/extensions/hooks.md
+              - Subagents: en/guides/integrate/extensions/subagents.md
+              - MCP integration: en/guides/integrate/extensions/mcp.md
+              - Semantic service: en/guides/integrate/extensions/semantic-service.md
+              - Human feedback: en/guides/integrate/extensions/hitl.md
+              - de-agent human feedback: en/guides/integrate/extensions/de-agent-hitl.md
       - Reference:
           - REST API: en/reference/rest-api.md
           - AG-UI protocol: en/reference/events.md
-          - A2A: en/reference/a2a.md
+          - A2A protocol: en/reference/a2a.md
           - Configuration fields: en/reference/configuration.md
           - CLI and environment: en/reference/cli-and-environment.md
           - Python API: en/reference/python-api.md
@@ -113,10 +130,7 @@ nav:
           - MCP configuration: en/reference/mcp-configuration.md
       - Community:
           - en/community/index.md
-          - Contact us: en/community/contact-us.md
-          - Contributing: en/community/contributing.md
-          - Scenario cases: en/community/scenario-cases.md
-          - Collaboration policy: en/community/collaboration-policy.md
+          - Submit a scenario: en/community/scenario-cases.md
   - Developer Docs:
       - development/index.md
       - Development setup: development/setup.md
@@ -130,6 +144,7 @@ nav:
           - Home layout: development/architecture/home-layout.md
           - State and storage: development/architecture/state-and-storage.md
           - Observability: development/architecture/observability.md
+          - Execution traces: development/architecture/execution-traces.md
           - Security boundaries: development/architecture/security-boundaries.md
           - HTTP implementation: development/reference/rest-api.md
       - Core maintenance: development/core-maintenance.md

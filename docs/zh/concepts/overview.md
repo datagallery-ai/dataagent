@@ -1,6 +1,6 @@
 # 产品概览
 
-这是一个本地控制面，外加两种展示：浏览器里的 Web，和终端里的 TUI。两边连的是同一个 `dataagent serve`。
+DataAgent 把自然语言问题变成可查看过程、复查结果和保存产物的数据分析任务。
 
 ## 你可以用它做什么
 
@@ -8,26 +8,14 @@
 
 ## 使用入口
 
-| 入口 | 适合 | 说明 |
-| --- | --- | --- |
-| Web | 浏览器里看对话和会话 | `http://127.0.0.1:3000/data-tasks`。没有注册登录。 |
-| TUI | SSH 和终端 | `npm run start:tui`。控制面没起时由它拉起。 |
-
-后端地址默认是 `http://127.0.0.1:8790`。集成方直接调用这个控制面，不必再走网页。
+- 在浏览器里查看对话、会话和产物，见 [Web 工作台](../guides/web.md)。
+- 从 SSH 或终端访问同一个运行时，见 [TUI 指南](../guides/tui.md)。
+- 在应用中调用运行时或增加能力，见[接入与扩展](../guides/integrate/index.md)。
 
 ## 边界
 
-- 配置在文件里，不在网页表单里。
-- 没有数据源注册接口，也没有知识库接口。
-- 数据库类问答需要配置并启用相应插件。
-- Server 默认监听本机回环地址。鉴权和文件访问边界见[安全说明](security.md)。
+数据库查询依赖已启用且配置好的插件。运行前了解[能力全览](capabilities.md)和[安全说明](security.md)。
 
 ## 下一步
 
-- 本地跑起来：[快速开始](../quick-start.md)
-- 两种展示分别能做什么：[能力全览](capabilities.md)
-- 浏览器：[Web 工作台指南](../guides/web.md)
-- 终端：[TUI 指南](../guides/tui.md)
-- 配置和工作区：[配置](../reference/configuration-api.md)
-- 接口：[REST API](../reference/rest-api.md)、[Agent Runtime](../reference/agent-runtime.md)
-- 结构：[架构概览](architecture.md)
+从[快速开始](../quick-start.md)发出第一条问题，或先看[组件如何连接](architecture.md)。

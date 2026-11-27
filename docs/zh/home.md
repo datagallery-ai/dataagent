@@ -9,9 +9,11 @@ hide:
 
 <section class="df-home-hero" markdown>
 
-# DataGallery
+<a id="datagallery"></a>
 
-本地 Data Agent 工作台。通过 Web 或 TUI 提问，结合已配置的插件与语义服务完成多步分析，并查看会话历史、产物和运行轨迹。
+# DataAgent
+
+企业级 DataAgent 工作台。查看[产品概览](concepts/overview.md)，或按下方入口开始使用和开发。
 
 </section>
 
@@ -24,17 +26,17 @@ hide:
 
 <div class="df-proof" markdown>
 ### 语义约束下的准确性
-先解析 schema、指标口径、字段关系和数据源上下文，再生成 SQL，减少猜表、猜字段、错关联和口径漂移。
+了解[数据输入](guides/inputs.md)和[语义服务](guides/integrate/extensions/semantic-service.md)如何为分析提供业务上下文。
 </div>
 
 <div class="df-proof" markdown>
 ### 数据访问与执行边界
-输入工作区向 Agent 提供只读约定。文件工具和 shell 使用 Server 进程的操作系统权限。NL2SQL 的安全规则由插件配置决定。参见[安全说明](concepts/security.md)。
+查看[安全说明](concepts/security.md)，了解凭据、只读输入和进程权限。
 </div>
 
 <div class="df-proof" markdown>
 ### 数据任务运行时
-复杂分析通过 schema 检查、工具策略、事件流、Artifacts 和可回放历史逐步收敛，并贯通 Web、TUI 与 API。
+查看[架构概览](concepts/architecture.md)，了解客户端、服务和会话怎样协作。
 </div>
 
 </section>

@@ -1,6 +1,6 @@
 # Configuration fields
 
-This reference covers `config.yaml` fields, defaults, and merge rules. See the [quick reference](configuration-api.md) for your first model and the [configuration guide](../guides/configuration.md) for examples.
+This reference covers `config.yaml` fields, defaults, and merge rules. See the [quick reference](../guides/configuration.md) for your first model and the [configuration guide](../guides/configuration.md) for examples.
 
 Use strict YAML 1.2. Comments and multiline strings are allowed. Unknown fields, duplicate keys, anchors, aliases, merge keys, explicit tags, invalid types, and nonfinite numbers are rejected. `schema_version` defaults to 4 and only accepts 4. Relative paths resolve from the declaring file's directory and `~/` expands. `dataagent.output_root` only accepts absolute or `~/` paths.
 
@@ -39,11 +39,7 @@ Higher layers replace `entry` when present. Restart after a change. Extension re
 
 ### Repetition and loop detection
 
-These heuristics use local rules, no extra model calls, and preserve model streaming behavior. See `dataagent/extensions/loop_detection.py`. `LoopDetectionMiddleware` checks tools after limits and before plugin hooks on root and standard subagents. The model span has ended before a tool-loop hit. `LoopDetectionCallback` checks text through graph callbacks inherited by model and subagent calls.
-
-- **Text:** search the last 5,000 characters for 50-character segments repeated densely at least ten times with repetition between matches. Text and exposed reasoning are separate, and tool arguments are skipped. Code fences and Markdown structure lines such as tables, lists, headings, quotes, and rules are exempt. Inline emphasis and code prefixes do not exempt prose. Fences follow CommonMark start, character, length, and trailing whitespace rules. LF, CRLF, and CR work across chunks. For non-streamed output, check all blocks of each channel after completion. Skip channels already inspected during streaming.
-- **Tools:** inspect the last 25 assistant replies this turn. Parallel calls belong to one step. Stop after five consecutive repetitions of a one- to five-step sequence with the same tool names, normalized arguments, results, and statuses. Results match their originating reply, including reused call IDs. Changed results allow progress. Use `ignored_tools` for intentional polling.
-- **One correction:** on the first tool hit, persist a `loop_detection` user message asking for another approach or an answer from existing results. Reset the window at that message. A second full loop aborts. The retry counts toward the model and time limits.
+Local repetition and tool-loop detection are enabled by default. On the first tool-loop hit, the model gets one chance to change its approach. A second hit stops the run. Use `ignored_tools` for intentional polling. Compiled entry graphs, compiled subagents, and the built-in `general-purpose` without a plugin override only use text detection.
 
 ```yaml
 dataagent:
@@ -53,14 +49,7 @@ dataagent:
     - jobs__get_status
 ```
 
-The `before_agent` boundary prevents injected summary, review, and media-reference messages from resetting the window. A new request resets it. SDK raises `dataagent.LoopDetectedError` for repeated text or a second tool loop. REST sends `RUN_ERROR` with `LOOP_DETECTED`. The error omits raw text and arguments. Completed tool operations are not replayed. Restart or recreate the SDK instance to change detection settings. Calls made by middleware for summarization or rubric scoring are outside text detection.
-
-- Compiled entry graphs and compiled subagents use text detection only. The host rethrows recorded loop errors even if a compiled graph turns them into a normal return. The built-in `general-purpose` also only has text detection unless a plugin declares that subagent with its own middleware.
-- Text hits are not retried. NL2SQL and UDN JSON retry paths propagate the error, and validator or selector failures stop before final CSV. AG-UI cannot retract text already sent. Transient model errors use the provider SDK's `max_retries`.
-- Markdown structure exemptions can let repeated table or list rows pass. Tool-loop, model, and tool limits remain useful.
-- History rewriting can shorten the checked window without moving it into the preceding turn. Calls that suppress callbacks and undisclosed internal reasoning are outside detection. Closing the stream cannot guarantee the model provider stops immediately.
-
-`enabled: false` disables both checks. See the [algorithm reference](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/services/loopDetectionService.ts).
+Set `enabled: false` to disable both checks. Restart the server or recreate the SDK agent after changing settings. A text hit or a second tool-loop hit raises `LoopDetectedError` in the SDK and sends `LOOP_DETECTED` in the REST stream. Completed operations are not replayed. See the [execution implementation](../../development/architecture/execution.md#loop-detection) for thresholds and middleware placement.
 
 <a name="model-settings"></a>
 
