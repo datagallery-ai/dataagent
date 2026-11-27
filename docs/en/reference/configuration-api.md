@@ -1,18 +1,18 @@
-# Configuration
+# Configuration quick reference
 
-This page is for deployers and people trying the product. It lists the files to edit and the minimum model settings. The full field table, merge rules, and plugin parameters are not part of this site.
+Find the files to edit and the minimum model settings for your first deployment.
 
 The control plane has no configuration REST API. The Web UI cannot change the model or the workspaces.
 
-## Files to edit
+## Files to edit { #files-to-edit }
 
 | File | Role |
 | --- | --- |
 | `<home>/config.yaml` | Personal configuration. Home defaults to `~/.dataagent`. |
 | `<home>/.env` | Model name, base URL, and key. |
-| Repository `.env` | `npm run start` and `./deploy.sh` load it into the process environment. Non-empty process values overlay the one selected env file. Without `--env-file`, that file is Home `.env`. `--config` does not change it. |
+| Repository `.env` | Source launchers such as `npm run start` and `./deploy.sh` load this file. |
 
-`DATAAGENT_HOME` is read only from the process environment. A `config.yaml` in the launch directory is not merged. A `.dataagent/` directory in the current working directory is not read.
+Set `DATAAGENT_HOME` in the launch environment to select a different Home. Use `--config` and `--env-file` to select the YAML and environment files independently. See [environment precedence](../reference/cli-and-environment.md#environment-variables).
 
 ## Minimum model
 
@@ -26,10 +26,16 @@ models:
     api_key: $env{LLM_API_KEY}
 ```
 
-`provider` is `openai`. Compatible servers use the same value. The listen address is `server.host` and `server.port` in the same file, default `127.0.0.1` and `8790`. Web and TUI both read those two fields.
+Fill in the three `LLM_*` values in the selected environment file. To change the listen address, update the `server` section in the same YAML. See [listen settings](../reference/configuration.md#server-settings) for defaults and other options.
 
 Restart the control plane after changing the model, port, or Home.
 
 ## Read-only directories
 
-Set existing input directories in the YAML field `dataagent.input_workspaces`. Steps are in [Where data comes from](../guides/data-sources.md).
+Set existing input directories in the YAML field `dataagent.input_workspaces`. Steps are in [Where data comes from](../guides/inputs.md).
+
+## More configuration topics
+
+- [Configuration guide](../guides/configuration.md) covers switching models, run limits, outputs, and plugins.
+- [Configuration fields](../reference/configuration.md) lists types, defaults, and merge rules.
+- [Command-line options and environment variables](../reference/cli-and-environment.md) lists startup options.

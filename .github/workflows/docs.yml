@@ -38,7 +38,7 @@ jobs:
         run: |
           python -m mkdocs build --strict
           grep -Fq "href=\"$DATAAGENT_DOCS_SOURCE_TREE_URL/pyproject.toml\"" \
-            site/development/package-distribution/index.html
+            site/development/release/index.html
 
       - name: Configure Pages
         uses: actions/configure-pages@v6

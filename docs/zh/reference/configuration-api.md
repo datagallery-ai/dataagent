@@ -1,18 +1,18 @@
-# 配置
+# 配置速查
 
-这篇给部署和试用的人。它只说明要改哪些文件、最少写什么。字段全表、合并规则和插件参数不在本站展开。
+首次部署时，在这里找到要改的文件和最小模型配置。
 
 控制面没有配置 REST。网页上改不了模型或工作区。
 
-## 要改的文件
+## 要改的文件 { #files-to-edit }
 
 | 文件 | 作用 |
 | --- | --- |
 | `<home>/config.yaml` | 个人配置。Home 默认是 `~/.dataagent` |
 | `<home>/.env` | 模型名、地址和密钥 |
-| 仓库根目录 `.env` | `npm run start` 和 `./deploy.sh` 把它载入进程环境。进程里的非空值盖过这次选中的环境文件。没传 `--env-file` 时选中 Home `.env`，`--config` 不改变它 |
+| 仓库根目录 `.env` | 从源码用 `npm run start` 或 `./deploy.sh` 启动时，启动器会读取它 |
 
-`DATAAGENT_HOME` 只认进程环境。启动目录里的 `config.yaml`，以及当前目录下的 `.dataagent/`，都不会被读取。
+用启动进程的 `DATAAGENT_HOME` 指定 Home。通过 `--config` 和 `--env-file` 可以分别选择 YAML 和环境文件。文件优先级见[环境变量参考](cli-and-environment.md#environment-variables)。
 
 ## 最少的模型
 
@@ -26,10 +26,16 @@ models:
     api_key: $env{LLM_API_KEY}
 ```
 
-`provider` 使用 `openai`。兼容服务也用这个值。监听地址在同一份文件的 `server.host` 和 `server.port`，默认 `127.0.0.1` 和 `8790`。网页和 TUI 都读这两个字段。
+在选中的环境文件里填入三个 `LLM_*` 的实际值。监听地址在同一份 YAML 的 `server` 段设置，默认值和其他选项见[监听配置](configuration.md#server-settings)。
 
 改模型、端口或 Home 后要重启控制面。
 
 ## 只读目录
 
-输入目录通过 YAML 的 `dataagent.input_workspaces` 配置，目录需已存在。步骤见 [数据从哪里来](../guides/data-sources.md)。
+输入目录通过 YAML 的 `dataagent.input_workspaces` 配置，目录需已存在。步骤见 [数据从哪里来](../guides/inputs.md)。
+
+## 更多配置
+
+- [配置操作](../guides/configuration.md)介绍模型切换、运行限额、产物和插件配置。
+- [配置字段](configuration.md)列出类型、默认值和合并规则。
+- [命令与环境变量](cli-and-environment.md)列出启动参数和环境变量。

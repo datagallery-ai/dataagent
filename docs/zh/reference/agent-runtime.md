@@ -1,50 +1,42 @@
 # Agent Runtime
 
-这篇给集成方构造一轮对话。它不写网页布局，也不写运行时内部的图。网页和 TUI 的一轮对话都发给同一个控制面。
-
-```text
-POST /api/v1/runs
-```
-
-默认地址是 `http://127.0.0.1:8790`。成功响应是 `text/event-stream`，带 `Cache-Control: no-cache` 和 `X-Accel-Buffering: no`。
+向 DataAgent 发送一轮对话并读取 AG-UI 事件流。先按[快速开始](../quick-start.md)启动控制面，确认 `GET /ready` 返回 200。以下示例使用默认地址 `http://127.0.0.1:8790`。
 
 ## 请求
 
-请求体是一条 AG-UI 输入。多出来的字段会被拒绝。服务端保存历史，客户端每次只送这一轮的新问题。
+向 `POST /api/v1/runs` 提交一条新消息。服务端按 `threadId` 加载对话历史。
 
-```json
+```bash
+curl --no-buffer --include \
+  --header 'Content-Type: application/json' \
+  --data-binary @- http://127.0.0.1:8790/api/v1/runs <<'JSON'
 {
   "threadId": "thread-001",
   "runId": "run-001",
   "messages": [
-    {"id": "msg-001", "role": "user", "content": "总结这个目录里的报告。"}
+    {"id": "msg-001", "role": "user", "content": "请用一句话打招呼。"}
   ],
   "tools": [],
   "context": [],
   "forwardedProps": {}
 }
+JSON
 ```
 
-| 字段 | 约束 |
-| --- | --- |
-| `threadId`、`runId` | 字母、数字、下划线和连字符，最长 128 |
-| `messages` | 恰好一条，带 `id`，`role` 为 `user`，`content` 为非空字符串 |
-| `state` | `null` 或 `{}` |
-| `tools`、`context`、`forwardedProps` | 必须出现，且为空（`[]`、`[]`、`{}`） |
-| `resume`、`parentRunId` | 不能使用 |
-
-没有 `run_config`，也没有按请求选择数据源、知识库或模型 Profile。模型、插件和工作区来自控制面启动时的配置。网页和 TUI 都使用 `/api/v1/runs`。
+再次运行示例时，换用新的运行 ID 和消息 ID。完整字段约束见[请求契约](events.md#request)。
 
 ## 取消和恢复
 
-```text
-POST /api/v1/runs/<runId>/cancel
+要停止这一轮，在流仍打开时，从另一个终端发送以下请求。
+
+```bash
+curl --include --request POST http://127.0.0.1:8790/api/v1/runs/run-001/cancel
 ```
 
-成功是 204，事件流随后以 `RUN_ERROR`（`code` 为 `CANCELLED`）结束，客户端应显示为“已停止”。这一轮不在执行时是 404。
-
-恢复会话使用同一个 `threadId`。行上有 Checkpoint 时下一轮从它继续，否则读该线程最新图状态。停止、连接断开和加载都留在这个线程。同一会话同时只接受一轮。重复的 `runId` 会被拒绝；正在运行的 `runId` 在任何会话上都不能再用。
+发送下一题时沿用 `threadId`，使用新的运行 ID、消息 ID 和消息内容。继续前如需加载历史，调用[会话详情接口](rest-api.md#session-detail)。如果 DataAgent 暂停并等待用户输入，按[人工交互契约](events.md#hitl)提交回答。
 
 ## 事件
 
-客户端按 AG-UI 事件渲染。连接已经返回 200 之后，运行失败写在流里的错误事件中，而不是改 HTTP 状态码。`RUN_ERROR.code` 取固定值：`TIMEOUT`、`CANCELLED`、`LOOP_DETECTED`、`LIMIT_EXCEEDED`、`INCOMPLETE_STREAM`、`CONFIG_ERROR`、`MODEL_ERROR`、`TOOL_ERROR`、`INTERNAL_ERROR`。客户端按 `code` 分支，不要按 `message` 分支。客户端断开时，服务取消上游流，并把未完成的会话标成中断。
+请求被接受后返回 HTTP 200 和 `Content-Type: text/event-stream`。逐条读取 SSE 的 `data:` 帧并解析其中的 JSON。`RUN_STARTED` 标识本轮运行。用文本和工具事件呈现实时进度，收到最终的 `MESSAGES_SNAPSHOT` 时更新消息。
+
+查看 `RUN_FINISHED.metadata.status` 判断本轮已完成还是在等待用户输入。`RUN_ERROR` 携带结束错误码，显式停止对应 `CANCELLED`。各类结束事件的处理方式见[终止事件参考](events.md#terminal-events)。流建立前的拒绝响应见 [REST 错误响应](rest-api.md#http-errors)。

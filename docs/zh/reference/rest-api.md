@@ -1,10 +1,10 @@
 # REST API 参考
 
-这篇给要调用控制面的集成方，不写服务内部模块。控制面默认地址是 `http://127.0.0.1:8790`，来自 Home `config.yaml` 的 `server.host` 和 `server.port`。REST 没有访问令牌；A2A JSON-RPC 有可选共享令牌，见下文。网页通过 Next 把 `/api/v1/*` 转到这个地址。
+通过 `dataagent serve` 启动控制面。默认地址为 `http://127.0.0.1:8790`，由所选 YAML 的 `server.host` 和 `server.port` 配置。Web 工作台将 `/api/v1/*` 转发到这个服务。REST 没有内置的访问令牌校验。需要对回环地址之外提供服务时，请先阅读[安全说明](../concepts/security.md)。
 
-## 信封
+## 信封 { #envelope }
 
-REST 的 JSON 响应都用信封，成功和失败都一样。`POST /api/v1/runs` 成功时返回 SSE 事件流，REST 取消成功时返回空的 204。A2A 使用自己的 Agent Card 和 JSON-RPC 格式，见下文，不套 REST 成功信封。
+JSON 成功响应和已处理的 HTTP 错误采用以下信封：
 
 ```json
 {"success": true, "data": {}}
@@ -14,83 +14,112 @@ REST 的 JSON 响应都用信封，成功和失败都一样。`POST /api/v1/runs
 {"success": false, "error": {"code": "RESOURCE_NOT_FOUND", "message": "Route not found."}}
 ```
 
-除 `/healthz`、`/ready` 和 A2A（`/.well-known/agent-card.json`、`/a2a/jsonrpc`，路径由协议固定）外，所有路由都在 `/api/v1` 下。
+`POST /api/v1/runs` 成功时返回 HTTP 200 和 SSE 事件流。取消成功时返回空的 HTTP 204。健康接口的 `HEAD` 只返回状态和响应头。下文的示例展示的是 `data` 内容。
 
-未知路径返回 404，错误码 `RESOURCE_NOT_FOUND`；方法不对返回 405，错误码 `METHOD_NOT_ALLOWED`。对话路径（含取消）在引擎未就绪时返回 503，错误码 `CONVERSATION_UNAVAILABLE`；Agent Card 不受影响。
+## 健康与身份 { #health-and-identity }
 
-## 健康与身份
-
-| 方法 | 路径 | 作用 |
+| 方法 | 路径 | 响应 |
 | --- | --- | --- |
-| GET, HEAD | `/healthz` | 始终 200。引擎就绪时 `data.conversation` 含 `ready`、`protocol`、`instanceId`、`model`、`plugins`、`home`、`entry`、`user`、`timeoutSeconds`；`ready` 是唯一的就绪标志。未就绪时 `conversation` 只有 `ready: false`。 |
-| GET, HEAD | `/ready` | 引擎就绪时 200，`data.status` 是 `ready`。否则 503。 |
-| GET | `/api/v1/me` | 当前 `--user`。引擎未就绪时 id 是 `default`。没有登录用户。 |
-| GET | `/api/v1/capabilities` | `interaction.resume`、`conversation.memory`、`artifact.list` 为 true；`artifact.export` 为 false。 |
+| GET, HEAD | `/healthz` | 200，包含 `status: "ok"` 和 `conversation`。 |
+| GET, HEAD | `/ready` | 200，包含 `status: "ready"` 和与 `/healthz` 相同的 `conversation` 字段。引擎不可用时返回 503。 |
+| GET | `/api/v1/me` | `user.id` 和 `user.displayName` 是服务端本地用户（`--user`）。没有运行时配置时两者为 `default`。`workspace` 固定为 `{"id":"local","name":"Local"}`。 |
+| GET | `/api/v1/capabilities` | `interaction.resume`、`conversation.memory` 和 `artifact.list` 为 true。`artifact.export` 为 false。 |
 
-`/healthz` 不返回输入目录、状态目录或配置正文。
-
-## 会话与运行
-
-| 方法 | 路径 | 作用 |
-| --- | --- | --- |
-| GET | `/api/v1/sessions?limit=` | 当前 user 的会话。网页和 TUI 都用这条。`limit` 为 1 到 100，默认 50。 |
-| GET | `/api/v1/sessions/{threadId}` | 列表字段加上 `messages`、`notice`、`pendingInteractions`。有 Checkpoint 时读它，否则读该线程最新图状态。绑定打不开时 409。其他 user 的会话是 404。运行中也可以读。 |
-| GET | `/api/v1/sessions/{threadId}/outputs` | 产物文件。跳过符号链接，以及 `artifacts/conversation_history` 和 `artifacts/large_tool_results`。会话不存在时 404。 |
-| GET | `/api/v1/sessions/{threadId}/outputs/preview?path=` | UTF-8 文本，最多 64 KiB，超出时 `truncated` 为 `true`。非文本是 415。 |
-| POST | `/api/v1/runs/{runId}/cancel` | 取消正在执行的一轮，`runId` 来自 `POST /api/v1/runs` 的请求体。成功是空的 204。这一轮不存在或已结束时 404。取消后事件流以 `RUN_ERROR`（`code` 为 `CANCELLED`）结束；会话记为 `interrupted`，下一轮从已保存的 Checkpoint 继续。 |
-
-没有这些路径：登录、`/api/copilotkit`、`/api/copilotkit/info`、数据源、知识库、工作区配置、会话改名、删除、分支或 trace DAG。调用它们会得到 404 信封。
-
-## 对话
-
-| 方法 | 路径 | 作用 |
-| --- | --- | --- |
-| POST | `/api/v1/runs` | 一轮对话。请求体是一条 AG-UI 输入，多出来的字段会被拒绝。成功响应是 `text/event-stream`。 |
-
-`POST /api/v1/runs` 的约束：
-
-- `threadId` 和 `runId` 是最长 128 的安全 ID
-- 普通输入的 `messages` 恰好一条，带 `id`，`role` 为 `user`，`content` 为非空字符串
-- `state` 只能是 `null` 或 `{}`
-- `tools`、`context`、`forwardedProps` 必须出现，且为空（`[]`、`[]`、`{}`）
-- 不接受 `resume` 和 `parentRunId`
-
-回答 HITL 时保持 `threadId`，生成新的 `runId`，发送空消息和非空回答映射：
+引擎不可用时，`/healthz` 的 `conversation` 只有 `{"ready": false}`。就绪时返回的数据形如：
 
 ```json
 {
-  "threadId": "thread-1", "runId": "reply-1",
-  "messages": [], "answers": {"<interruptId>": "user_id"},
-  "state": {}, "tools": [], "context": [], "forwardedProps": {}
+  "status": "ok",
+  "conversation": {
+    "ready": true,
+    "protocol": "dataagent",
+    "instanceId": "server-1",
+    "model": "example-model",
+    "plugins": ["common"],
+    "home": "/absolute/path/to/.dataagent",
+    "entry": null,
+    "user": "default",
+    "timeoutSeconds": 180
+  }
 }
 ```
 
-暂停时先发送 `CUSTOM name="human_feedback"`，`value` 是当前全部待回答项，随后
-发送 `MESSAGES_SNAPSHOT` 和 `RUN_FINISHED metadata.status="waiting_for_input"`。
-每项仅包含 `type: "human_feedback"`、`interruptId`、`message`，以及可选 `options`、
-`validationError`。会话详情的 `pendingInteractions` 返回同一数组，服务重启后仍可查询。
-多个并行问题可以分批回答。完成时待回答项为 `[]`，`metadata.status="completed"`。
-会话状态包含 `running`、`waiting_for_input`、`completed`、`error`、`interrupted`。
+用 `conversation.ready` 判断就绪状态。`instanceId` 标识进程，`timeoutSeconds` 来自 `dataagent.limits.timeout_seconds`。`entry` 返回配置值，接口不会判断该值是否能解析为编译型子代理。响应不包含输入目录、状态目录或配置正文。
 
-等待回答时发送新消息、提交未知或已解决的交互 ID、在同一会话重复使用已提交的
-`runId` 均返回 409。空白回答会重新提问并附带 `validationError`。
-用户思考期间不计入单轮执行超时。
+## 会话与运行 { #sessions-and-runs }
 
-同一会话同时只跑一轮。校验失败是 422，错误码 `BAD_REQUEST`。业务拒绝多用 409，错误码 `CONFLICT`。两者都用错误信封。其他错误码：400 `BAD_REQUEST`，404 `RESOURCE_NOT_FOUND`，415 `UNSUPPORTED_FILE_TYPE`，5xx `INTERNAL_ERROR`。流已经以 200 开始之后，运行失败写在事件里，而不是改成 HTTP 错误码。
+### 列出会话 { #list-sessions }
 
-## A2A
+`GET /api/v1/sessions?limit=50` 返回当前服务端用户的会话，按 `updatedAt`、`threadId` 降序排列。`limit` 为 1 至 100 的整数，默认 50。
 
-同一个进程还按 A2A 1.0 协议提供两条路由，供其他 Agent 调用。
+```json
+{
+  "sessions": [
+    {
+      "threadId": "thread-1",
+      "title": "总结最新报告",
+      "createdAt": "2026-10-15T00:00:00+00:00",
+      "updatedAt": "2026-10-15T00:00:00+00:00",
+      "status": "completed",
+      "hasCheckpoint": true
+    }
+  ]
+}
+```
 
-| 方法 | 路径 | 作用 |
+会话状态为 `running`、`waiting_for_input`、`completed`、`error` 或 `interrupted`。等待通过 A2A 回答的会话在 REST 中显示为 `interrupted`。启动时仍记录为 `running` 的会话会转为 `interrupted`。
+
+### 读取会话 { #session-detail }
+
+`GET /api/v1/sessions/{threadId}` 在列表字段上增加 `messages`、`pendingInteractions` 和 `notice`。消息取已保存的检查点，没有检查点时读取该线程的最新图状态。会话运行中也可读取。`pendingInteractions` 只包含能通过 REST 回答的交互，具体结构和答复方式见[人工反馈](events.md#hitl)。`notice` 是提示文本或 `null`。会话失败或中断时，提示会说明是否恢复了检查点。
+
+会话不存在或属于其他用户时返回 404。当前用户的会话绑定无法打开时返回 409。
+
+### 取消运行 { #cancel-run }
+
+用活跃 REST 运行的 `runId` 发送 `POST /api/v1/runs/{runId}/cancel`。请求无需正文。成功时返回空的 204。运行不存在或已结束时返回 404。取消生效后，如果事件流仍连接，流以 `RUN_ERROR` 结束，`code` 为 `CANCELLED`。会话记为 `interrupted`，客户端可以用同一个 `threadId` 继续。A2A 任务通过 [A2A API](a2a.md) 取消。
+
+## 对话 { #conversation }
+
+`POST /api/v1/runs` 接收一条 AG-UI 请求，详见[请求格式](events.md#request)和[集成示例](agent-runtime.md)。成功时返回 `text/event-stream`，并带上 `Cache-Control: no-cache` 和 `X-Accel-Buffering: no`。
+
+事件流开始前，请求体校验失败返回 422。同一会话已有运行或 `runId` 正在使用等冲突返回 409。HTTP 200 的流开始后，运行失败通过[终止事件](events.md#terminal-events)报告。客户端断开时，服务取消上游流，并将未完成的会话标记为中断。
+
+## 产物 { #outputs }
+
+### 列出文件 { #list-outputs }
+
+`GET /api/v1/sessions/{threadId}/outputs` 返回普通文件，按 `modifiedAt` 降序排列，时间相同再按 `path` 降序排列。路径相对会话产物目录，`size` 以字节计。
+
+```json
+{"files": [{"path": "notes.txt", "size": 12, "modifiedAt": "2026-10-15T00:00:00+00:00"}]}
+```
+
+列表跳过符号链接和内部路径 `artifacts/conversation_history`、`artifacts/large_tool_results`。会话存在但产物目录尚不存在时返回空列表。产物路径是符号链接或不是目录时返回 409。会话不存在或属于其他用户时返回 404。
+
+### 预览 UTF-8 文本 { #preview-output }
+
+`GET /api/v1/sessions/{threadId}/outputs/preview?path=notes.txt` 接收经过 URL 编码的非空相对路径，返回：
+
+```json
+{"type": "file", "path": "notes.txt", "content": "Sample notes", "truncated": false}
+```
+
+读取上限为 64 KiB。更长的文件返回 `truncated: true`，内容以完整的 UTF-8 字符结尾。绝对路径、`..` 路径分量或 NUL 字符返回 400。文件不存在、经过符号链接、被排除或不是普通文件时返回 404。预览范围内有二进制数据或无效 UTF-8 时返回 415。
+
+## HTTP 错误 { #http-errors }
+
+| HTTP 状态码 | 错误码 | 常见原因 |
 | --- | --- | --- |
-| GET | `/.well-known/agent-card.json` | Agent Card。只声明 JSON-RPC，不支持流式。 |
-| POST | `/a2a/jsonrpc` | JSON-RPC 入口，例如 `SendMessage`。请求必须带 `A2A-Version: 1.0` 头。 |
+| 400 | `BAD_REQUEST` | 访问产物时会话 ID 无效，或预览路径无效 |
+| 404 | `RESOURCE_NOT_FOUND` | 未知路由、会话、文件或非活跃运行 |
+| 405 | `METHOD_NOT_ALLOWED` | 路由不支持请求方法 |
+| 409 | `CONFLICT` | 活跃运行、重放、待处理的人工反馈、会话绑定无效或产物目录无效 |
+| 415 | `UNSUPPORTED_FILE_TYPE` | 预览只支持 UTF-8 文本 |
+| 422 | `BAD_REQUEST` | 请求体或查询参数无效，`message` 提供第一条校验错误 |
+| 500 | `INTERNAL_ERROR` | 已处理的服务失败，例如扩展重载失败或读取产物失败 |
+| 503 | `CONVERSATION_UNAVAILABLE` | 引擎不可用，影响 `/ready`、会话和运行路由 |
 
-- `contextId` 就是会话的 `threadId`，和 `/api/v1/runs` 共用会话与 Checkpoint。它必须是最长 128 的安全 ID，省略时自动生成。
-- 只读取文本 part。成功时最终回答在 `result.task.artifacts`，状态是 `TASK_STATE_COMPLETED`。
-- 默认匿名、单团队共享访问，可查看、续接和取消同实例的任务。设置可选的 `DATAAGENT_A2A_AUTH_TOKEN` 后，`/a2a/jsonrpc` 需要 `Authorization: Bearer <token>`，否则返回 401，错误码 `UNAUTHORIZED`。Agent Card 仍可匿名读取。
-- 每次 RPC 响应带服务端生成的 `X-Request-ID`。Task 的 `metadata.dataagent` 包含 `schemaVersion: 1`、创建请求的 `requestId`、输入 `messageId` 和已创建时的 `rootRunId`。查询、取消不覆盖创建请求的关联信息。
-- 执行失败仍是 HTTP 200 加失败 Task，`metadata.dataagent.error` 包含稳定的 `code`、`stage` 和脱敏 `message`。错误码包括 `BAD_REQUEST`、`CONFLICT`、`FORBIDDEN`、`TIMEOUT`、`MODEL_ERROR`、`TOOL_ERROR`、`CONFIG_ERROR`、`LIMIT_EXCEEDED`、`LOOP_DETECTED`、`INTERNAL_ERROR` 和 `CANCELLED`。同一会话被 Web/TUI 占用时，A2A 返回失败 Task 加 `CONFLICT`，不是 HTTP 409。
-- `GetTask`、`CancelTask` 在 `params.id` 传任务号，直接在 `result` 返回 Task；`ListTasks` 在 `result.tasks` 返回共享列表。`SendMessage` 设置 `params.configuration.returnImmediately: true` 可提前取得任务号，再查询或取消。任务默认保存在内存中，重启后旧 task 不可查询，会话和 checkpoint 可续接；没有执行去重或自动重试承诺。
-- JSON-RPC 的错误按 JSON-RPC 规范返回，不用上面的错误信封。
+## A2A { #a2a }
+
+同一个服务也提供 `GET /.well-known/agent-card.json` 和 `POST /a2a/jsonrpc`。发现、JSON-RPC 请求、鉴权和任务处理见 [A2A 参考](a2a.md)。

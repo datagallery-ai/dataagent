@@ -216,7 +216,7 @@ final = await workflow.ainvoke(
 | 成本 | fork 把父历史交给子图 | nl2sql 只取最近一条用户消息送进提示词，不送历史；新增 token 约等于一条用户消息的长度 |
 | 一次提问拆成多个任务 | 原话覆盖整个问题，每个任务只回答其中一部分 | 规则写明：回答范围以 Question 为准，原话只决定定义和措辞 |
 | 中间件注入的 HumanMessage | 如果其他中间件在父历史中插入 HumanMessage，`texts[-2]` 可能不是用户原话 | 单元测试覆盖；必要时改为按消息来源识别 |
-| 文档 | `docs/extensions/subagents.md` 与 `docs/reference/extension-schema.md` 需补 `mode` 字段 | 与代码同一次提交 |
+| 文档 | `docs/zh/guides/integrate/extensions/subagents.md` 与 `docs/zh/reference/extension-schema.md` 需补 `mode` 字段 | 与代码同一次提交 |
 
 ## 8. 验证
 
@@ -255,7 +255,7 @@ final = await workflow.ainvoke(
 | 宿主 | `dataagent/config/declarations.py` | `SubAgentSpec.mode` |
 | 宿主 | `dataagent/extensions/subagents.py` | `_compiled_child` 传递 `mode` |
 | 宿主 | `dataagent/core/middleware/subagents/subagents.py` | 编译型 fork 不加工具注释和前导语 |
-| 宿主 | `docs/extensions/subagents.md`、`docs/reference/extension-schema.md` | 补 `mode` |
+| 宿主 | `docs/zh/guides/integrate/extensions/subagents.md`、`docs/zh/reference/extension-schema.md` | 补 `mode` |
 | 插件 | `subagents/nl2sql.yaml` | `"mode": "fork"` |
 | 插件 | `subagents/nl2sql.py` | `_task_inputs`；`run_task` 传 `user_request`；meta 记录原话 |
 | 插件 | `nl2sql/state.py` | `user_request` 字段 |

@@ -1,33 +1,45 @@
-# DataAgent
+<h1 align="center">DataAgent</h1>
 
-A local data agent built with Python and Deep Agents, with Web, TUI, REST, A2A, and Python SDK entry points. The main agent can delegate to local plugins such as nl2sql and preserve conversation state, result files, and traces by session.
+<p align="center">
+  <strong>An enterprise-grade data agent</strong><br />
+  Ask questions in natural language and keep results, generated files, and execution traces in the session.
+</p>
 
-[简体中文](README_zh.md) · [Documentation](docs/en/README.md) · [Quick start](docs/en/quick-start.md)
+<p align="center">
+  <strong>English</strong> · <a href="README_zh.md">简体中文</a>
+</p>
 
-## Current architecture and capabilities
+<p align="center">
+  <a href="docs/en/quick-start.md"><strong>Quick start</strong></a> ·
+  <a href="docs/en/index.md"><strong>Use and integration</strong></a> ·
+  <a href="docs/development/index.md"><strong>Developer docs</strong></a> ·
+  <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
+</p>
 
-```text
-Web → Next same-origin proxy ─┐
-TUI → AG-UI / REST ──────────┼→ dataagent serve → main agent → tools / local subagents / MCP
-Other agents → A2A ─────────┘                           └→ nl2sql → configured database
-Python SDK → the same configuration and agent assembly, without requiring HTTP
-```
+<p align="center">
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Apache--2.0-2563eb" alt="Apache 2.0 license" /></a>
+  <a href="docs/development/setup.md"><img src="https://img.shields.io/badge/Python-3.11--3.12-3776ab?logo=python&amp;logoColor=white" alt="Python 3.11 and 3.12" /></a>
+  <a href="docs/en/guides/deploy-source.md"><img src="https://img.shields.io/badge/deployment-self--hosted-15803d" alt="Self-hosted deployment" /></a>
+  <a href="CONTRIBUTING.md"><img src="https://img.shields.io/badge/PRs-welcome-be185d" alt="Pull requests welcome" /></a>
+  <br />
+  <a href="docs/en/reference/rest-api.md"><img src="https://img.shields.io/badge/AG--UI-event%20stream-6f42c1" alt="AG-UI event stream" /></a>
+  <a href="docs/en/guides/tui.md"><img src="https://img.shields.io/badge/Ink-terminal%20UI-0f766e" alt="Ink terminal UI" /></a>
+</p>
 
-- **One backend, several entry points.** Web and TUI share one Python control plane. A2A 1.0 exposes the same runtime through JSON-RPC, or can run as a separate A2A-only process.
-- **Sessions and outputs.** The service persists checkpoints, a session index, traces, and outputs. A2A, Web, and TUI can continue the same session; A2A's in-memory Tasks do not survive a restart.
-- **Plugins and subagents.** Configuration enables plugins, Skills, Hooks, MCP, and compiled subagents. Database queries require an enabled and configured plugin; the control plane has no built-in datasource registration service.
-- **File-based configuration.** Models, addresses, plugins, and inputs come from Home configuration and environment variables. Web does not create or test model profiles.
-- **Correlated diagnostics.** Logs use `backend.log`, `web.log`, and `tui.log`. A2A request, task, and run IDs connect responses to logs and local traces.
+<p align="center">
+  <a href="docs/assets/readme/gui-demo.gif"><img src="docs/assets/readme/gui-demo.gif" alt="DataAgent Web workbench demo in light mode" width="100%" /></a><br />
+  <sub>Web workbench demo · <a href="docs/en/guides/web.md">Web workbench guide</a></sub>
+</p>
 
-The current backend has no registration/login, Web model management, datasource registration, knowledge-base management, conversation branching, or trace DAG API. Remaining legacy UI entries do not imply backend support. See [Capabilities](docs/en/capabilities.md).
+## Core capabilities
 
-## 🚀 Run It Locally
+- **Self-hosted deployment and multi-model support.** Run DataAgent on your own machine or server. Configure the default model and models for individual tools in [the server configuration](docs/en/guides/configuration.md).
+- **Data and business context.** Give the agent [local input directories](docs/en/guides/inputs.md) for file analysis, enable [NL2SQL](examples/nl2sql-entry.yaml) for database questions, or connect an external [semantic service](docs/en/guides/integrate/extensions/semantic-service.md).
+- **Reusable outputs and execution records.** Resume a [session](docs/en/guides/sessions-and-outputs.md) to follow up or retrieve its files. Use the [logs and traces](docs/development/architecture/observability.md) to inspect model and tool calls.
 
-If you already have the wheel and TUI `.tgz`, follow [deployment from packages](docs/en/guides/dataagent-package.md). To deploy from source, follow the steps below or use the [source deployment guide](docs/en/quick-start.md).
+## Quick start
 
-Requirements: Node.js ≥22.12.0 and uv; the backend supports Python 3.11 and 3.12. Install and run in the same environment. Do not share `node_modules` between Windows and WSL. This version has no Docker / Compose deployment.
-
-### Linux one-click deployment
+On Linux, install Git, Node.js 22.12+, and uv, then start from source:
 
 ```bash
 git clone https://github.com/datagallery-lab/datafoundry.git
@@ -35,126 +47,37 @@ cd datafoundry
 ./deploy.sh
 ```
 
-The script prepares configuration, dependencies, and builds, then starts Web/API in the background. Deployment does not require a model key, but conversations require a working model in the repository `.env` or Home `.env`; restart the service after configuring it. TUI is built but does not run in the background; open another terminal and run `./deploy.sh tui`.
+Set `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` for your OpenAI-compatible model in the project's `.env`, then run `./deploy.sh restart`. Open the workbench URL printed by the script (defaults to `http://127.0.0.1:3000/data-tasks`), or run `./deploy.sh tui` to ask your first question from a terminal.
 
-The script has no distribution or CPU architecture allowlist. If Node.js needs installing, it selects `apt-get`, `dnf`, or `yum`, using NodeSource by default or a custom package through `DATAAGENT_NODE_PACKAGE_URL`. Unsupported installation environments and dependency failures stop with an error; existing Node.js ≥22.12.0 and npm do not require a package manager. See [deployment with custom mirrors](docs/en/guides/mirror-deployment.md) for tool provisioning, Python selection, package mirrors, and the model gateway.
+Use `./deploy.sh status` to check service health and `./deploy.sh logs` to follow the logs.
 
-```bash
-./deploy.sh status
-./deploy.sh doctor
-./deploy.sh logs
-./deploy.sh stop
-./deploy.sh start
-```
+[Manual setup for Windows and macOS](docs/en/guides/deploy-source.md) · [Server wheel and TUI package](docs/en/guides/deploy-packages.md)
 
-Closing a terminal or stopping log following does not stop the managed service. Use `./deploy.sh stop`. Redeployment stops the managed service before installation and builds; use `./deploy.sh deploy --reconfigure` to change ports.
+## How a data task runs
 
-### Manual installation, build, and startup
+1. **Define the task.** Ask a question in natural language using the inputs and tools configured on the server.
+2. **Run the analysis.** The agent uses the available tools to analyze inputs and saves generated files in the session's output directory.
+3. **Review and follow up.** Open the same session to check the results, retrieve the files, or ask a follow-up question.
 
-For native Windows, macOS, other Linux distributions, or manual configuration:
+## Choose an interface
 
-Before installation, ensure Node.js ≥22.12.0 and uv are on `PATH`. On restricted networks, select an available Python 3.11 or 3.12 interpreter and download sources using the [manual preparation steps](docs/en/quick-start.md#1-prepare-tools-and-download-sources) before running the installation commands below.
+Use the Web workbench for day-to-day analysis and file previews, or the TUI when working from a terminal or over SSH. Both connect to the same server and can resume its sessions. To integrate the agent into your own application, use [REST and AG-UI](docs/en/reference/rest-api.md), [A2A](docs/en/reference/a2a.md), or the [Python SDK](docs/en/guides/integrate/sdk.md).
 
-```bash
-npm install --include=dev
-uv sync --no-dev --extra video
-cp .env.example .env
-```
+<p align="center">
+  <a href="docs/assets/readme/readme-tui.webp"><img src="docs/assets/readme/readme-tui.webp" alt="DataAgent TUI showing a quarterly order analysis, the CSV write operation, and session status" width="100%" /></a><br />
+  <sub>Run the same analysis from a terminal · <a href="docs/en/guides/tui.md">TUI guide</a></sub>
+</p>
 
-Edit the repository `.env`:
+## Documentation
 
-The backend machine must be able to reach the model endpoint. Replace the example address and model name with your service settings.
-
-```bash
-LLM_MODEL=your-model-name
-LLM_BASE_URL=https://your-openai-compatible-host/v1
-LLM_API_KEY=replace-with-your-key
-```
-
-```bash
-npm run build
-npm run start
-# Optional, in another terminal
-npm run start:tui
-```
-
-Open `http://127.0.0.1:3000/data-tasks` directly, without registering or creating a Web model profile. Start by asking the agent to describe its capabilities. Database questions require the relevant plugin to be enabled and configured first.
-
-A 200 from `/healthz` means the control plane is live; a 200 from `/ready` means conversation engine configuration loaded successfully. See [manual deployment validation](docs/en/quick-start.md#5-verify-health-and-model-calls).
-
-## Configuration and independent services
-
-The release artifacts are a Server wheel and a TUI `.tgz`. See [Release](docs/development/release.md) for build and verification commands, and [deployment from packages](docs/en/guides/dataagent-package.md) for installation, startup and compiled plugin entry configuration.
-
-Home defaults to `~/.dataagent`; set `DATAAGENT_HOME` in the process environment to change it. The CLI initializes missing configuration templates on first startup.
-
-| File or setting | Purpose |
+| I want to | Start here |
 | --- | --- |
-| `<Home>/config.yaml` | Product configuration with `schema_version: 4`, including `models`, `dataagent`, `plugins`, and `server` |
-| `<Home>/.env` | Values for `$env{NAME}` references; nonempty process variables override the file |
-| `--config` | Replaces Home configuration; does not select a neighboring `.env` |
-| `--env-file` | Explicitly replaces Home `.env`, including for direct Python CLI launches |
-| `server.host / port` | Backend defaults to `127.0.0.1:8790`; Web defaults to port 3000 |
+| Analyze local files or query a database | [Local input directories](docs/en/guides/inputs.md) · [NL2SQL configuration example](examples/nl2sql-entry.yaml) |
+| Resume a conversation or find a generated file | [Sessions and outputs](docs/en/guides/sessions-and-outputs.md) |
+| Integrate an application or extend the tools | [REST and AG-UI](docs/en/reference/rest-api.md) · [A2A](docs/en/reference/a2a.md) · [Python SDK](docs/en/guides/integrate/sdk.md) · [Plugins and MCP](docs/en/guides/integrate/extensions/overview.md) |
+| Configure a model or the server, or troubleshoot | [Configuration](docs/en/reference/configuration-api.md) · [Security](docs/en/concepts/security.md) · [Troubleshooting](docs/en/guides/troubleshooting.md) |
+| Develop DataAgent or migrate from the legacy release | [Developer docs](docs/development/index.md) · [Legacy Python Runtime and CLI migration](docs/development/archive/main-legacy-migration.md) |
 
-Prepare the source environment with the required extras first; the commands below use it without synchronizing dependencies. See [staged installation](docs/en/guides/mirror-deployment.md#staged-installation).
+The server listens on `127.0.0.1` by default. See the [security guide](docs/en/concepts/security.md) when deploying it for access from other machines.
 
-```bash
-# Backend, including A2A routes
-uv run --no-sync dataagent serve
-
-# A2A only: choose this OR serve, since one Home supports one backend
-uv run --no-sync dataagent serve-a2a
-```
-
-`serve` provides `/healthz`, `/ready`, `/api/v1/runs`, sessions, and outputs. `serve-a2a` has none of those REST/health routes. SDK callers can use `prepare_runtime`, `create_agent`, and `ainvoke` directly; their host manages the checkpointer, exception handling, and logging configuration.
-
-## A2A calls
-
-The service exposes `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc`. Requests must include `A2A-Version: 1.0`. Calls can wait for the final result or use `returnImmediately: true` to obtain a Task for polling. A2A streaming is not supported; see [call modes and examples](docs/reference/a2a.md#等待结果与异步任务).
-
-```bash
-curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
-  -H 'Content-Type: application/json' -H 'A2A-Version: 1.0' \
-  -d '{"jsonrpc":"2.0","id":"request-1","method":"SendMessage","params":{"message":{"role":"ROLE_USER","messageId":"message-1","contextId":"thread-1","parts":[{"text":"Describe your capabilities in three sentences."}]}}}'
-```
-
-When `DATAAGENT_A2A_AUTH_TOKEN` is set, also send `Authorization: Bearer <token>`. The Agent Card remains public. Execution failures can still return HTTP 200; inspect Task state and `metadata.dataagent.error`. See [REST and A2A](docs/en/reference/rest-api.md) for query and cancellation contracts.
-
-## Logs and diagnosis
-
-`<Home>/runtime/logs/` uses three main files:
-
-| File | Contents |
-| --- | --- |
-| `backend.log` | Backend, plugins, models, A2A, shared dependencies, and service lifecycle |
-| `web.log` | Web builds, server, proxy, and reported browser errors |
-| `tui.log` | TUI builds, connections, transport, and interaction |
-
-Each rotates at 5,000,000 bytes with 3 backups. Correlate records using `X-Request-ID`, Task ID, and run IDs. A file may not exist until its process first writes a record. Browser reporting requires a reachable Web server and has no offline-storage guarantee.
-
-## Security boundary
-
-- The default listener is local. REST has no access token. The optional A2A shared token protects JSON-RPC only; it is not user login or tenant isolation.
-- Known credentials are redacted before log and trace export. Conversations, SQL, tool results, and CSV files can still contain business data.
-- Workspace read-only guidance and plugin SQL rules are not an operating-system sandbox. File tools and shell use backend process permissions; nl2sql SQL security rules must be enabled through configuration.
-
-See [Security](docs/en/security.md) and [Supported inputs](docs/en/reference/supported-datasources.md).
-
-## Documentation and development
-
-- [Quick start](docs/en/quick-start.md): deployment, models, lifecycle, and troubleshooting.
-- [Architecture](docs/en/architecture/overview.md): the control plane, Web/TUI, and A2A.
-- [Configuration](docs/en/reference/configuration-api.md) and [API](docs/en/reference/rest-api.md): current integration contracts.
-- [Contributing](CONTRIBUTING.md). Runtime, plugin, and SDK technical docs are under `docs/` in this repository.
-- [Historical v0.2.0 release notes](docs/en/releases/v0.2.0.md): product design and capabilities at that time, rather than an acceptance checklist for the current refactored runtime.
-
-```bash
-npm run test:deploy
-npm run test:web
-npm run test:tui
-make test
-```
-
-Apache-2.0; see [LICENSE](LICENSE).
-
-Configuration files use YAML 1.2 (`config.yaml`, `.plugin.yaml`, `.mcp.yaml`).
+[Contributing](CONTRIBUTING.md) · [Community and examples](docs/en/community/index.md) · [Apache-2.0](LICENSE)

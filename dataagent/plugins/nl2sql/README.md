@@ -82,7 +82,7 @@ plugins:
 | 独立 YAML 中的模型、库和节点参数 | 根级 `models`、`semantic`，以及 `plugins.config.nl2sql` |
 | 主代理把问题派给 nl2sql | 入口图没有 Deep Agents 根；用户消息就是问题 |
 
-入口模式的其余限制见 [子代理](../../../docs/extensions/subagents.md#入口模式)。
+入口模式的其余限制见 [子代理](../../../docs/zh/guides/integrate/extensions/subagents.md#entry-mode)。
 
 ### 主代理提示放在哪里
 
@@ -242,7 +242,7 @@ BIRD 节点把每条最终 SQL 的完整执行结果交给原 Selector，同一�
 ### 通过 MCP 执行 SQL
 
 在 `plugins.config.nl2sql.database` 中设置 `engine: "mcp"`，连接参数直接放在
-`database` 下，无需配置宿主 `.mcp.json`。例如：
+`database` 下，独立于[宿主工具的 `.mcp.yaml`](../../../docs/zh/reference/mcp-configuration.md)。例如：
 
 ```json
 {

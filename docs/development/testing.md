@@ -1,12 +1,25 @@
 # 测试
 
-默认套件不访问真实模型。测试自己设置 Home 和输入目录，使用合成数据。
+先按[开发环境](setup.md#prepare-source)准备需要的依赖。默认测试使用合成数据和模型替身。带 `live` 标记的用例需要显式选择并提供凭据。
+
+| 场景 | 命令 |
+| --- | --- |
+| 运行一个 Python 测试文件 | `uv run --no-sync pytest -q tests/test_api.py` |
+| 检查 Python 代码 | `uv run --no-sync ruff check .` |
+| 运行单元测试 | `make ut`，或用 `SCOPE=dataagent,api` 选择组件 |
+| 运行串行系统测试 | `make st`，会先构建 TUI |
+| 运行两个测试层级 | `make test`，覆盖 Python、API、Web、TUI、部署及 YAML |
+| 验证文档构建和链接 | `npm run docs:build` 和 `npm run smoke:docs` |
+
+Make 测试入口在需要 Python 时先同步一次依赖。已有环境时可传 `UV_RUN_OPTS=--no-sync`。各层级实际执行的命令可用 [测试运行器](../../scripts/run_product_tests.py) 的 `--list` 查看：
 
 ```bash
-uv run pytest -q
+uv run --no-project python scripts/run_product_tests.py --tier test --scope dataagent --list
 ```
 
-默认运行 Python 单元测试、后端系统测试和安装包检查。标记 `tui` 的用例需要编译后的 TUI 和 POSIX 伪终端，标记 `live` 的用例需要显式提供模型凭据。两种标记均需显式选择。
+用 `PYTEST_ARGS` 传 Python 测试过滤项，用 `NODE_TEST_ARGS` 传 Node 测试参数。系统测试串行运行。`make st` 拒绝 pytest 的 `-n` 和 `--numprocesses`，`make test` 会把它们传给单元测试、从系统测试参数中移除。摘要与 JUnit 结果在 `artifacts/product/`。
+
+直接执行 pytest 时，项目默认排除 `tui` 和 `live` 标记。需要真实终端的 `tui` 用例还要求已构建的 TUI 和 POSIX 伪终端。
 
 ## 覆盖什么
 
@@ -33,18 +46,26 @@ uv run pytest -q
 
 `test_a2a_e2e.py` 归入产品脚本的串行系统测试。它验证真实 `serve-a2a` 进程、TCP、默认匿名访问、模型错误分类、日志落盘，以及重启后旧 Task 不存在但会话历史仍可续接。外部 HTTPS 和网关仍需在实际部署环境验收。
 
-## A2A 与 nl2sql 的联合验收
+## A2A 与 nl2sql 的联合验收 { #a2a-nl2sql }
 
 协议与插件测试分别通过，不代表真实模型下的整条委派链通过。建议联合验证主代理路由、nl2sql 业务结果、会话/产物与错误关联，具体数据、用例和执行安排由测试设计。本页维护自动化入口和覆盖边界。
 
-测试应保留主代理入口，并核对实际 `task` 委派、业务结果、CSV/meta 与诊断关联。`TASK_STATE_COMPLETED` 和查询成功的区别见 [A2A 的本地子代理约定](../reference/a2a.md#入站调用与本地子代理)。本地 schema 与真实语义服务的覆盖范围分别记录；可控模型测试不能替代真实环境联合验收。
+测试应保留主代理入口，并核对实际 `task` 委派、业务结果、CSV/meta 与诊断关联。`TASK_STATE_COMPLETED` 和查询成功的区别见 [A2A 的本地子代理约定](../zh/reference/a2a.md#inbound-and-subagents)。本地 schema 与真实语义服务的覆盖范围分别记录；可控模型测试不能替代真实环境联合验收。
 
-## 真实模型
+## 安装包测试 { #package-tests }
+
+```bash
+uv run --no-sync pytest -q tests/packaging
+```
+
+[安装包测试](../../tests/packaging/test_installed.py) 在临时目录构建 sdist，再验证从 sdist 构建的 wheel 可独立安装，检查 CLI、SDK 和内置资源。当前交付文件的端到端验收见[发布流程](release.md#verify-artifacts)。
+
+## 真实模型 { #live-models }
 
 A2A 通路使用三个环境变量：`DATAAGENT_A2A_LIVE_BASE_URL`（包含 `/v1` 的模型网关地址）、`DATAAGENT_A2A_LIVE_API_KEY`、`DATAAGENT_A2A_LIVE_MODEL`。通过当前进程环境注入凭据后，在仓库根运行：
 
 ```bash
-.venv/bin/python -m pytest tests/test_a2a_live.py -m live -q
+uv run --no-sync pytest tests/test_a2a_live.py -m live -q
 ```
 
 缺少任意变量时跳过。用例启动本机匿名 `serve-a2a`，验证自动生成 context、续聊记忆、同 context 排队及检查点继承、不同 context 并发、匿名查询和取消、取消后续聊，以及响应、会话索引、trace、日志中的 ID 和错误码关联。所有调用方共享同一团队范围，不新增身份或存储实体。
@@ -53,9 +74,7 @@ A2A 通路使用三个环境变量：`DATAAGENT_A2A_LIVE_BASE_URL`（包含 `/v1
 
 临时 Home 的模型配置只保存 `$env{DATAAGENT_A2A_LIVE_API_KEY}` 引用。每个用例在 pytest 临时目录生成 `a2a-live-report.json`、`backend.stderr.log` 和已有的 Home 日志、检查点、trace，并检查产物没有真实密钥。报告保留 ID 和诊断路径，方便复查。除上游鉴权失败用例要求 401 外，包括取消、超时在内的真实网关请求均要求最终返回 200，避免延迟掩盖无效凭据。
 
-一个 span 是一次操作的追踪记录；根 span 记录整轮执行，模型子 span 记录其中一次模型调用。当前锁定的 `langchain-core 1.6.1` 在非流式 `agenerate()` 等待被取消时，会跳过模型结束/失败回调；超时同样通过取消触发。本地 tracer 在异常根执行收尾时，复用已有的未结束模型 Run 补上本地中断记录，再沿原有链路导出。已结束的模型记录和普通工具内部模型的过滤规则保持原有行为。
-
-用例要求错误根 span、模型子 span、错误详情、ID 关联和检查点齐全，报告中的 `modelSpanPresent` 必须为真。中断模型记录沿用原生 ID、父子关系和开始时间，以根执行结束时间记录本地等待截止点，错误说明包含 `interrupted locally`。未收到的模型结果为空，Token 用量保持未知；这些信息不代表上游停止计算或计费。两种路径的根错误都可能显示 `CancelledError`，区分主动取消和超时须结合任务中的 `metadata.dataagent.error.code`（`CANCELLED` / `TIMEOUT`）及对应执行日志。
+用例要求错误根 span、模型子 span、错误详情、ID 关联和检查点齐全，报告中的 `modelSpanPresent` 必须为真。中断模型记录保留原生 ID、父子关系和开始时间，错误说明包含 `interrupted locally`。模型结果与 Token 用量按实际响应记录。主动取消和超时都可能表现为根 `CancelledError`，用任务中的 `metadata.dataagent.error.code`（`CANCELLED` / `TIMEOUT`）及日志区分。导出规则见[可观测性](architecture/observability.md)。
 
 产品通路：
 
@@ -77,12 +96,6 @@ DATAAGENT_SEMANTIC_LIVE_ENV=/absolute/path/to/.env \
 
 ## TUI
 
-```bash
-npm install --ignore-scripts
-npm run test:tui
-uv run pytest -q -m 'tui and not live'
-```
-
-`npm run test:tui` 会先编译 TUI 再运行 Node 测试。最后一条命令运行 Python 驱动的终端系统测试。
+完成[开发环境](setup.md#prepare-source)准备后，用 `npm run test:tui` 编译并运行 Node 测试。与后端联调时运行 `make st`，它也会构建 TUI。Python 的 `tui` 用例需要 POSIX PTY。输入法候选窗仍要在实际终端手动验证。
 
 改 Ink 全屏光标之前，先跑 Python 套件里的 PTY 探针。若上游已经修好一行偏移，删掉补丁，不要叠第二层。

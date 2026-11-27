@@ -154,4 +154,4 @@ jobs:
         run: |
           npm run docs:build
           grep -Fq 'href="https://gitcode.com/datagallery/dataagent/blob/main/pyproject.toml"' \
-            site/development/package-distribution/index.html
+            site/development/release/index.html

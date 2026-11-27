@@ -2,7 +2,7 @@
 
 Next.js data-task workspace in the datagallery monorepo.
 
-- **User guide:** [Web 工作台指南](../../docs/zh/guides/web-workbench.md)
+- **User guide:** [Web 工作台指南](../../docs/zh/guides/web.md)
 - **Quick start:** [快速开始](../../docs/zh/quick-start.md)
 
 From the repository root:

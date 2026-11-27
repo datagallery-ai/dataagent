@@ -1,10 +1,10 @@
-# REST API
+# REST API reference
 
-This page is for integrators calling the control plane. It does not describe internal modules. The control plane listens on `http://127.0.0.1:8790` by default, from `server.host` and `server.port` in Home `config.yaml`. REST has no access token; A2A JSON-RPC has an optional shared token, described below. The Web app proxies `/api/v1/*` to that address.
+Call the control plane started by `dataagent serve`. The default base URL is `http://127.0.0.1:8790`, configured by `server.host` and `server.port` in the selected YAML. The Web workbench proxies `/api/v1/*` to this service. REST has no built-in access-token check. See the [security notes](../concepts/security.md) before exposing the control plane beyond loopback.
 
-## Envelope
+## Envelope { #envelope }
 
-REST JSON responses use the envelope for success and error alike. `POST /api/v1/runs` returns an SSE event stream on success, and REST cancellation returns an empty 204. A2A uses its own Agent Card and JSON-RPC formats, described below, rather than the REST success envelope.
+JSON success responses and handled HTTP errors use these envelopes:
 
 ```json
 {"success": true, "data": {}}
@@ -14,86 +14,112 @@ REST JSON responses use the envelope for success and error alike. `POST /api/v1/
 {"success": false, "error": {"code": "RESOURCE_NOT_FOUND", "message": "Route not found."}}
 ```
 
-Every route is under `/api/v1` except `/healthz`, `/ready`, and A2A (`/.well-known/agent-card.json`, `/a2a/jsonrpc`, whose paths the protocol fixes).
+A successful `POST /api/v1/runs` returns an SSE stream with HTTP 200. A successful cancel request returns HTTP 204 with an empty body. `HEAD` on the health endpoints returns only the status and headers. The response examples below show the contents of `data`.
 
-Unknown paths return 404 with `RESOURCE_NOT_FOUND`; a wrong method returns 405 with `METHOD_NOT_ALLOWED`. Conversation paths, including cancel, return 503 with `CONVERSATION_UNAVAILABLE` while the engine is not ready; the Agent Card is not affected.
+## Health and identity { #health-and-identity }
 
-## Health and identity
-
-| Method | Path | Purpose |
+| Method | Path | Response |
 | --- | --- | --- |
-| GET, HEAD | `/healthz` | Always 200. When the engine is ready, `data.conversation` includes `ready`, `protocol`, `instanceId`, `model`, `plugins`, `home`, `entry`, `user`, and `timeoutSeconds`; `ready` is the only readiness flag. Otherwise `conversation` is only `ready: false`. |
-| GET, HEAD | `/ready` | 200 when the engine is ready, with `data.status` set to `ready`. Otherwise 503. |
-| GET | `/api/v1/me` | The current `--user`. The id is `default` when the engine is not ready. There is no signed-in account. |
-| GET | `/api/v1/capabilities` | `interaction.resume`, `conversation.memory`, and `artifact.list` are true; `artifact.export` is false. |
+| GET, HEAD | `/healthz` | 200 with `status: "ok"` and `conversation`. |
+| GET, HEAD | `/ready` | 200 with `status: "ready"` and the same `conversation` fields as `/healthz`. Returns 503 when the engine is unavailable. |
+| GET | `/api/v1/me` | `user.id` and `user.displayName` are the server's local user (`--user`). Both default to `default` if no runtime is configured. `workspace` is always `{"id":"local","name":"Local"}`. |
+| GET | `/api/v1/capabilities` | `interaction.resume`, `conversation.memory`, and `artifact.list` are true. `artifact.export` is false. |
 
-`/healthz` does not return input directories, the state directory, or the configuration body.
-
-## Sessions and runs
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| GET | `/api/v1/sessions?limit=` | Sessions for the current user. Web and TUI both use this route. `limit` is 1 to 100, default 50. |
-| GET | `/api/v1/sessions/{threadId}` | List fields plus `messages`, `notice`, and `pendingInteractions`. Messages come from the saved checkpoint when the row has one, otherwise from the latest graph state on that thread. 409 when the binding cannot be opened. 404 for another user's session. A running turn can still be read. |
-| GET | `/api/v1/sessions/{threadId}/outputs` | Output files. Skips symlinks, `artifacts/conversation_history`, and `artifacts/large_tool_results`. 404 when the session does not exist. |
-| GET | `/api/v1/sessions/{threadId}/outputs/preview?path=` | UTF-8 text, at most 64 KiB; `truncated` is `true` when cut. Non-text is 415. |
-| POST | `/api/v1/runs/{runId}/cancel` | Cancel the active turn. `runId` comes from the `POST /api/v1/runs` request body. Returns an empty 204 on success, 404 when that run does not exist or has finished. After a cancel the event stream ends with `RUN_ERROR` whose `code` is `CANCELLED`; the session is marked `interrupted` and the next turn continues from the saved checkpoint. |
-
-These paths are not implemented: login, `/api/copilotkit`, `/api/copilotkit/info`, datasources, knowledge bases, workspace configuration, session rename, delete, branches, or a trace DAG. They return the 404 envelope.
-
-## Conversation
-
-| Method | Path | Purpose |
-| --- | --- | --- |
-| POST | `/api/v1/runs` | One turn. The body is one AG-UI input; extra fields are rejected. Success is `text/event-stream`. |
-
-Constraints for `POST /api/v1/runs`:
-
-- `threadId` and `runId` are safe ids of at most 128 characters
-- For a new message, `messages` is exactly one item with an `id`, `role` is `user`, and `content` is a nonempty string
-- `state` is `null` or `{}`
-- `tools`, `context`, and `forwardedProps` are required and empty (`[]`, `[]`, `{}`)
-- `resume` and `parentRunId` are not accepted
-
-For HITL, keep the same `threadId`, generate a new `runId`, and send `messages: []`
-with a nonempty `answers` map instead of a new message:
+When the engine is unavailable, the `conversation` object on `/healthz` contains only `{"ready": false}`. A ready control plane returns a shape like this:
 
 ```json
 {
-  "threadId": "thread-1", "runId": "reply-1",
-  "messages": [], "answers": {"<interruptId>": "user_id"},
-  "state": {}, "tools": [], "context": [], "forwardedProps": {}
+  "status": "ok",
+  "conversation": {
+    "ready": true,
+    "protocol": "dataagent",
+    "instanceId": "server-1",
+    "model": "example-model",
+    "plugins": ["common"],
+    "home": "/absolute/path/to/.dataagent",
+    "entry": null,
+    "user": "default",
+    "timeoutSeconds": 180
+  }
 }
 ```
 
-A paused turn ends its SSE stream with `CUSTOM name="human_feedback"`, whose value
-is the current pending interaction array, followed by `MESSAGES_SNAPSHOT` and
-`RUN_FINISHED` with `metadata.status="waiting_for_input"`. Each interaction contains
-`type: "human_feedback"`, `interruptId`, `message`, and optional `options` and
-`validationError`. Session detail exposes the same array as `pendingInteractions`,
-including after a server restart. Parallel questions can be answered in batches.
-Successful completion sends an empty interaction array and `metadata.status="completed"`.
-Session status can be `running`, `waiting_for_input`, `completed`, `error`, or `interrupted`.
+Use `conversation.ready` for readiness. `instanceId` identifies the process, and `timeoutSeconds` reflects `dataagent.limits.timeout_seconds`. `entry` reports the configured value without checking whether it resolves to a compiled subagent. The response omits input directories, the state directory, and configuration contents.
 
-New messages while waiting, unknown or resolved interrupt IDs, and reuse of a
-submitted `runId` in the same session return 409. Empty text answers ask again with
-`validationError`. Waiting for user input does not consume the execution timeout.
+## Sessions and runs { #sessions-and-runs }
 
-One session runs one turn at a time. Validation failures are 422 with `BAD_REQUEST`. Business rejections are usually 409 with `CONFLICT`. Both use the error envelope. Other codes: 400 `BAD_REQUEST`, 404 `RESOURCE_NOT_FOUND`, 415 `UNSUPPORTED_FILE_TYPE`, 5xx `INTERNAL_ERROR`. After the stream has started with 200, a run failure is an event, not a changed HTTP status.
+### List sessions { #list-sessions }
 
-## A2A
+`GET /api/v1/sessions?limit=50` returns sessions for the current server user in descending order by `updatedAt`, then `threadId`. `limit` is an integer from 1 through 100 and defaults to 50.
 
-The same process also serves two A2A 1.0 routes for other agents.
+```json
+{
+  "sessions": [
+    {
+      "threadId": "thread-1",
+      "title": "Summarize the latest report",
+      "createdAt": "2026-10-15T00:00:00+00:00",
+      "updatedAt": "2026-10-15T00:00:00+00:00",
+      "status": "completed",
+      "hasCheckpoint": true
+    }
+  ]
+}
+```
 
-| Method | Path | Purpose |
+Statuses are `running`, `waiting_for_input`, `completed`, `error`, and `interrupted`. A session waiting for an A2A answer is shown as `interrupted` by REST. On startup, sessions still recorded as `running` become `interrupted`.
+
+### Read a session { #session-detail }
+
+`GET /api/v1/sessions/{threadId}` adds `messages`, `pendingInteractions`, and `notice` to the list item fields. The messages come from the saved checkpoint or, if absent, the latest graph state on that thread. The route remains available while a run is active. `pendingInteractions` contains prompts that can be answered over REST. See [human feedback](../reference/events.md#hitl) for their shape and how to answer. `notice` is text or `null`. On an error or interruption, it indicates whether a checkpoint was restored.
+
+An unknown session or a session belonging to another user returns 404. If the current user's session binding cannot be opened, the route returns 409.
+
+### Cancel a run { #cancel-run }
+
+Send `POST /api/v1/runs/{runId}/cancel` with the active REST run's `runId`. No request body is needed. Success returns an empty 204. An unknown or finished run returns 404. Once cancellation takes effect, the connected stream ends with `RUN_ERROR` and `code: "CANCELLED"`. The session is marked `interrupted`. The client can continue on the same `threadId`. Use the [A2A API](../reference/a2a.md) to cancel an A2A task.
+
+## Conversation { #conversation }
+
+`POST /api/v1/runs` accepts one AG-UI request. See the [request format](../reference/events.md#request) and [integration example](agent-runtime.md). The successful response is `text/event-stream` with `Cache-Control: no-cache` and `X-Accel-Buffering: no`.
+
+Before the stream starts, invalid bodies return 422. Conflicts, including an active run on the same session or an already-active `runId`, return 409. Once the server starts a 200 stream, run failures are reported as [terminal events](../reference/events.md#terminal-events). If the client disconnects, the server cancels the upstream stream and marks the unfinished session as interrupted.
+
+## Outputs { #outputs }
+
+### List files { #list-outputs }
+
+`GET /api/v1/sessions/{threadId}/outputs` returns regular files sorted by descending `modifiedAt`, then descending `path`. Paths are relative to the session's output directory, and sizes are in bytes.
+
+```json
+{"files": [{"path": "notes.txt", "size": 12, "modifiedAt": "2026-10-15T00:00:00+00:00"}]}
+```
+
+The list excludes symbolic links and the internal paths `artifacts/conversation_history` and `artifacts/large_tool_results`. An existing session with no output directory returns an empty list. An output directory that is a symbolic link or a path that is not a directory returns 409. A session that does not exist or belongs to another user returns 404.
+
+### Preview UTF-8 text { #preview-output }
+
+`GET /api/v1/sessions/{threadId}/outputs/preview?path=notes.txt` takes a non-empty, URL-encoded relative path and returns:
+
+```json
+{"type": "file", "path": "notes.txt", "content": "Sample notes", "truncated": false}
+```
+
+The read limit is 64 KiB. A longer file has `truncated: true` and the returned content ends on a complete UTF-8 character. An absolute path, a `..` component, or a NUL character returns 400. Missing, linked, excluded, or non-regular files return 404. Binary or invalid UTF-8 content in the preview returns 415.
+
+## HTTP errors { #http-errors }
+
+| HTTP status | Code | Typical cause |
 | --- | --- | --- |
-| GET | `/.well-known/agent-card.json` | Agent Card. Declares JSON-RPC only; streaming is not supported. |
-| POST | `/a2a/jsonrpc` | JSON-RPC entry, for example `SendMessage`. Requests must send the `A2A-Version: 1.0` header. |
+| 400 | `BAD_REQUEST` | Invalid session ID when accessing outputs, or an invalid preview path |
+| 404 | `RESOURCE_NOT_FOUND` | Unknown route, session, file, or inactive run |
+| 405 | `METHOD_NOT_ALLOWED` | Unsupported method for the route |
+| 409 | `CONFLICT` | Active run, replay, unresolved feedback, invalid session binding, or invalid outputs directory |
+| 415 | `UNSUPPORTED_FILE_TYPE` | Preview only supports UTF-8 text |
+| 422 | `BAD_REQUEST` | Invalid request body or query parameter. `message` describes the first validation error. |
+| 500 | `INTERNAL_ERROR` | Handled server error, such as failure to reload extensions or read outputs |
+| 503 | `CONVERSATION_UNAVAILABLE` | Engine unavailable for `/ready`, session routes, or run routes |
 
-- `contextId` is the session `threadId`. It shares sessions and checkpoints with `/api/v1/runs`. It must be a safe ID of at most 128 characters; the protocol generates one when it is omitted.
-- Only text parts are read. On success the final answer is in `result.task.artifacts` with state `TASK_STATE_COMPLETED`.
-- Access is anonymous by default, with one shared team: callers can read, continue, and cancel tasks in the same instance. The optional `DATAAGENT_A2A_AUTH_TOKEN` requires `Authorization: Bearer <token>` on `/a2a/jsonrpc`, otherwise returning 401 with `UNAUTHORIZED`. The Agent Card stays anonymous.
-- Each RPC response carries a server-generated `X-Request-ID`. Task `metadata.dataagent` contains `schemaVersion: 1`, the creating request's `requestId`, the input `messageId`, and `rootRunId` when a host run exists. Queries and cancellation preserve the creating request's correlation fields.
-- Execution failures remain HTTP 200 with a failed Task. `metadata.dataagent.error` supplies a stable `code`, `stage`, and redacted `message`. Codes include `BAD_REQUEST`, `CONFLICT`, `FORBIDDEN`, `TIMEOUT`, `MODEL_ERROR`, `TOOL_ERROR`, `CONFIG_ERROR`, `LIMIT_EXCEEDED`, `LOOP_DETECTED`, `INTERNAL_ERROR`, and `CANCELLED`. A session occupied by Web/TUI returns a failed Task with `CONFLICT`, not HTTP 409.
-- `GetTask` and `CancelTask` accept the task ID in `params.id` and return the Task directly in `result`; `ListTasks` returns the shared list in `result.tasks`. Set `params.configuration.returnImmediately: true` on `SendMessage` to obtain a task ID before completion, then query or cancel it. Tasks are in memory and cannot be queried after restart; persisted conversations and checkpoints can continue. Execution deduplication and automatic retries are not provided.
-- JSON-RPC errors follow the JSON-RPC spec, not the error envelope above.
+## A2A { #a2a }
+
+The same server exposes `GET /.well-known/agent-card.json` and `POST /a2a/jsonrpc` for A2A. See the [A2A reference](../reference/a2a.md) for discovery, JSON-RPC requests, authorization, and task handling.

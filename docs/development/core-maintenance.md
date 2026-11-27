@@ -6,25 +6,13 @@
 
 子代理状态键与 deepagents 0.7.15 对齐。仓库不提供自动同步脚本。升级时对照上游行为，再运行 `tests`。
 
-`dataagent.core.__version__` 和图元数据中的 `dataagent_versions` 都是 `0.1.0.dev0`，不读取安装元数据。PyPI 包版本写在 `pyproject.toml`，为 `0.2.0`。
+`dataagent.core.__version__` 和图元数据中的 `dataagent_versions` 都是 `0.1.0.dev0`，不读取安装元数据。Python 发行版本独立定义在 [pyproject.toml](../../pyproject.toml)。
 
-## 代码分层
-
-以下路径相对仓库根目录。
-
-| 路径 | 职责 |
-| --- | --- |
-| `dataagent/core/` | Deep Agents 图、文件系统、摘要、Skill 和子代理 |
-| `dataagent/bootstrap/`、`dataagent/config/` | 配置、路径和扩展声明 |
-| `dataagent/extensions/`、`dataagent/assembly/graph.py`、`dataagent/assembly/prompts/` | 把声明编译进图，并加上限额、会话目录和 Trace |
-| `dataagent/semantic_client/` | 语义服务 HTTP 客户端 |
-| `dataagent/server/` | 本机 HTTP 服务，同时提供产品路由和对话路由 |
-
-宿主策略放在 `build_native_middleware` 和提示中，执行循环使用 `create_deep_agent`。
+源码边界见[架构概览](architecture/overview.md)。宿主策略放在 `build_native_middleware` 和提示中，执行循环使用 `create_deep_agent`。
 
 ## 修改 core 之后
 
 1. 若模型可见文案跟随上游变化，整段替换，并保留 MIT 署名。
-2. 运行 `uv run pytest`。优先查看 Hook 顺序、编译契约、文件系统和子代理测试。
-3. 摘要阈值、卸载路径或 Checkpoint 状态键有变化时，同步更新 [上下文](../architecture/context-management.md) 和 [发布](release.md)。
-4. `import dataagent` 保持轻量：导入 core 时不访问网络，也不创建 Home。
+2. 按[测试指南](testing.md)验证改动。优先检查 Hook 顺序、编译契约、文件系统和子代理。
+3. 摘要阈值、卸载路径或 Checkpoint 状态键有变化时，同步更新 [上下文](architecture/context-management.md) 和 [发布](release.md)。
+4. 验证 `import dataagent` 的惰性导入边界，以及导入过程中不会创建 Home 或访问网络。
