@@ -86,7 +86,9 @@ dataagent:
 
 算法参考 [Gemini CLI LoopDetectionService](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/services/loopDetectionService.ts)，按 dataagent 的原生中间件、回调和错误处理方式独立实现。
 
-## `models.<id>` { #model-settings }
+<a name="model-settings"></a>
+
+## `models.<id>`
 
 | 字段 | 类型 | 默认 | 约束 |
 | --- | --- | --- | --- |
@@ -113,7 +115,9 @@ dataagent:
 
 启用 ID 必须正好匹配一个候选目录，且目录名等于 `.plugin.yaml` 的 `id`。
 
-## `server` { #server-settings }
+<a name="server-settings"></a>
+
+## `server`
 
 `npm run start`、网页转发和无参数 TUI 在启动时读所选产品文件的 `server`：传了 `--config` 用那份文件，否则用 Home `config.yaml`。`./deploy.sh start` 也在启动当时解析同一地址，把主机名写入 `storage/run/deployment.json` 的 `listen.apiHost`，把端口写入 `ports.api`。之后的 `./deploy.sh tui`、`status`、`doctor` 使用这份地址。首次部署在 Home 没有 `config.yaml` 时，用 `dataagent/bootstrap/templates/config.yaml` 创建完整配置，再写入所选 `host` 和 `port`。已有文件只改这两个字段。语法无法解析时不覆盖原文件。改了监听地址后，重新执行 `./deploy.sh start` 或 `restart` 才会记下新地址。
 
@@ -159,7 +163,9 @@ dataagent:
 | `tls.client_key` | 路径或省略 | 省略 | 与 `client_cert` 成对 |
 | `tls.ciphers` | 字符串或省略 | 省略 | 非空时传给 SSL `set_ciphers` |
 
-## 合并 { #configuration-merge }
+<a name="configuration-merge"></a>
+
+## 合并
 
 产品 YAML 只选一份。传入 `--config` 时读取指定文件，否则读取 Home 的 `config.yaml`。启动目录中的 `config.yaml` 和 `.dataagent/` 不参与。环境文件独立选择，见[环境变量](cli-and-environment.md#environment-variables)。
 

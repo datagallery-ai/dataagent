@@ -16,7 +16,9 @@ Use strict YAML 1.2. Comments and multiline strings are allowed. Unknown fields,
 | `semantic` | Omitted | Optional semantic client |
 | `a2a` | Omitted | Agent Card and outbound agents |
 
-## `dataagent` { #dataagent }
+<a name="dataagent"></a>
+
+## `dataagent`
 
 | Field | Default | Constraint |
 | --- | --- | --- |
@@ -60,7 +62,9 @@ The `before_agent` boundary prevents injected summary, review, and media-referen
 
 `enabled: false` disables both checks. See the [algorithm reference](https://github.com/google-gemini/gemini-cli/blob/main/packages/core/src/services/loopDetectionService.ts).
 
-## `models.<id>` { #model-settings }
+<a name="model-settings"></a>
+
+## `models.<id>`
 
 | Field | Default | Constraint |
 | --- | --- | --- |
@@ -79,7 +83,9 @@ Models use Chat Completions with `use_responses_api=False`. There is no `respons
 
 `enabled` and `paths` are list replacements and default to `[]`. Enabled IDs are unique. Each path names one plugin directory. `config` defaults to `{}` and merges by plugin ID. The plugin validates its own values. An enabled ID matches exactly one candidate whose directory name agrees with `.plugin.yaml`.
 
-## `server` { #server-settings }
+<a name="server-settings"></a>
+
+## `server`
 
 The npm launcher, Web proxy, and TUI without arguments read the explicit YAML or Home YAML. At startup, `./deploy.sh start` records the resolved hostname as `listen.apiHost` and port as `ports.api` in `storage/run/deployment.json`. Later `tui`, `status`, and `doctor` use that address. First deploy creates Home YAML from the template and sets the selected host and port. Existing files only receive those two changes. Invalid YAML is not overwritten. Run start or restart to record subsequent address changes.
 
@@ -117,7 +123,9 @@ Omit the object to disable the client.
 | `tls.client_cert`, `tls.client_key` | Omitted | Must be provided together |
 | `tls.ciphers` | Omitted | Nonempty value passed to SSL `set_ciphers` |
 
-## Merging { #configuration-merge }
+<a name="configuration-merge"></a>
+
+## Merging
 
 Select one product file, explicit `--config` or Home `config.yaml`. Startup cwd files and `.dataagent/` do not participate. The [environment file](cli-and-environment.md#environment-variables) is selected separately.
 

@@ -12,7 +12,9 @@
 
 各层的导出以 [dataagent](../../../dataagent/__init__.py)、[dataagent.host](../../../dataagent/host.py)和 [dataagent.lowlevel](../../../dataagent/lowlevel.py) 中的 `__all__` 为准。
 
-## 公开 SDK（`dataagent`） { #public-sdk }
+<a name="public-sdk"></a>
+
+## 公开 SDK（`dataagent`）
 
 | 名称 | 作用 |
 | --- | --- |
@@ -36,7 +38,9 @@
 | `build_sql_service`、`check_engine_driver`、`check_read_only_sql`、`check_sql` | 构建 SQL 服务、检查引擎依赖和 SQL 的数据网关接口 |
 | `recall_database`、`RecallOptions`、`RecallError` | SQLite 数据库探索的异步入口、选项和错误类型 |
 
-### `LaunchOptions` { #launch-options }
+<a name="launch-options"></a>
+
+### `LaunchOptions`
 
 | 字段 | 默认 | 说明 |
 | --- | --- | --- |
@@ -49,7 +53,9 @@
 
 输入目录从所选 YAML 的 `dataagent.input_workspaces` 读取。宿主可在创建 Agent 时显式指定，见[宿主接口](#host-api)。环境取值见[环境变量参考](cli-and-environment.md#environment-variables)。
 
-### `create_agent` { #create-agent }
+<a name="create-agent"></a>
+
+### `create_agent`
 
 ```text
 create_agent(runtime, *, model=None, checkpointer=None, session=None,
@@ -66,7 +72,9 @@ create_agent(runtime, *, model=None, checkpointer=None, session=None,
 
 `create_agent` 先校验入口、插件声明、MCP、Hook 和语义客户端。在预检阶段只读取声明和说明文件，插件 Python 在构图时加载。普通 SDK 调用在首次使用会话时构图。宿主传入 `session` 时，创建 Agent 的过程中会打开该会话并构图。未知关键字会触发 `TypeError`。宿主参数详见[宿主接口](#host-api)。
 
-### `Agent` { #agent }
+<a name="agent"></a>
+
+### `Agent`
 
 | 成员 | 行为 |
 | --- | --- |
@@ -79,7 +87,9 @@ create_agent(runtime, *, model=None, checkpointer=None, session=None,
 - `output_dir` 在首次绑定会话时生效。之后沿用原目录，路径约束见[会话与产物](../guides/sessions-and-outputs.md)。
 - 每个会话缓存独立的图和上下文，本 Agent 实例共享模型客户端。图缓存目标大小为 32，只淘汰空闲图，优先淘汰最久未用的图。若活跃会话较多，缓存可暂时超过该值。对话历史由 checkpointer 保存，Trace 由会话图按轮记录。
 
-### `AgentContext` { #agent-context }
+<a name="agent-context"></a>
+
+### `AgentContext`
 
 工具通过 `runtime.context` 拿到它，SDK 用户不需要自己构造。
 
@@ -92,7 +102,9 @@ create_agent(runtime, *, model=None, checkpointer=None, session=None,
 | `get_plugin_config(plugin_id)` | `plugins.config.<plugin_id>` 的副本。插件未启用时抛出 `ValueError` |
 | `get_plugin_state(plugin_id)` | 当前会话图上下文中该插件的私有内存字典。只有已启用插件可以访问，字典随进程内上下文保存。Checkpoint 不含该状态，插件自己负责并发同步 |
 
-## 宿主接口（`dataagent.host`） { #host-api }
+<a name="host-api"></a>
+
+## 宿主接口（`dataagent.host`）
 
 宿主是把 Agent 提供给其他客户端的长驻服务，例如 `dataagent serve`。只调用 Agent 的程序不需要这一节。
 
@@ -122,7 +134,9 @@ create_agent(runtime, *, model=None, checkpointer=None, session=None,
 - `agent.as_agui(name="dataagent", **kwargs)`：创建 AG-UI 适配器，执行 `run(input)` 时按 `input.thread_id` 选择会话。每个请求用新的适配器。
 - `agent.graph_for(thread_id)`：取得已有会话的原生图，例如读状态 `graph_for(t).aget_state(config)`。会话不存在时抛出 `ValueError`。`agent.graph` 是默认会话的图，首次访问会创建默认会话。
 
-## 低层接口（`dataagent.lowlevel`） { #lowlevel-api }
+<a name="lowlevel-api"></a>
+
+## 低层接口（`dataagent.lowlevel`）
 
 `build_graph` 打开一个会话并返回绑定该会话的原生 LangGraph `CompiledStateGraph`。构建时校验已有路径或按该会话登记路径。调用方在调用图时传递上下文，负责语义客户端的生命周期。需要按线程路由和复用多个会话图时，使用 `create_agent`。
 
@@ -148,7 +162,9 @@ build_graph(runtime, *, checkpointer=None, model=None, session=None,
 - `dataagent.entry` 有值时只挂该编译型入口。
 - 额外的 LangChain callback 放在调用的 `config["callbacks"]`，或用 `graph.with_config(callbacks=[...])`。
 
-## A2A { #a2a-api }
+<a name="a2a-api"></a>
+
+## A2A
 
 客户端接口 `A2ACaller`、`A2AResult` 和 `A2ACallError` 从 `dataagent.extensions.a2a` 导入。协议请求与调用示例见 [A2A](a2a.md#outbound)。服务端工厂从 `dataagent.server.a2a` 导入。导入 SDK 或 A2A 客户端不会加载服务端。
 

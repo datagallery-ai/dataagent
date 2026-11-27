@@ -2,7 +2,9 @@
 
 Use DataAgent from a Python process. Configure a usable model with the [configuration quick reference](../../reference/configuration-api.md). The SDK reads `config.yaml` and `.env` from DataAgent Home by default. Use `LaunchOptions(config=..., env_file=...)` to choose them separately. See [environment precedence](../../reference/cli-and-environment.md#environment-variables).
 
-## Call an agent { #without-file-logging }
+<a name="without-file-logging"></a>
+
+## Call an agent
 
 Save this as a script. In a source checkout use `uv run python /path/to/example.py`. With DataAgent already installed, use `python /path/to/example.py`.
 
@@ -36,7 +38,9 @@ asyncio.run(main())
 
 To see a root agent delegate to nl2sql, enable and configure that plugin, leave `dataagent.entry` unset, and ask a question about the configured database.
 
-## Write to backend.log { #backend-log }
+<a name="backend-log"></a>
+
+## Write to backend.log
 
 The SDK uses the host's Python logging configuration. To use DataAgent's JSON logging, import `configure_logging` from `dataagent.host` and call `configure_logging(runtime)` immediately after `prepare_runtime(...)`.
 
@@ -44,7 +48,9 @@ This replaces root handlers and sets the root level to INFO. The default is `<Ho
 
 `dataagent serve` and `serve-a2a` initialize logging at startup. SDK logging follows the selected Home. The launcher manages `DATAAGENT_LOG_CAPTURE`.
 
-## Set an output directory per task { #task-outputs }
+<a name="task-outputs"></a>
+
+## Set an output directory per task
 
 Reuse an agent with a distinct `thread_id` for each task. Use `output_dir` to specify the final directory.
 
@@ -74,7 +80,9 @@ If the agent writes the files, they appear in `~/reports/task-a/` and `~/reports
 
 Tools obtain the directory through `runtime.context.session.outputs`. Outputs and checkpoints are stored separately.
 
-## Close a stream early { #close-stream }
+<a name="close-stream"></a>
+
+## Close a stream early
 
 Use `closing` or `aclosing`. Break when you have what you need. Leaving the context closes the stream and releases the session.
 
@@ -89,6 +97,8 @@ with closing(agent.stream(inputs, config)) as stream:
 
 For async streams, use `async with aclosing(agent.astream(inputs, config))` and `async for`. See [Agent API](../../reference/python-api.md#agent) for concurrency rules.
 
-## Access models from tools { #tool-models }
+<a name="tool-models"></a>
+
+## Access models from tools
 
 With `ToolRuntime[AgentContext]`, call `runtime.context.get_model()` or pass a configured alias. Pass `config=runtime.config` so the current trace can include the model run. Direct model calls inside tools are separate from the agent loop and its limits and middleware. See [tool extensions](extensions/tools.md).

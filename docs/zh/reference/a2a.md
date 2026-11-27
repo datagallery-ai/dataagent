@@ -11,7 +11,9 @@ Agent Card 只发布 JSONRPC 绑定，声明 `capabilities.streaming: false`。�
 
 `dataagent serve` 同时提供 A2A 和 [REST 接口](rest-api.md)。即使对话引擎未就绪，也能读取 Agent Card。独立的 `dataagent serve-a2a` 只提供上表的 A2A 路由，可用 `--host`、`--port` 覆盖 `server.host`、`server.port`。两个进程都占用同一 Home 的 `backend.lock`，不能对同一个 Home 同时启动。启动方式和参数见 [CLI 参考](cli-and-environment.md#dataagent-serve-a2a)。
 
-## 发一条消息 { #send-message }
+<a name="send-message"></a>
+
+## 发一条消息
 
 ```bash
 curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
@@ -32,7 +34,9 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
   }'
 ```
 
-### 请求参数 { #request-parameters }
+<a name="request-parameters"></a>
+
+### 请求参数
 
 以下按本服务的请求响应调用说明；字段位于 JSON-RPC `params` 内时写出完整路径。
 
@@ -60,7 +64,9 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
 
 `contextId` 是共享会话的 `threadId`，也映射为 LangGraph 的 `thread_id`。同一 context 的普通 A2A 调用串行执行，并从共享会话索引记录的 checkpoint 继续。报错或取消也会保存图已经到达的 checkpoint。会话归属是 Server 启动时选择的用户（默认 `default`，可用 `--user` 指定）。同一 ID 已归属其他用户时返回失败 Task，错误码为 `FORBIDDEN`。
 
-## 鉴权 { #authentication }
+<a name="authentication"></a>
+
+## 鉴权
 
 默认不启用认证。设置 `DATAAGENT_A2A_AUTH_TOKEN` 后，两个服务入口都校验 `Authorization: Bearer <token>`。令牌取值优先级：`serve-a2a --auth-token` → 非空进程变量 → 所选环境文件（`--env-file` 或 Home `.env`）。`serve` 没有 `--auth-token` 参数，使用有效环境中的令牌；改变后重启。不要把它与模型 `LLM_API_KEY`、出站 `a2a.remote_agents[].auth_token` 混用。
 
@@ -90,7 +96,9 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 
 缺少或错误令牌返回 HTTP 401，正文为 `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Invalid or missing Bearer token."}}`，不进入模型执行。未配置令牌时可省略 Authorization。后端读取 `.env` 不会替其他终端设置变量。实现见 [Bearer 校验](../../../dataagent/server/a2a/server.py)。
 
-## 请求号与诊断 { #request-diagnostics }
+<a name="request-diagnostics"></a>
+
+## 请求号与诊断
 
 每个 `/a2a/jsonrpc` 请求都有服务端生成的 `X-Request-ID` 响应头，包括鉴权失败、协议错误和 `serve` 的引擎未就绪响应。它只用于报障关联，不是用户身份或幂等键。调用方的 JSON-RPC `id` 仍用于请求响应配对。
 
@@ -141,7 +149,9 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 
 `dataagent.limits.timeout_seconds` 在入站 A2A 中只限制 Agent 的 `ainvoke`；同 context 排队、会话准备和 Checkpoint 保存发生在这层时限之外。客户端不能用总耗时是否超过该值判断超时机制是否有效。客户端超时后，如有 Task ID，可[查询当前状态](#tasks)。
 
-## 查询和取消任务 { #tasks }
+<a name="tasks"></a>
+
+## 查询和取消任务
 
 所有方法继续使用同一 JSON-RPC 地址、版本和鉴权。表中的参数位于外层 `params`。
 
@@ -154,7 +164,9 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 
 `params.id` 是服务端生成的任务号，外层 JSON-RPC `id` 用于配对请求和响应。停止轮询或关闭客户端不会发出取消请求。需要取消时显式调用 `CancelTask`。默认 TaskStore 在内存中，重启后旧任务号失效。普通会话可以继续读取同一 Home 中的 checkpoint。处于人工等待的会话有额外的[恢复限制](#a2a-hitl)。
 
-### 等待结果与异步任务 { #call-modes }
+<a name="call-modes"></a>
+
+### 等待结果与异步任务
 
 两种方式都通过非流式 `SendMessage`，由 `configuration.returnImmediately` 选择：
 
@@ -194,7 +206,9 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 
 本服务没有执行去重、自动重试或幂等承诺；超时后不要直接重发可能产生副作用的任务。
 
-## 原生 HITL 暂停与恢复 { #a2a-hitl }
+<a name="a2a-hitl"></a>
+
+## 原生 HITL 暂停与恢复
 
 A2A 适配 LangGraph 原生 `interrupt()` / `Command(resume=...)`，不要求流式接口。业务工具或中间件触发中断后，Task 返回 `TASK_STATE_INPUT_REQUIRED`；此时未完成，不生成最终回答 artifact。同步调用在中断处返回，非阻塞调用可通过 `GetTask` 看到相同状态。
 
@@ -267,13 +281,17 @@ uv run --no-sync pytest tests/test_a2a_hitl.py -q
 
 手动联调可先在现有模型配置中启用 `data-qa` 插件，请主代理调用 `data-qa__request_human_feedback`；收到实际中断后按上述格式回复。工具审批用例由测试装配启用原生 `interrupt_on`，本次没有新增产品审批规则配置。
 
-## 入站调用与本地子代理 { #inbound-and-subagents }
+<a name="inbound-and-subagents"></a>
+
+## 入站调用与本地子代理
 
 A2A 请求默认进入主代理。主代理可通过 `task` 委派已启用的本地编译型子代理，例如 nl2sql；这不要求启动第二个 A2A 服务，也不需要 `a2a.remote_agents`。验证这条链路时不要设置 `dataagent.entry: "nl2sql"`，否则用户消息会直接进入 nl2sql，绕过主代理。
 
 `TASK_STATE_COMPLETED` 表示这一轮 Agent 执行完成，不证明业务结果一定成功或正确。nl2sql 的普通业务错误可能作为含 `error` 的工具结果返回，主代理解释该错误后，外层 Task 仍可完成。验收时还要检查实际委派、子代理结果和查询产物；协议测试与插件测试的关系见 [测试](../../development/testing.md#a2a-nl2sql)。
 
-## 调用其他 Agent { #outbound }
+<a name="outbound"></a>
+
+## 调用其他 Agent
 
 在调用方的 `config.yaml` 里声明远端 agent。装配时每个远端成为名为 `a2a__<id>` 的工具，`description` 会作为工具描述提供给调用方 Agent。可以写明什么时候调用，以及需要在消息里带哪些条件。
 

@@ -39,7 +39,9 @@
 
 当前没有统一的 `LOG_LEVEL` 配置项。需要临时查看 Python DEBUG 时，由开发在自己的宿主完成日志初始化后调整 logger 级别，重启官方 CLI 会恢复 INFO；不要把它当作已支持的部署参数。WARNING 是 Python 的名称，WARN 是 Node 的名称，检索时同时考虑。
 
-## A2A 调用关联 { #a2a-correlation }
+<a name="a2a-correlation"></a>
+
+## A2A 调用关联
 
 `/a2a/jsonrpc` 的接收、完成、取消和失败事件通过同一后端写入器记录为每行一个 JSON 对象。关联字段包括 `request_id`、`rpc_id`、`message_id`、`context_id`、`task_id`、`root_run_id`、`instance_id` 和进程 `user_id`，均保留在 JSON 顶层。匿名访问不识别实际访问者，`user_id` 不能作为调用方身份。
 
@@ -49,7 +51,9 @@
 
 先按响应头 `X-Request-ID` 或 Task ID 搜索日志，再用 `root_run_id` 找到 `a2a.trace.saved` 中的 `native_run_id` 和 `trace_file`。会话索引只保留最后的轮次和 checkpoint，历史调用关系依靠保留期内的日志与 trace。
 
-## Trace { #trace }
+<a name="trace"></a>
+
+## Trace
 
 `build_graph` 绑定 `LocalLangChainTracer`。LangChain 回调经 LangSmith SDK 的 OTEL 模式写入独立的 `TracerProvider`。默认导出到本地文件。可通过构造参数或进程环境中的 `DATAAGENT_OTLP_TRACES_ENDPOINT`（完整 traces URL）和 `DATAAGENT_OTLP_HEADERS` 启用实时 OTLP/HTTP 导出，本地文件仍在根运行结束时写入。`OTEL_EXPORTER_OTLP_*` 与 `LANGSMITH_TRACING` 不改变这两处。
 

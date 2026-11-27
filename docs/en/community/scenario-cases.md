@@ -1,5 +1,7 @@
 # Scenario cases
 
+Start with the [SQLite tutorial](../guides/sqlite-tutorial.md) to query sample orders and verify the resulting CSV.
+
 Scenario cases record a way of using the product. The current control plane has no built-in datasource registry or read-only SQL gateway. If a case depends on those, name the plugin. Do not describe them as control-plane routes.
 
 ## What makes a good case

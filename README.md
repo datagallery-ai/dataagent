@@ -13,7 +13,8 @@
   <a href="docs/en/quick-start.md"><strong>Quick start</strong></a> ·
   <a href="docs/en/index.md"><strong>Use and integration</strong></a> ·
   <a href="docs/development/index.md"><strong>Developer docs</strong></a> ·
-  <a href="CONTRIBUTING.md"><strong>Contributing</strong></a>
+  <a href="CONTRIBUTING.md"><strong>Contributing</strong></a> ·
+  <a href="https://datagallery.cn/docs"><strong>Online docs</strong></a>
 </p>
 
 <p align="center">
@@ -42,8 +43,8 @@
 On Linux, install Git, Node.js 22.12+, and uv, then start from source:
 
 ```bash
-git clone https://github.com/datagallery-lab/datafoundry.git
-cd datafoundry
+git clone https://gitcode.com/datagallery/dataagent.git
+cd dataagent
 ./deploy.sh
 ```
 
@@ -51,7 +52,7 @@ Set `LLM_MODEL`, `LLM_BASE_URL`, and `LLM_API_KEY` for your OpenAI-compatible mo
 
 Use `./deploy.sh status` to check service health and `./deploy.sh logs` to follow the logs.
 
-[Manual setup for Windows and macOS](docs/en/guides/deploy-source.md) · [Server wheel and TUI package](docs/en/guides/deploy-packages.md)
+[Manual setup for Windows and macOS](docs/en/guides/deploy-source.md) · [Get the Server wheel and TUI package](docs/en/guides/deploy-packages.md#get-artifacts)
 
 ## How a data task runs
 

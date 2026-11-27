@@ -4,6 +4,8 @@ import re
 from html import escape
 from pathlib import Path
 
+from markdown.extensions import Extension
+from markdown.preprocessors import Preprocessor
 from mkdocs.structure.files import File
 from mkdocs.utils import get_relative_url
 
@@ -49,6 +51,31 @@ for language in ("en", "zh"):
         "web": "web-workbench",
     }.items():
         PUBLISHED_PATHS[f"{language}/guides/{name}.md"] = f"{language}/guides/{published_name}.md"
+
+
+_ANCHORED_HEADING = re.compile(
+    r'^<a name="(?P<anchor>[\w-]+)"></a>\n\n(?P<heading>#{1,6}[ \t]+[^\n]+)$',
+    re.MULTILINE,
+)
+
+
+class _HeadingAnchorPreprocessor(Preprocessor):
+    def run(self, lines):
+        return _ANCHORED_HEADING.sub(
+            lambda match: f"{match['heading']} {{ #{match['anchor']} }}",
+            "\n".join(lines),
+        ).split("\n")
+
+
+class _HeadingAnchorExtension(Extension):
+    def extendMarkdown(self, md):
+        # Run after fenced code is stashed and before raw HTML is extracted.
+        md.preprocessors.register(_HeadingAnchorPreprocessor(md), "heading_anchor_ids", 21)
+
+
+def on_config(config, **kwargs):
+    """Preserve explicit heading IDs in MkDocs tables of contents."""
+    config["markdown_extensions"].append(_HeadingAnchorExtension())
 
 
 def mapped_path(source, paths, prefixes):

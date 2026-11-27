@@ -13,6 +13,7 @@
 | 最小配置示例 | `config.example.yaml` | 手动复制或显式指定 |
 | 完整配置示例 | `examples/config.yaml` | 显式指定，随附 `hooks/` |
 | nl2sql 入口 | `examples/nl2sql-entry.yaml` | 显式指定；`dataagent.entry` 为 `nl2sql` |
+| SQLite 到 CSV 教程 | [sqlite-tutorial/config.example.yaml](sqlite-tutorial/config.example.yaml) | 由[教程脚本](sqlite-tutorial/run.py)加载，验证 NL2SQL 的 CSV 产物 |
 | 插件清单 | `<plugin>/.plugin.yaml` | Compiler 读取已启用插件 |
 | 子 Agent 声明 | 如 `subagents/statistics.yaml` | 由插件 `subagents` 引用 |
 | MCP 服务配置 | `<home>/.mcp.yaml`、启用插件的 `<plugin_root>/.mcp.yaml` | 只加载这两处；使用 `mcpServers`，不参与 config.yaml 合并 |

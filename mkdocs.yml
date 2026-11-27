@@ -76,7 +76,13 @@ markdown_extensions:
 nav:
   - Use and Integration:
       - en/index.md
+      - Overview:
+          - Product overview: en/concepts/overview.md
+          - Capabilities: en/concepts/capabilities.md
+          - Architecture overview: en/concepts/architecture.md
+          - Security: en/concepts/security.md
       - Quick start: en/quick-start.md
+      - SQLite tutorial: en/guides/sqlite-tutorial.md
       - Deploy and configure:
           - Source deployment: en/guides/deploy-source.md
           - Package deployment: en/guides/deploy-packages.md
@@ -105,11 +111,6 @@ nav:
           - Python API: en/reference/python-api.md
           - Extension schema: en/reference/extension-schema.md
           - MCP configuration: en/reference/mcp-configuration.md
-      - Concepts:
-          - Product overview: en/concepts/overview.md
-          - Capabilities: en/concepts/capabilities.md
-          - Architecture overview: en/concepts/architecture.md
-          - Security: en/concepts/security.md
       - Community:
           - en/community/index.md
           - Contact us: en/community/contact-us.md

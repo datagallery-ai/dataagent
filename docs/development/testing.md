@@ -46,13 +46,17 @@ uv run --no-project python scripts/run_product_tests.py --tier test --scope data
 
 `test_a2a_e2e.py` 归入产品脚本的串行系统测试。它验证真实 `serve-a2a` 进程、TCP、默认匿名访问、模型错误分类、日志落盘，以及重启后旧 Task 不存在但会话历史仍可续接。外部 HTTPS 和网关仍需在实际部署环境验收。
 
-## A2A 与 nl2sql 的联合验收 { #a2a-nl2sql }
+<a name="a2a-nl2sql"></a>
+
+## A2A 与 nl2sql 的联合验收
 
 协议与插件测试分别通过，不代表真实模型下的整条委派链通过。建议联合验证主代理路由、nl2sql 业务结果、会话/产物与错误关联，具体数据、用例和执行安排由测试设计。本页维护自动化入口和覆盖边界。
 
 测试应保留主代理入口，并核对实际 `task` 委派、业务结果、CSV/meta 与诊断关联。`TASK_STATE_COMPLETED` 和查询成功的区别见 [A2A 的本地子代理约定](../zh/reference/a2a.md#inbound-and-subagents)。本地 schema 与真实语义服务的覆盖范围分别记录；可控模型测试不能替代真实环境联合验收。
 
-## 安装包测试 { #package-tests }
+<a name="package-tests"></a>
+
+## 安装包测试
 
 ```bash
 uv run --no-sync pytest -q tests/packaging
@@ -60,7 +64,9 @@ uv run --no-sync pytest -q tests/packaging
 
 [安装包测试](../../tests/packaging/test_installed.py) 在临时目录构建 sdist，再验证从 sdist 构建的 wheel 可独立安装，检查 CLI、SDK 和内置资源。当前交付文件的端到端验收见[发布流程](release.md#verify-artifacts)。
 
-## 真实模型 { #live-models }
+<a name="live-models"></a>
+
+## 真实模型
 
 A2A 通路使用三个环境变量：`DATAAGENT_A2A_LIVE_BASE_URL`（包含 `/v1` 的模型网关地址）、`DATAAGENT_A2A_LIVE_API_KEY`、`DATAAGENT_A2A_LIVE_MODEL`。通过当前进程环境注入凭据后，在仓库根运行：
 

@@ -1,0 +1,33 @@
+schema_version: 4
+dataagent:
+  model: primary
+  entry: nl2sql
+models:
+  primary:
+    provider: openai
+    name: $env{LLM_MODEL}
+    base_url: $env{LLM_BASE_URL}
+    api_key: $env{LLM_API_KEY}
+plugins:
+  enabled: [nl2sql]
+  config:
+    nl2sql:
+      model: primary
+      database:
+        db_id: orders
+        dialect: sqlite
+        engine: sqlite
+        path: $env{DATAAGENT_TUTORIAL_SQLITE}
+      nodes: [perceptor, generator, validator, reflector, executor, selector]
+      perceptor:
+        user_schema: $env{DATAAGENT_TUTORIAL_SCHEMA}
+      generator:
+        strategies: [prompt]
+        num_workers: 1
+        num_samples: 1
+      validator:
+        semantic_check: false
+        db_explain: true
+        read_only: true
+      selector:
+        shortcut: 1

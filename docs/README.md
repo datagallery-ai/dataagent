@@ -1,6 +1,6 @@
 # Documentation source
 
-This directory contains the public documentation source for the DataAgent GitHub Pages site. The site uses MkDocs Material.
+This directory in the [DataAgent repository on GitCode](https://gitcode.com/datagallery/dataagent) is the source for the [DataGallery online documentation](https://datagallery.cn/docs). MkDocs Material provides a local preview. For release artifacts and their source versions, see [package deployment](en/guides/deploy-packages.md#get-artifacts).
 
 - Site home in [English](index.md) and [Chinese](zh/home.md)
 - Use and integration in [English](en/index.md) and [Chinese](zh/index.md)
@@ -11,7 +11,7 @@ Maintain routes, response envelopes, and HTTP status codes in the bilingual REST
 
 ## Documentation scope
 
-The MkDocs build publishes both entry points on one site. Use and integration documents have matching source paths in `en/` and `zh/`. Developer setup, architecture, testing, and release documentation live in `development/`.
+The DataGallery website renders both entry points from the same source tree. Use and integration documents have matching source paths in `en/` and `zh/`. Developer setup, architecture, testing, and release documentation live in `development/`.
 
 ## Maintenance rules
 
@@ -23,12 +23,6 @@ The MkDocs build publishes both entry points on one site. Use and integration do
 - Do not retain source-sensitive narrative.
 - After doc changes, run `npm run docs:build` and `npm run smoke:docs`.
 
-## Local preview and GitHub Pages
+## Local preview
 
 See [local preview](development/setup.md#preview-docs) for the MkDocs environment and commands.
-
-After pushing to `main`, `.github/workflows/docs.yml` publishes the site to GitHub Pages:
-
-`https://datagallery-lab.github.io/datafoundry/`
-
-For private repositories, enable GitHub Pages first (Settings → Pages → Source: **GitHub Actions**), confirm your GitHub plan allows Pages on private repos, and control public visibility in Pages settings.

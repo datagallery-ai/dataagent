@@ -10,7 +10,9 @@ Check [which YAML and environment files are in use](../reference/configuration-a
 
 Edit the files on the server when connecting to an existing control plane. For a stack managed by `./deploy.sh`, restart as described in [source deployment](deploy-source.md). The `tui`, `status`, and `doctor` commands use the API address recorded at startup.
 
-## Precedence { #precedence }
+<a name="precedence"></a>
+
+## Precedence
 
 The [merge reference](../reference/configuration.md#configuration-merge) defines the load order and how objects, lists, and hooks combine.
 

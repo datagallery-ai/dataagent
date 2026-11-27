@@ -44,7 +44,9 @@ If no plugin declares `general-purpose`, the built-in subagent uses parent tools
 
 AG-UI uses `subagent_visibility="attributed"` so subagent steps appear under the root run rather than becoming user turns. A2A returns a Task and supports waiting or polling for results.
 
-## Entry mode { #entry-mode }
+<a name="entry-mode"></a>
+
+## Entry mode
 
 Set `dataagent.entry` to a compiled subagent's name to wrap its Runnable as the entry graph. The Runnable reads `messages` from state and returns messages for the checkpoint. It manages its internal execution. See [graph execution](../../../../development/architecture/execution.md).
 

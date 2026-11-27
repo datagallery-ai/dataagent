@@ -24,7 +24,9 @@ Python 加载器在一次编译内按文件缓存模块。入口必须落在对�
 
 忽略的目录名包括 `__pycache__`、`.git`、`.venv`、`node_modules`、`.pytest_cache`、`.ruff_cache`。
 
-## 缓存与一致性 { #refresh-and-cache }
+<a name="refresh-and-cache"></a>
+
+## 缓存与一致性
 
 REST 的缓存键是线程 ID 加输入绑定。指纹未变且键存在时直接复用 Agent。
 

@@ -1,6 +1,6 @@
 # 源码部署
 
-本页介绍两种源码部署方式。已有 Server wheel 或 TUI npm 包时，可直接按 [DataAgent 包部署](deploy-packages.md) 安装。
+本页介绍两种部署方式，源码从 [DataAgent 的 GitCode 仓库](https://gitcode.com/datagallery/dataagent)获取。Server wheel 和 TUI npm 包的构建与安装见[独立包部署](deploy-packages.md#get-artifacts)。
 
 | 路径 | 适用环境 | 入口 |
 | --- | --- | --- |
@@ -25,8 +25,8 @@
 `./deploy.sh` 不按发行版或 CPU 架构提前拒绝运行。需要安装 Node.js 时默认使用 NodeSource，也可用 `DATAAGENT_NODE_PACKAGE_URL` 指定自定义安装包：`apt-get` 走 DEB 安装，`dnf` / `yum` 走 RPM 安装；找不到可用包管理器时提示手动安装。依赖不兼容、权限不足或安装失败时直接报错。镜像和解释器配置见 [自定义镜像部署](deploy-mirrors.md)。Windows / macOS 推荐使用下文手动 npm。
 
 ```bash
-git clone https://github.com/datagallery-lab/datafoundry.git
-cd datafoundry
+git clone https://gitcode.com/datagallery/dataagent.git
+cd dataagent
 ./deploy.sh
 ```
 
@@ -239,7 +239,9 @@ uv run --no-sync dataagent serve --config examples/nl2sql-entry.yaml
 
 启动 TUI、连接 Server 和恢复会话的步骤见 [TUI 指南](tui.md)。
 
-## 排查 { #deployment-troubleshooting }
+<a name="deployment-troubleshooting"></a>
+
+## 排查
 
 一键部署路径请先看：
 

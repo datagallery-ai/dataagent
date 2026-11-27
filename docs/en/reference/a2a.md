@@ -6,7 +6,9 @@ The card lists only JSONRPC and sets `capabilities.streaming: false`. It constru
 
 Regular `serve` also exposes [REST](rest-api.md). Card discovery works before the engine is ready. Standalone A2A exposes only A2A routes and can override `server.host` and `server.port`. Both commands acquire the same Home `backend.lock`. See [startup options](cli-and-environment.md#dataagent-serve-a2a).
 
-## Send a message { #send-message }
+<a name="send-message"></a>
+
+## Send a message
 
 ```bash
 curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
@@ -27,7 +29,9 @@ curl -X POST http://127.0.0.1:8790/a2a/jsonrpc \
   }'
 ```
 
-### Request parameters { #request-parameters }
+<a name="request-parameters"></a>
+
+### Request parameters
 
 | Field or header | Required | Default and constraint |
 | --- | --- | --- |
@@ -53,7 +57,9 @@ A normal message uses text parts. Blank text and invalid context produce `TASK_S
 
 `contextId` is the session's HTTP `threadId` and LangGraph `thread_id`. Requests on one context execute serially and resume from the shared index's checkpoint. Errors or cancellation save the checkpoint reached. The server startup user owns sessions, default `default` or `--user`. Another user's context yields a failed Task with `FORBIDDEN`.
 
-## Authentication { #authentication }
+<a name="authentication"></a>
+
+## Authentication
 
 Default access is anonymous. Both server commands use `DATAAGENT_A2A_AUTH_TOKEN` if set. Precedence is standalone `--auth-token`, nonempty process value, then the selected env file or Home `.env`. Regular `serve` reads the effective environment and has no auth flag. Restart after changing it. Use distinct credentials for model and outbound A2A calls.
 
@@ -78,7 +84,9 @@ curl -sS http://127.0.0.1:8790/a2a/jsonrpc \
 
 Missing or invalid credentials return HTTP 401 with `{"success":false,"error":{"code":"UNAUTHORIZED","message":"Invalid or missing Bearer token."}}` before model execution. See [Bearer validation](../../../dataagent/server/a2a/server.py).
 
-## Request IDs and diagnostics { #request-diagnostics }
+<a name="request-diagnostics"></a>
+
+## Request IDs and diagnostics
 
 Every JSON-RPC response includes server-generated `X-Request-ID`, including authentication, protocol, and readiness errors. Use it for diagnostics; the JSON-RPC `id` correlates the request and response.
 
@@ -127,7 +135,9 @@ Success omits `error`. Polling or canceling does not replace the creation correl
 
 Stages include `validation`, `queue`, `session_prepare`, `agent_invoke`, `checkpoint_settle`, and `response`. A checkpoint write failure can fail a successful model run. Inbound `dataagent.limits.timeout_seconds` bounds agent `ainvoke` only. Queueing, preparation, and settlement are outside the limit. After a client timeout, [poll](#tasks) if you have the ID.
 
-## Poll and cancel tasks { #tasks }
+<a name="tasks"></a>
+
+## Poll and cancel tasks
 
 All methods share the URL, version, and authentication. The following arguments go in outer `params`.
 
@@ -140,7 +150,9 @@ All methods share the URL, version, and authentication. The following arguments 
 
 Outer RPC `id` is separate from `params.id`. Stopping polling or disconnecting does not cancel. Call `CancelTask` to stop work. The default in-memory TaskStore loses IDs on restart. Ordinary sessions can resume on the same Home checkpoint. See [human feedback](#a2a-hitl) for waiting tasks.
 
-### Wait or return immediately { #call-modes }
+<a name="call-modes"></a>
+
+### Wait or return immediately
 
 Both modes use nonstreaming `SendMessage`. Omit `returnImmediately` or set it false to wait for completion or input. Set true to receive the ID early, then poll with `GetTask` and cancel if needed. `SendStreamingMessage` and `SubscribeToTask` return `-32004`; push notifications return `-32003`.
 
@@ -171,7 +183,9 @@ Poll with the same version and authentication headers:
 
 You can see `TASK_STATE_SUBMITTED`, `TASK_STATE_WORKING`, or `TASK_STATE_INPUT_REQUIRED`. Terminal states are `TASK_STATE_COMPLETED`, `TASK_STATE_FAILED`, `TASK_STATE_CANCELED`, and `TASK_STATE_REJECTED`. Read artifacts on success and metadata on failure. See [server tests](../../../tests/test_a2a_server.py) and [diagnostic tests](../../../tests/test_a2a_observability.py). Execution does not guarantee retries, deduplication, or idempotency. Check task state before retrying work with side effects.
 
-## Pause and resume human feedback { #a2a-hitl }
+<a name="a2a-hitl"></a>
+
+## Pause and resume human feedback
 
 LangGraph `interrupt()` and `Command(resume=...)` work without streaming. A pause yields `TASK_STATE_INPUT_REQUIRED` in synchronous responses or from `GetTask`, with no final answer artifact. `status.message.parts` includes text and a structured part. `interrupts[].id/value` comes from the native interrupt. `pauseId` identifies this pause. Non-sensitive fields are kept. Approval requests include tool name, redacted arguments, and review rules. Execution uses checkpointed arguments or an approved edit.
 
@@ -236,13 +250,17 @@ uv run --no-sync pytest tests/test_a2a_hitl.py -q
 
 For manual feedback testing, enable the `data-qa` plugin and ask the root to invoke `data-qa__request_human_feedback`. Reply using the actual interrupt. Native `interrupt_on` tool approval in tests is provided by the test assembly.
 
-## Inbound calls and local subagents { #inbound-and-subagents }
+<a name="inbound-and-subagents"></a>
+
+## Inbound calls and local subagents
 
 The root receives inbound requests and can delegate to enabled local compiled subagents such as nl2sql through `task`. This requires neither another A2A server nor `a2a.remote_agents`. Leaving `dataagent.entry` unset exercises root delegation. Selecting nl2sql as the entry bypasses the root.
 
 Task completion means agent execution finished. An ordinary nl2sql business failure can return a tool result with `error` and still be explained by a completed root Task. Check the delegation, actual result, and outputs. See [test coverage](../../development/testing.md#a2a-nl2sql).
 
-## Call other agents { #outbound }
+<a name="outbound"></a>
+
+## Call other agents
 
 Configure remote agents in the caller's YAML. Each becomes `a2a__<id>`. The description can tell the caller when to use it and what to send.
 

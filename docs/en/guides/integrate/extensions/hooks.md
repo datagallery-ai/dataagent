@@ -21,7 +21,9 @@ dataagent:
 
 Placing a file in `hooks/` does not register it. See [hook declarations](../../../reference/extension-schema.md#agent-hooks) for grouped and flat forms. `params` is copied for every invocation.
 
-## Signatures { #hook-signatures }
+<a name="hook-signatures"></a>
+
+## Signatures
 
 | Event | Signature | Return value |
 | --- | --- | --- |

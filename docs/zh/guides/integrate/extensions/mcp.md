@@ -2,7 +2,9 @@
 
 通过 `.mcp.yaml` 将外部 MCP 服务的工具提供给 DataAgent。在同一个 DataAgent Home 中共用的连接放在 Home，随某个插件启停的连接放在该插件根目录。配置位置、传输类型和完整字段见 [MCP 配置参考](../../../reference/mcp-configuration.md)。
 
-## 运行本地 stdio 示例 { #local-stdio-example }
+<a name="local-stdio-example"></a>
+
+## 运行本地 stdio 示例
 
 在仓库根目录准备 Python 环境，并用一个独立的 Home 试用：
 
@@ -23,11 +25,15 @@ cp examples/mcp/.mcp.yaml examples/mcp/math_server.py "$DATAAGENT_HOME/"
 uv run --no-sync pytest -q tests/test_mcp.py::test_documented_local_example_is_runnable
 ```
 
-## 连接远程 MCP 服务 { #remote-mcp}
+<a name="remote-mcp"></a>
+
+## 连接远程 MCP 服务
 
 将 [完整配置模板](../../../../../examples/mcp/mcp.full.yaml)中所需的 `mcpServers` 条目合并到目标 `.mcp.yaml`，把端点替换为服务提供的完整 HTTP(S) MCP URL。根据服务要求选择 Streamable HTTP（`type: http`）或 SSE（`type: sse`），在 `headers` 中声明所需的认证头。凭据通过 `$env{NAME}` 引用，变量来源见 [MCP 配置参考](../../../reference/mcp-configuration.md#environment-and-paths)。
 
-## 发现、更新与调用 { #discovery-and-refresh}
+<a name="discovery-and-refresh"></a>
+
+## 发现、更新与调用
 
 Server 在会话引擎就绪前发现工具。如果连接失败，`dataagent serve` 保留健康接口，`/healthz` 返回 200 且 `data.conversation.ready` 为 `false`，`/ready` 和对话接口返回 503。请在 `backend.log` 中查看 `MCP discovery failed` 或 `MCP discovery timed out`，修复配置或连接后重启服务。
 
@@ -35,7 +41,9 @@ Server 在会话引擎就绪前发现工具。如果连接失败，`dataagent se
 
 工具调用各自建立并关闭 MCP 会话，stdio 服务随每次调用启动。需要跨次保留的数据可存到文件或外部服务。
 
-## 在 Python SDK 中使用 { #python-sdk}
+<a name="python-sdk"></a>
+
+## 在 Python SDK 中使用
 
 配置了 MCP 的 SDK 调用方先异步发现工具，再把工具列表传给 `create_agent`。下面的 `runtime` 由 [SDK 指南](../sdk.md)中的 `prepare_runtime` 创建：
 
@@ -47,7 +55,9 @@ agent = create_agent(runtime, mcp_tools=await load_mcp_tools(runtime))
 
 SDK 由调用方显式管理工具加载与更新。配置已启用但未传 `mcp_tools` 时，`create_agent` 会在创建时报告该缺失。
 
-## NL2SQL 通过 MCP 执行 SQL { #nl2sql-mcp}
+<a name="nl2sql-mcp"></a>
+
+## NL2SQL 通过 MCP 执行 SQL
 
 NL2SQL 单独使用 `plugins.config.nl2sql.database.engine: mcp` 及 `database.path` 连接 Streamable HTTP 端点。插件直接调用其配置的读取工具执行查询和 EXPLAIN。端点、读取工具和返回结构见 [NL2SQL 插件说明](../../../../../dataagent/plugins/nl2sql/README.md)。
 

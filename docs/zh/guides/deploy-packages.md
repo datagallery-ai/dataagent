@@ -1,6 +1,25 @@
 # 独立包部署
 
-适用于已经拿到交付产物的部署环境。把 Server wheel 放到运行服务的机器，把 TUI 包放到使用终端的机器。两者可以在同一台机器，也可以分开部署。
+把 Server wheel 放到运行服务的机器，把 TUI 包放到使用终端的机器。两者可以在同一台机器，也可以分开部署。
+
+<a name="get-artifacts"></a>
+
+## 获取制品与确认版本
+
+当前 [GitCode 公开发布](https://gitcode.com/datagallery/dataagent/releases)提供 `v0.1.0` 的源码归档。本页对应 `0.2.0`，可按下文从 [GitCode 上的 DataAgent `main`](https://gitcode.com/datagallery/dataagent) 构建 Server wheel 和 TUI 包。[PyPI 上的 `0.1.0`](https://pypi.org/project/datagallery-dataagent/0.1.0/)使用旧版运行时和配置。使用该版本时，请阅读 [`v0.1.0` 源码中的文档](https://gitcode.com/datagallery/dataagent/tree/v0.1.0)。切换到现行运行时时，可参照[旧版迁移对照](../../development/archive/main-legacy-migration.md)。
+
+首次安装时可从源码构建制品。在装有 Git、Node.js ≥22.12.0、npm、uv 和 Make 的 Linux 环境运行：
+
+```bash
+git clone https://gitcode.com/datagallery/dataagent.git
+cd dataagent
+git rev-parse HEAD
+make prepare PYTHON_VERSION=3.12
+make build PYTHON_VERSION=3.12
+sha256sum dist/server/*.whl dist/tui/*.tgz
+```
+
+需要复现某次构建时，先检出该制品记录的源码提交，再执行构建命令。构建后把 Git 提交号、制品文件名和 SHA-256 一同记录。收到预构建制品时，安装前核对提供方记录的构建提交，并用提供方的 SHA-256 校验文件。完整步骤见[构建与制品验收](../../development/release.md#verify-artifacts)。
 
 | 交付文件 | 用途 | 环境 |
 | --- | --- | --- |
@@ -98,7 +117,9 @@ semantic:
 
 适配自有插件时，将插件放到 Server Home 的 `plugins/` 下。在插件的子代理声明里用 `kind: compiled`，并将 `entrypoint` 写成相对插件目录的 `file.py:symbol`。该符号应实现 `factory(params, services)` 并返回 Runnable。把插件 ID 加到 `plugins.enabled`，再把子代理的 `name` 写到 `dataagent.entry`。[编译型子代理和入口模式](integrate/extensions/subagents.md#entry-mode)
 
-## 可选依赖 { #optional-dependencies }
+<a name="optional-dependencies"></a>
+
+## 可选依赖
 
 SQLite、MySQL 和 PostgreSQL 驱动随 wheel 安装。按需在 wheel 文件名后追加 `[video]`、`[spark]` 或 `[all]`，例如：
 

@@ -2,7 +2,9 @@
 
 产品配置、插件和子代理共用这些形状。模型在 `dataagent.config.declarations`。未知字段失败。
 
-## 标识 { #extension-identifiers }
+<a name="extension-identifiers"></a>
+
+## 标识
 
 | 用途 | 模式 |
 | --- | --- |
@@ -20,7 +22,9 @@
 
 插件 ID 保留 `user`、`cli`。根 Agent 名固定为 `dataagent`，不能作为子代理名。
 
-## 插件 `.plugin.yaml` { #plugin-manifest }
+<a name="plugin-manifest"></a>
+
+## 插件 `.plugin.yaml`
 
 `schema_version` 默认 `3`。显式填写时也必须为 `3`。
 
@@ -40,7 +44,9 @@
 资源路径相对插件根，解析后必须仍在根内。`file.py:symbol` 需要指向 Python 文件，`symbol` 必须是标识符。
 工具 `scope` 默认 `all`；`subagents` 只保留在子代理可显式引用的注册表中，不加入根 Agent 的工具列表或子代理继承的工具列表。
 
-## Hook { #agent-hooks }
+<a name="agent-hooks"></a>
+
+## Hook
 
 分组形式的键只能是：
 
@@ -59,7 +65,9 @@
 
 状态更新和工具返回值见 [Hook 函数签名](../guides/integrate/extensions/hooks.md#hook-signatures)。
 
-## 子代理 YAML { #subagent-declaration }
+<a name="subagent-declaration"></a>
+
+## 子代理 YAML
 
 | 字段 | 类型 | 说明 |
 | --- | --- | --- |
@@ -84,7 +92,9 @@
 
 `dataagent.hooks` 使用同一 Hook 形状。入口相对该配置文件目录。多层配置把条目追加在一起，每条记住自己的目录。
 
-## 人工交互配置 { #hitl-configuration }
+<a name="hitl-configuration"></a>
+
+## 人工交互配置
 
 插件清单显式提供 `hitl` 时，`enabled` 默认 `true`，可用 `false` 禁用该插件的人工交互资源。设置为 `false` 时仍校验声明结构。
 
@@ -96,13 +106,17 @@
 
 每条策略使用该来源内唯一的 `id`，格式与插件 ID 一致。可填写 `version`（默认为字符串 `"1"`）、`at`（使用 [Hook 阶段](#agent-hooks)，默认 `before_tool`）、`handler`（相对插件根的 `file.py:ClassName`）、`params`（JSON 对象，默认 `{}`）。`matcher` 仅适用于 `before_tool` 和 `after_tool`，精确匹配注册后的工具名。处理器示例与恢复流程见 [HITL 指南](../guides/integrate/extensions/hitl.md)。
 
-## Skill 元数据 { #skill-metadata }
+<a name="skill-metadata"></a>
+
+## Skill 元数据
 
 `SKILL.md` 开头使用 YAML frontmatter，必须能解析为映射，且提供非空 `name` 和 `description`。解析器检查解码后的整个文件，最多接受 10 × 2²⁰ 个字符。
 
 名称建议使用小写字母、数字和连字符，最长 64 个字符，并与目录名一致。连字符不置于首尾，也不连续使用。不符合时解析器记录警告并继续装入。描述超过 1024 个字符时截断。可选字段包括 `license`、`compatibility`、`metadata` 和 `allowed-tools`。
 
-## 编译工作流 Hook { #compiled-workflow-hook }
+<a name="compiled-workflow-hook"></a>
+
+## 编译工作流 Hook
 
 `plugins.config.<id>.run_hooks` 可声明 `before_run` 和 `after_run`，值为条目数组。键名和 Agent Hook 的 `hooks` 分开。
 每条仅含 `entrypoint` 和可选的 `params` 对象。

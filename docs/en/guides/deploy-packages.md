@@ -1,6 +1,25 @@
 # Deployment from packages
 
-Use this guide when you already have the release artifacts. Install the wheel on the Server machine and the TUI package on the client machine. You can use the same machine for both.
+Install the wheel on the Server machine and the TUI package on the client machine. You can use the same machine for both.
+
+<a name="get-artifacts"></a>
+
+## Get the artifacts and check the version
+
+The public [GitCode release](https://gitcode.com/datagallery/dataagent/releases) currently offers the `v0.1.0` source archives. This guide covers `0.2.0`. Follow the steps below to build its Server wheel and TUI package from [DataAgent `main` on GitCode](https://gitcode.com/datagallery/dataagent). The public [PyPI release `0.1.0`](https://pypi.org/project/datagallery-dataagent/0.1.0/) uses the legacy runtime and configuration. For that release, follow the documentation in the [`v0.1.0` source tree](https://gitcode.com/datagallery/dataagent/tree/v0.1.0). See the [legacy migration comparison](../../development/archive/main-legacy-migration.md) when moving to the current runtime.
+
+For a fresh install, build the artifacts from source. On Linux, with Git, Node.js ≥22.12.0, npm, uv, and Make available, run:
+
+```bash
+git clone https://gitcode.com/datagallery/dataagent.git
+cd dataagent
+git rev-parse HEAD
+make prepare PYTHON_VERSION=3.12
+make build PYTHON_VERSION=3.12
+sha256sum dist/server/*.whl dist/tui/*.tgz
+```
+
+To reproduce a specific build, check out the recorded source commit before running the build commands. Record the Git commit, artifact filenames, and SHA-256 values together. For artifacts supplied by someone else, check the build commit and compare the files against the supplier's published SHA-256 values before installing. See [build and artifact verification](../../development/release.md#verify-artifacts).
 
 | Artifact | Purpose | Requirements |
 | --- | --- | --- |
@@ -98,7 +117,9 @@ Connect with the same TUI command. After changing `dataagent.entry`, restart the
 
 To adapt your own plugin, place it under `plugins/` in the Server Home. In its subagent declaration, set `kind: compiled` and point `entrypoint` to `file.py:symbol` relative to the plugin directory. That symbol implements `factory(params, services)` and returns a Runnable. Add the plugin ID to `plugins.enabled` and the subagent's `name` to `dataagent.entry`. [Compiled subagent and entry contracts](../guides/integrate/extensions/subagents.md#entry-mode)
 
-## Optional dependencies { #optional-dependencies }
+<a name="optional-dependencies"></a>
+
+## Optional dependencies
 
 SQLite, MySQL and PostgreSQL drivers are included as wheel dependencies. Append `[video]`, `[spark]` or `[all]` to the wheel filename as needed:
 

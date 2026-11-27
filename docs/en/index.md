@@ -5,6 +5,7 @@ Find the right path to try, deploy, use, or integrate DataAgent.
 | I want to | Start here |
 | --- | --- |
 | Ask my first question | [Quick start](quick-start.md) |
+| Query a sample database and produce a CSV | [SQLite tutorial](guides/sqlite-tutorial.md) |
 | Deploy DataAgent | [Source deployment](guides/deploy-source.md), [package deployment](guides/deploy-packages.md), or [custom mirrors](guides/deploy-mirrors.md) |
 | Use the workbench and inspect results | [Web workbench](guides/web.md), [TUI](guides/tui.md), [data inputs](guides/inputs.md), and [sessions and outputs](guides/sessions-and-outputs.md) |
 | Integrate with my application | [REST API](reference/rest-api.md), [AG-UI integration guide](reference/agent-runtime.md), [A2A](reference/a2a.md), [Python SDK](guides/integrate/sdk.md), [extensions](guides/integrate/extensions/overview.md), and [MCP](guides/integrate/extensions/mcp.md) |
